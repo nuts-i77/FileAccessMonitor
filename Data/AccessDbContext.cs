@@ -9,6 +9,8 @@ public class AccessDbContext : IdentityDbContext<ApplicationUser>
     public AccessDbContext(DbContextOptions<AccessDbContext> options) : base(options) { }
 
     public DbSet<AccessRecord> AccessRecords { get; set; }
+    public DbSet<AuditLogEntry> AuditLogs { get; set; }
+    public DbSet<CollectorState> CollectorStates { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -22,5 +24,7 @@ public class AccessDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(r => r.UserName);
             entity.HasIndex(r => new { r.FilePath, r.AccessTime });
         });
+
+        modelBuilder.Entity<AuditLogEntry>(entity => entity.HasIndex(e => e.Time));
     }
 }

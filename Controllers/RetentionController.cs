@@ -13,11 +13,13 @@ public class RetentionController : ControllerBase
 {
     private readonly AccessDbContext _db;
     private readonly RetentionService _retention;
+    private readonly AuditLog _audit;
 
-    public RetentionController(AccessDbContext db, RetentionService retention)
+    public RetentionController(AccessDbContext db, RetentionService retention, AuditLog audit)
     {
         _db = db;
         _retention = retention;
+        _audit = audit;
     }
 
     // GET /api/retention
@@ -41,12 +43,13 @@ public class RetentionController : ControllerBase
     // PUT /api/retention  (Admin only)
     [HttpPut]
     [Authorize(Roles = "Admin")]
-    public IActionResult Set([FromBody] SetRetentionRequest req)
+    public async Task<IActionResult> Set([FromBody] SetRetentionRequest req)
     {
         if (req.RetentionDays < 0)
             return BadRequest(new { error = Messages.Get("retention.invalidDays") });
 
         RetentionService.SaveRetentionDays(req.RetentionDays);
+        await _audit.WriteAsync(HttpContext, "retention.update", $"days={req.RetentionDays}");
 
         var label = req.RetentionDays == 0 ? Messages.Get("retention.forever") : Messages.Get("retention.days", req.RetentionDays);
         return Ok(new { message = Messages.Get("retention.updated", label), retentionDays = req.RetentionDays });
@@ -62,6 +65,7 @@ public class RetentionController : ControllerBase
             return BadRequest(new { error = Messages.Get("retention.notSet") });
 
         var deleted = await _retention.RunCleanup();
+        await _audit.WriteAsync(HttpContext, "retention.cleanup", $"days={days}, deleted={deleted}");
         return Ok(new { message = Messages.Get("retention.deleted", deleted), deletedCount = deleted });
     }
 }

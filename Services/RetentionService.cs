@@ -1,6 +1,6 @@
 using FileAccessMonitor.Data;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace FileAccessMonitor.Services;
 
@@ -8,10 +8,6 @@ public class RetentionService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RetentionService> _logger;
-
-    private static readonly string SettingsFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "FileAccessMonitor", "settings.json");
 
     public RetentionService(IServiceScopeFactory scopeFactory, ILogger<RetentionService> logger)
     {
@@ -56,43 +52,9 @@ public class RetentionService : BackgroundService
         return deleted;
     }
 
-    public static int GetRetentionDays()
-    {
-        if (!File.Exists(SettingsFile)) return 0;
-        try
-        {
-            var json = File.ReadAllText(SettingsFile);
-            var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("RetentionDays", out var val))
-                return val.GetInt32();
-        }
-        catch { }
-        return 0;
-    }
+    public static int GetRetentionDays() =>
+        SettingsStore.Load()["RetentionDays"] is JsonValue v && v.TryGetValue<int>(out var days) ? days : 0;
 
-    public static void SaveRetentionDays(int days)
-    {
-        // Read existing MonitoredPaths to preserve them
-        string[] paths = [];
-        if (File.Exists(SettingsFile))
-        {
-            try
-            {
-                var existing = File.ReadAllText(SettingsFile);
-                var doc = JsonDocument.Parse(existing);
-                if (doc.RootElement.TryGetProperty("MonitoredPaths", out var arr))
-                    paths = arr.EnumerateArray()
-                               .Select(e => e.GetString() ?? "")
-                               .Where(s => s.Length > 0)
-                               .ToArray();
-            }
-            catch { }
-        }
-
-        Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
-        var json = JsonSerializer.Serialize(
-            new { MonitoredPaths = paths, RetentionDays = days },
-            new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(SettingsFile, json);
-    }
+    public static void SaveRetentionDays(int days) =>
+        SettingsStore.Update(root => root["RetentionDays"] = days);
 }

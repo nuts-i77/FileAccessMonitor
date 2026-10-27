@@ -13,10 +13,14 @@ namespace FileAccessMonitor.Controllers;
 public class MeController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly TokenService _tokens;
+    private readonly AuditLog _audit;
 
-    public MeController(UserManager<ApplicationUser> userManager)
+    public MeController(UserManager<ApplicationUser> userManager, TokenService tokens, AuditLog audit)
     {
         _userManager = userManager;
+        _tokens = tokens;
+        _audit = audit;
     }
 
     // POST /api/me/change-password  (all authenticated users)
@@ -35,7 +39,9 @@ public class MeController : ControllerBase
             return BadRequest(new { error = Messages.Join(result) });
 
         if (user.UserName == "admin") SecretStore.DeleteInitialAdminPassword();
-        return Ok(new { message = Messages.Get("password.changed") });
+        await _audit.WriteAsync(HttpContext, "password.change");
+        // The security stamp changed, so the caller needs a new token to stay signed in.
+        return Ok(new { message = Messages.Get("password.changed"), token = await _tokens.CreateAsync(user) });
     }
 }
 

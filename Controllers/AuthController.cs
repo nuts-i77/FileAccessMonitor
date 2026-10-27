@@ -1,12 +1,8 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
 using FileAccessMonitor.Models;
 using FileAccessMonitor.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
 
 namespace FileAccessMonitor.Controllers;
 
@@ -15,12 +11,14 @@ namespace FileAccessMonitor.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
-    private readonly IConfiguration _config;
+    private readonly TokenService _tokens;
+    private readonly AuditLog _audit;
 
-    public AuthController(UserManager<ApplicationUser> userManager, IConfiguration config)
+    public AuthController(UserManager<ApplicationUser> userManager, TokenService tokens, AuditLog audit)
     {
         _userManager = userManager;
-        _config = config;
+        _tokens = tokens;
+        _audit = audit;
     }
 
     // POST /api/auth/login
@@ -32,25 +30,34 @@ public class AuthController : ControllerBase
             new { error = Messages.Get("auth.lockedOut") });
 
         var user = await _userManager.FindByNameAsync(req.Username);
-        if (user == null) return invalid;
-        if (await _userManager.IsLockedOutAsync(user)) return lockedOut;
+        if (user == null)
+        {
+            await _audit.WriteAsync(HttpContext, "auth.loginFailed", "reason=unknownUser", req.Username);
+            return invalid;
+        }
+        if (await _userManager.IsLockedOutAsync(user))
+        {
+            await _audit.WriteAsync(HttpContext, "auth.loginFailed", "reason=lockedOut", user.UserName);
+            return lockedOut;
+        }
 
         if (!await _userManager.CheckPasswordAsync(user, req.Password))
         {
             await _userManager.AccessFailedAsync(user);
-            return await _userManager.IsLockedOutAsync(user) ? lockedOut : invalid;
+            var nowLocked = await _userManager.IsLockedOutAsync(user);
+            await _audit.WriteAsync(HttpContext, nowLocked ? "auth.lockedOut" : "auth.loginFailed",
+                "reason=badPassword", user.UserName);
+            return nowLocked ? lockedOut : invalid;
         }
         await _userManager.ResetAccessFailedCountAsync(user);
-
-        var roles = await _userManager.GetRolesAsync(user);
-        var token = GenerateToken(user, roles);
+        await _audit.WriteAsync(HttpContext, "auth.login", null, user.UserName);
 
         return Ok(new
         {
-            token,
+            token = await _tokens.CreateAsync(user),
             username = user.UserName,
             displayName = user.DisplayName,
-            roles
+            roles = await _userManager.GetRolesAsync(user)
         });
     }
 
@@ -78,33 +85,9 @@ public class AuthController : ControllerBase
             return BadRequest(new { error = Messages.Join(result) });
 
         if (user.UserName == "admin") SecretStore.DeleteInitialAdminPassword();
-        return Ok(new { message = Messages.Get("password.changed") });
-    }
-
-    private string GenerateToken(ApplicationUser user, IList<string> roles)
-    {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var expires = DateTime.UtcNow.AddHours(
-            _config.GetValue("Jwt:ExpiresHours", 24));
-
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.Name, user.UserName!),
-            new(ClaimTypes.NameIdentifier, user.Id),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-        };
-        foreach (var role in roles)
-            claims.Add(new Claim(ClaimTypes.Role, role));
-
-        var token = new JwtSecurityToken(
-            issuer: _config["Jwt:Issuer"],
-            audience: _config["Jwt:Audience"],
-            claims: claims,
-            expires: expires,
-            signingCredentials: creds);
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        await _audit.WriteAsync(HttpContext, "password.change");
+        // The security stamp changed, so the caller needs a new token to stay signed in.
+        return Ok(new { message = Messages.Get("password.changed"), token = await _tokens.CreateAsync(user) });
     }
 }
 

@@ -1,4 +1,5 @@
 using FileAccessMonitor.Data;
+using FileAccessMonitor.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,10 +11,12 @@ namespace FileAccessMonitor.Controllers;
 public class StatsController : ControllerBase
 {
     private readonly AccessDbContext _db;
+    private readonly AuditLog _audit;
 
-    public StatsController(AccessDbContext db)
+    public StatsController(AccessDbContext db, AuditLog audit)
     {
         _db = db;
+        _audit = audit;
     }
 
     // GET /api/stats/summary?days=7
@@ -298,47 +301,12 @@ public class StatsController : ControllerBase
 
     // GET /api/stats/search?q=kw1&q=kw2&days=7&dateFrom=&dateTo=&type=&page=1&pageSize=50
     [HttpGet("search")]
-    public async Task<IActionResult> Search(
-        [FromQuery] string[]? q = null,
-        [FromQuery] int days = 7,
-        [FromQuery] string? dateFrom = null,
-        [FromQuery] string? dateTo = null,
-        [FromQuery] string? type = null,
-        [FromQuery] string? ip = null,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50)
+    public async Task<IActionResult> Search([FromQuery] SearchFilter filter, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (pageSize < 1 || pageSize > 500) pageSize = 50;
         if (page < 1) page = 1;
 
-        var query = _db.AccessRecords.AsQueryable();
-
-        if (!string.IsNullOrWhiteSpace(dateFrom) && DateTime.TryParse(dateFrom, out var dtFrom))
-            query = query.Where(r => r.AccessTime >= dtFrom.ToUniversalTime());
-        else if (days > 0)
-            query = query.Where(r => r.AccessTime >= DateTime.UtcNow.AddDays(-days));
-
-        if (!string.IsNullOrWhiteSpace(dateTo) && DateTime.TryParse(dateTo, out var dtTo))
-            query = query.Where(r => r.AccessTime < dtTo.AddDays(1).ToUniversalTime());
-
-        if (q != null)
-            foreach (var kw in q.Where(k => !string.IsNullOrWhiteSpace(k)))
-            {
-                var k = kw;
-                query = query.Where(r =>
-                    r.FileName.Contains(k) ||
-                    r.FilePath.Contains(k) ||
-                    r.FolderPath.Contains(k) ||
-                    r.UserName.Contains(k) ||
-                    (r.ClientIp != null && r.ClientIp.Contains(k)) ||
-                    (r.ClientMachine != null && r.ClientMachine.Contains(k)));
-            }
-
-        if (!string.IsNullOrWhiteSpace(type))
-            query = query.Where(r => r.AccessType == type);
-
-        if (!string.IsNullOrWhiteSpace(ip))
-            query = query.Where(r => r.ClientIp != null && r.ClientIp.Contains(ip));
+        var query = ApplyFilter(_db.AccessRecords.AsQueryable(), filter);
 
         var total = await query.CountAsync();
         var items = await query
@@ -354,4 +322,100 @@ public class StatsController : ControllerBase
 
         return Ok(new { total, page, pageSize, items });
     }
+
+    // GET /api/stats/search/export?(same filters)&tzOffsetMinutes=540
+    // CSV (UTF-8 with BOM so Excel detects the encoding). Times are shown in the
+    // browser's time zone, with a UTC column for unambiguous processing.
+    [HttpGet("search/export")]
+    public async Task Export([FromQuery] SearchFilter filter, [FromQuery] int tzOffsetMinutes = 0)
+    {
+        var query = ApplyFilter(_db.AccessRecords.AsNoTracking(), filter)
+            .OrderByDescending(r => r.AccessTime)
+            .Take(MaxExportRows);
+
+        var offset = TimeSpan.FromMinutes(Math.Clamp(tzOffsetMinutes, -14 * 60, 14 * 60));
+        var offsetLabel = (offset < TimeSpan.Zero ? "-" : "+") + offset.ToString(@"hh\:mm");
+        var fileName = $"file-access-{DateTime.UtcNow.Add(offset):yyyyMMdd-HHmm}.csv";
+
+        Response.ContentType = "text/csv; charset=utf-8";
+        Response.Headers.ContentDisposition = $"attachment; filename=\"{fileName}\"";
+
+        await using var writer = new StreamWriter(Response.Body, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        await writer.WriteLineAsync(CsvLine(
+            $"{Messages.Get("csv.time")} (UTC{offsetLabel})", Messages.Get("csv.timeUtc"), Messages.Get("csv.user"),
+            Messages.Get("csv.type"), Messages.Get("csv.fileName"), Messages.Get("csv.folder"), Messages.Get("csv.path"),
+            Messages.Get("csv.ip"), Messages.Get("csv.machine")));
+
+        var rows = 0;
+        await foreach (var r in query.AsAsyncEnumerable())
+        {
+            var utc = DateTime.SpecifyKind(r.AccessTime, DateTimeKind.Utc);
+            await writer.WriteLineAsync(CsvLine(
+                utc.Add(offset).ToString("yyyy-MM-dd HH:mm:ss"), utc.ToString("yyyy-MM-ddTHH:mm:ssZ"), r.UserName,
+                r.AccessType, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine));
+            rows++;
+        }
+        await writer.FlushAsync();
+
+        await _audit.WriteAsync(HttpContext, "export.csv", $"rows={rows}, filter={filter.Describe()}");
+    }
+
+    internal const int MaxExportRows = 200_000;
+
+    private static IQueryable<Models.AccessRecord> ApplyFilter(IQueryable<Models.AccessRecord> query, SearchFilter f)
+    {
+        if (!string.IsNullOrWhiteSpace(f.DateFrom) && DateTime.TryParse(f.DateFrom, out var dtFrom))
+            query = query.Where(r => r.AccessTime >= dtFrom.ToUniversalTime());
+        else if (f.Days > 0)
+            query = query.Where(r => r.AccessTime >= DateTime.UtcNow.AddDays(-f.Days));
+
+        if (!string.IsNullOrWhiteSpace(f.DateTo) && DateTime.TryParse(f.DateTo, out var dtTo))
+            query = query.Where(r => r.AccessTime < dtTo.AddDays(1).ToUniversalTime());
+
+        if (f.Q != null)
+            foreach (var kw in f.Q.Where(k => !string.IsNullOrWhiteSpace(k)))
+            {
+                var k = kw;
+                query = query.Where(r =>
+                    r.FileName.Contains(k) ||
+                    r.FilePath.Contains(k) ||
+                    r.FolderPath.Contains(k) ||
+                    r.UserName.Contains(k) ||
+                    (r.ClientIp != null && r.ClientIp.Contains(k)) ||
+                    (r.ClientMachine != null && r.ClientMachine.Contains(k)));
+            }
+
+        if (!string.IsNullOrWhiteSpace(f.Type))
+            query = query.Where(r => r.AccessType == f.Type);
+
+        if (!string.IsNullOrWhiteSpace(f.Ip))
+            query = query.Where(r => r.ClientIp != null && r.ClientIp.Contains(f.Ip));
+
+        return query;
+    }
+
+    internal static string CsvLine(params string?[] fields) => string.Join(",", fields.Select(CsvField));
+
+    // Quotes every field, and neutralizes values Excel would run as a formula (CSV injection),
+    // e.g. a file named "=HYPERLINK(...).txt".
+    internal static string CsvField(string? value)
+    {
+        value ??= "";
+        if (value.Length > 0 && "=+-@\t\r".Contains(value[0]))
+            value = "'" + value;
+        return "\"" + value.Replace("\"", "\"\"") + "\"";
+    }
+}
+
+public class SearchFilter
+{
+    public string[]? Q { get; set; }
+    public int Days { get; set; } = 7;
+    public string? DateFrom { get; set; }
+    public string? DateTo { get; set; }
+    public string? Type { get; set; }
+    public string? Ip { get; set; }
+
+    public string Describe() =>
+        $"q=[{string.Join(" ", Q ?? [])}], days={Days}, from={DateFrom}, to={DateTo}, type={Type}, ip={Ip}";
 }

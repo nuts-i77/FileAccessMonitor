@@ -16,6 +16,7 @@ function applyI18n() {
   document.documentElement.lang = getLang() === 'en' ? 'en' : 'ja';
   document.querySelectorAll('[data-i18n]').forEach(el => { el.innerHTML = t(el.dataset.i18n); });
   document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); });
   const btn = document.getElementById('langToggleBtn');
   if (btn) btn.textContent = getLang() === 'en' ? 'JA' : 'EN';
 }
@@ -529,29 +530,59 @@ async function runSearch() {
   await loadSearch(1);
 }
 
-async function loadSearch(page = 1) {
-  searchPage = page;
+// Query string for the current search conditions (shared by search and CSV export)
+function searchQuery() {
   const inputVal = document.getElementById('searchTagInput')?.value.trim() ?? '';
   const keywords = [...searchKeywords, ...(inputVal ? [inputVal] : [])];
   const type = document.getElementById('searchType')?.value ?? '';
+
+  let qs = '';
+  if (searchPeriod.mode === 'days') {
+    qs += `&days=${searchPeriod.days}`;
+  } else {
+    qs += `&days=0`;
+    if (searchPeriod.from) qs += `&dateFrom=${encodeURIComponent(searchPeriod.from)}`;
+    if (searchPeriod.to)   qs += `&dateTo=${encodeURIComponent(searchPeriod.to)}`;
+  }
+  keywords.forEach(kw => { qs += `&q=${encodeURIComponent(kw)}`; });
+  if (type) qs += `&type=${encodeURIComponent(type)}`;
+  return qs;
+}
+
+async function exportSearchCsv() {
+  const btn = document.getElementById('exportCsvBtn');
+  btn.disabled = true;
+  try {
+    const tz = -new Date().getTimezoneOffset();
+    const res = await fetch(`/api/stats/search/export?tzOffsetMinutes=${tz}${searchQuery()}`, { headers: authHeaders() });
+    if (res.status === 401) { logout(); return; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || 'file-access.csv';
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    document.getElementById('searchResults').insertAdjacentHTML('afterbegin',
+      `<div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</div>`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadSearch(page = 1) {
+  searchPage = page;
 
   const resultsEl = document.getElementById('searchResults');
   if (!resultsEl) return;
   resultsEl.innerHTML = '<div class="text-center py-4"><div class="spinner-border"></div></div>';
 
   try {
-    let url = `/api/stats/search?page=${page}&pageSize=${PAGE_SIZE}`;
-    if (searchPeriod.mode === 'days') {
-      url += `&days=${searchPeriod.days}`;
-    } else {
-      url += `&days=0`;
-      if (searchPeriod.from) url += `&dateFrom=${encodeURIComponent(searchPeriod.from)}`;
-      if (searchPeriod.to)   url += `&dateTo=${encodeURIComponent(searchPeriod.to)}`;
-    }
-    keywords.forEach(kw => { url += `&q=${encodeURIComponent(kw)}`; });
-    if (type) url += `&type=${encodeURIComponent(type)}`;
-
-    const data = await api(url);
+    const data = await api(`/api/stats/search?page=${page}&pageSize=${PAGE_SIZE}${searchQuery()}`);
 
     if (!data.items || data.items.length === 0) {
       resultsEl.innerHTML = `<div class="text-muted text-center py-5"><i class="bi bi-search me-2 fs-4"></i><div class="mt-2">${t('search.noResult')}</div></div>`;
@@ -831,9 +862,11 @@ async function loadSettings() {
   }
   loadRetentionPolicy();
   if (isAdmin()) {
-    const sec = document.getElementById('usermgmtSettingsSection');
-    if (sec) sec.classList.remove('d-none');
+    ['usermgmtSettingsSection', 'alertsSettingsSection', 'auditLogSection']
+      .forEach(id => document.getElementById(id)?.classList.remove('d-none'));
     loadUsersMgmt();
+    loadAlertSettings();
+    loadAuditLog(1);
   } else {
     const s = document.getElementById('retentionAdminSection');
     if (s) s.classList.add('d-none');
@@ -1284,11 +1317,13 @@ async function changePasswordSelf() {
   }
   btn.disabled = true;
   try {
-    await api('/api/me/change-password', {
+    const d = await api('/api/me/change-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentPassword, newPassword })
     });
+    // Changing the password revokes existing tokens; keep this session with the new one
+    if (d.token) localStorage.setItem('jwt_token', d.token);
     bootstrap.Modal.getInstance(document.getElementById('changePasswordModal'))?.hide();
     // Show a brief toast-style alert in the navbar area (no panel visible)
     const navBtn = document.getElementById('navUserBtn');
@@ -1302,6 +1337,125 @@ async function changePasswordSelf() {
     errEl.className = 'text-danger small mt-2';
   } finally {
     btn.disabled = false;
+  }
+}
+
+// ── Notifications ─────────────────────────────────────────────────
+function showAlertsAlert(html, type = 'success') {
+  const el = document.getElementById('alertsAlert');
+  if (!el) return;
+  el.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show py-2 small">
+    ${html}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>`;
+}
+
+async function loadAlertSettings() {
+  try {
+    const s = await api('/api/alerts');
+    const set = (id, v) => { document.getElementById(id).value = v ?? ''; };
+    document.getElementById('alertEnabled').checked = s.enabled;
+    set('alertDeleteThreshold', s.deleteThreshold);
+    set('alertWriteThreshold', s.writeThreshold);
+    set('alertWindowMinutes', s.windowMinutes);
+    set('alertCooldownMinutes', s.cooldownMinutes);
+    set('alertLanguage', s.language);
+    set('alertWebhookFormat', s.webhookFormat);
+    set('alertSmtpHost', s.smtpHost);
+    set('alertSmtpPort', s.smtpPort);
+    document.getElementById('alertSmtpUseSsl').checked = s.smtpUseSsl;
+    set('alertSmtpUser', s.smtpUser);
+    set('alertMailFrom', s.mailFrom);
+    set('alertMailTo', s.mailTo);
+    // Secrets are never sent back; leaving the field empty keeps the stored value
+    const url = document.getElementById('alertWebhookUrl');
+    url.value = '';
+    url.placeholder = s.webhookUrlSet ? t('alerts.secretSet') : 'https://';
+    const pw = document.getElementById('alertSmtpPassword');
+    pw.value = '';
+    pw.placeholder = s.smtpPasswordSet ? t('alerts.secretSet') : '';
+  } catch (e) {
+    showAlertsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
+// Empty = keep the stored secret (null), "-" = remove it ("")
+function secretField(id) {
+  const v = document.getElementById(id).value;
+  return v === '' ? null : v === '-' ? '' : v;
+}
+
+function alertFormBody() {
+  const val = id => document.getElementById(id).value.trim();
+  const num = id => parseInt(val(id), 10) || 0;
+  return {
+    enabled: document.getElementById('alertEnabled').checked,
+    deleteThreshold: num('alertDeleteThreshold'),
+    writeThreshold: num('alertWriteThreshold'),
+    windowMinutes: num('alertWindowMinutes'),
+    cooldownMinutes: num('alertCooldownMinutes'),
+    language: val('alertLanguage'),
+    webhookFormat: val('alertWebhookFormat'),
+    webhookUrl: secretField('alertWebhookUrl'),
+    smtpHost: val('alertSmtpHost'),
+    smtpPort: num('alertSmtpPort'),
+    smtpUseSsl: document.getElementById('alertSmtpUseSsl').checked,
+    smtpUser: val('alertSmtpUser'),
+    smtpPassword: secretField('alertSmtpPassword'),
+    mailFrom: val('alertMailFrom'),
+    mailTo: val('alertMailTo'),
+  };
+}
+
+async function saveAlertSettings() {
+  try {
+    const d = await api('/api/alerts', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(alertFormBody())
+    });
+    showAlertsAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`);
+    loadAlertSettings();
+    loadAuditLog(1);
+  } catch (e) {
+    showAlertsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
+async function sendTestAlert() {
+  try {
+    // Tests what is in the form, so settings can be checked before saving
+    const d = await api('/api/alerts/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(alertFormBody())
+    });
+    showAlertsAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`);
+  } catch (e) {
+    showAlertsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+  loadAuditLog(1);
+}
+
+// ── Operation log ─────────────────────────────────────────────────
+async function loadAuditLog(page = 1) {
+  const tbody = document.getElementById('auditLogBody');
+  if (!tbody) return;
+  try {
+    const d = await api(`/api/auditlog?page=${page}&pageSize=${PAGE_SIZE}`);
+    tbody.innerHTML = d.items.map(e => {
+      const label = t('audit.a.' + e.action);
+      return `<tr>
+        <td class="text-muted small">${fmtDate(e.time)}</td>
+        <td class="small">${esc(e.userName)}</td>
+        <td class="small" title="${esc(e.action)}">${esc(label.startsWith('audit.a.') ? e.action : label)}</td>
+        <td class="small text-muted text-break">${esc(e.detail || '')}</td>
+        <td class="small font-monospace">${esc(e.clientIp || '-')}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="5" class="text-muted text-center py-3">${t('audit.empty')}</td></tr>`;
+    renderPagination(document.getElementById('auditPagination'), document.getElementById('auditPaginationInfo'),
+      d.page, d.total, d.pageSize, p => loadAuditLog(p));
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-danger small p-3"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -1320,6 +1474,11 @@ function setAutoReload(seconds) {
   document.getElementById('reloadCountdown').textContent = fmtCountdown(countdownLeft);
 
   countdownTimer = setInterval(() => {
+    // Reloading the settings tab would wipe what the user is typing, so pause there
+    if (currentTab === 'settings') {
+      document.getElementById('reloadCountdown').textContent = t('nav.autoPaused');
+      return;
+    }
     countdownLeft--;
     document.getElementById('reloadCountdown').textContent = fmtCountdown(countdownLeft);
     if (countdownLeft <= 0) {

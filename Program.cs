@@ -4,6 +4,8 @@ using FileAccessMonitor.Data;
 using FileAccessMonitor.Models;
 using FileAccessMonitor.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.EntityFrameworkCore;
@@ -96,11 +98,42 @@ builder.Services.AddAuthentication(options =>
         ValidAudience = jwtAudience,
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
     };
+    // Reject tokens of deleted users, or issued before a password/role change
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = async context =>
+        {
+            var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
+            if (!await TokenService.IsCurrentAsync(context.Principal!, userManager))
+                context.Fail("Token has been revoked.");
+        }
+    };
+});
+
+// Encrypts alert secrets (webhook URL, SMTP password) stored in settings.json
+builder.Services.AddDataProtection()
+    .SetApplicationName("FileAccessMonitor")
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "FileAccessMonitor", "keys")))
+    .ProtectKeysWithDpapi(protectToLocalMachine: true);
+
+// Behind a reverse proxy, take the client IP (for the operation log) from X-Forwarded-For,
+// but only from the proxies listed in ReverseProxy:KnownProxies.
+var knownProxies = builder.Configuration.GetSection("ReverseProxy:KnownProxies").Get<string[]>() ?? [];
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+    foreach (var proxy in knownProxies)
+        if (System.Net.IPAddress.TryParse(proxy, out var ip)) options.KnownProxies.Add(ip);
 });
 
 builder.Services.AddAuthorization();
+builder.Services.AddHttpClient();
 builder.Services.AddSingleton<SaclManagerService>();
 builder.Services.AddSingleton<DnsResolverService>();
+builder.Services.AddSingleton<AuditLog>();
+builder.Services.AddSingleton<AlertService>();
+builder.Services.AddScoped<TokenService>();
 builder.Services.AddHostedService<EventLogCollectorService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RetentionService>());
@@ -180,6 +213,18 @@ CREATE TABLE IF NOT EXISTS ""AspNetUserTokens"" (
             await db.Database.ExecuteSqlRawAsync(sql);
     }
 
+    // v3: operation log and collector position
+    await db.Database.ExecuteSqlRawAsync(@"
+CREATE TABLE IF NOT EXISTS ""AuditLogs"" (
+    ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_AuditLogs"" PRIMARY KEY AUTOINCREMENT,
+    ""Time"" TEXT NOT NULL, ""UserName"" TEXT NOT NULL, ""Action"" TEXT NOT NULL,
+    ""Detail"" TEXT NULL, ""ClientIp"" TEXT NULL)");
+    await db.Database.ExecuteSqlRawAsync(@"CREATE INDEX IF NOT EXISTS ""IX_AuditLogs_Time"" ON ""AuditLogs"" (""Time"")");
+    await db.Database.ExecuteSqlRawAsync(@"
+CREATE TABLE IF NOT EXISTS ""CollectorStates"" (
+    ""Key"" TEXT NOT NULL CONSTRAINT ""PK_CollectorStates"" PRIMARY KEY,
+    ""Value"" TEXT NOT NULL)");
+
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     foreach (var role in new[] { "Admin", "Viewer" })
     {
@@ -242,6 +287,7 @@ app.UseRequestLocalization(new RequestLocalizationOptions
     SupportedUICultures = uiCultures,
 });
 
+if (knownProxies.Length > 0) app.UseForwardedHeaders();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseAuthentication();

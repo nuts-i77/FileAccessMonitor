@@ -95,6 +95,9 @@ wevtutil sl Security /ms:1073741824   # 1 GB
 
 - **JWT signing key**: generated at random on first start and saved to `C:\ProgramData\FileAccessMonitor\jwt.key`, which only SYSTEM and Administrators can read. If you set a `Jwt:Key` of 32 bytes or more in `appsettings.json`, that key is used instead.
 - **Sign-in lockout**: after 5 failed sign-ins in a row, the account is locked for 15 minutes.
+- **Sign-in sessions**: a sign-in stays valid for `Jwt:ExpiresHours` (default 24 hours), but ends immediately when the user is deleted, their role changes, or their password is changed or reset.
+- **Operation log**: sign-ins (including failures), user management, setting changes, CSV exports, and notifications sent are recorded and shown under **Settings → Operation Log** (Admin only).
+- **Notification secrets**: the webhook URL and SMTP password are stored encrypted (ASP.NET Core Data Protection with machine DPAPI; keys in `C:\ProgramData\FileAccessMonitor\keys\`).
 - **Transport encryption**: the default is plain HTTP. To use HTTPS, either add an HTTPS endpoint and certificate under `Kestrel.Endpoints`, or put the app behind a reverse proxy such as IIS, nginx, or Caddy. See [docs/https.md](docs/https.md) for sample configurations. Do this if the GUI is reachable from outside your LAN, or if passwords must not travel in clear text.
 - **Roles**: `Admin` can change settings and manage users. `Viewer` can only view.
 
@@ -118,7 +121,7 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 
 | File | Contents |
 |---|---|
-| `settings.json` | Monitored folders, recorded access types, reverse-DNS server (edited from the GUI) |
+| `settings.json` | Monitored folders, recorded access types, reverse-DNS server, retention, notifications (edited from the GUI) |
 | `fileaccess.db` | Access records (SQLite) |
 | `logs\app-YYYYMMDD.log` | Application log (kept for 14 days) |
 | `jwt.key` | JWT signing key |
@@ -130,8 +133,8 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | Dashboard | Access trend chart, breakdown by type, top files and folders |
 | Files / Folders / Users | Rankings with detail dialogs |
 | Recent | Access log with client IP and machine name |
-| Search | Search by keyword, period, type, or IP |
-| Settings | Monitored folders, users, reverse DNS, data retention |
+| Search | Search by keyword, period, type, or IP; export the results as CSV (up to 200,000 rows, opens in Excel) |
+| Settings | Monitored folders, users, reverse DNS, data retention, notifications, operation log |
 
 The GUI is available in English and Japanese. Switch languages at the top right; on first visit the GUI follows the browser's language. Messages returned by the API use the selected language too.
 
@@ -163,6 +166,7 @@ The screenshots use fictional sample data.
 ## Limitations
 
 - **Operations that do not open a file are not recorded.** This includes reading only attributes or timestamps (`0x80` ReadAttributes and similar) and listing folders. For example, when an incremental backup tool finds a file unchanged and skips copying it, that file is not recorded.
+- Events that occur while the service is stopped (for example during an upgrade or reboot) are collected when it starts again, as long as they are still in the Security log. If the log has already overwritten them, the gap is recorded in the operation log.
 - The service must run on the file server it monitors. It cannot monitor remote servers.
 - Times are stored in UTC. The GUI shows them, and groups them by day, in the browser's time zone.
 

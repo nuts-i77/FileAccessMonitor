@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using FileAccessMonitor.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,23 +9,19 @@ namespace FileAccessMonitor.Controllers;
 [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 public class SettingsController : ControllerBase
 {
-    private static readonly string SettingsFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "FileAccessMonitor", "settings.json");
-
     private static readonly string[] DefaultEventTypes = ["Read", "Write", "Delete"];
 
-    private readonly IConfiguration _config;
     private readonly SaclManagerService _sacl;
     private readonly DnsResolverService _dns;
+    private readonly AuditLog _audit;
     private readonly ILogger<SettingsController> _logger;
 
-    public SettingsController(IConfiguration config, SaclManagerService sacl,
-        DnsResolverService dns, ILogger<SettingsController> logger)
+    public SettingsController(SaclManagerService sacl, DnsResolverService dns,
+        AuditLog audit, ILogger<SettingsController> logger)
     {
-        _config = config;
         _sacl = sacl;
         _dns = dns;
+        _audit = audit;
         _logger = logger;
     }
 
@@ -36,17 +33,18 @@ public class SettingsController : ControllerBase
     }
 
     [HttpPost("dns")]
-    public IActionResult SetDns([FromBody] DnsRequest req)
+    public async Task<IActionResult> SetDns([FromBody] DnsRequest req)
     {
         var server = req.DnsServer?.Trim() ?? "";
         _dns.SetDnsServer(server);
-        SaveDnsServer(server);
+        SettingsStore.Update(root => root["DnsServer"] = server);
         _logger.LogInformation("DNS server updated: {Dns}", server);
+        await _audit.WriteAsync(HttpContext, "dns.update", $"dnsServer={server}");
         return Ok(new { dnsServer = server });
     }
 
     [HttpPost("paths")]
-    public IActionResult AddPath([FromBody] PathRequest req)
+    public async Task<IActionResult> AddPath([FromBody] PathRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.Path))
             return BadRequest(new { error = Messages.Get("path.required") });
@@ -63,11 +61,13 @@ public class SettingsController : ControllerBase
             : DefaultEventTypes;
 
         var updated = configs.Append(new PathConfig(req.Path, eventTypes)).ToArray();
-        SaveSettings(updated);
+        SavePathConfigs(updated);
 
         _sacl.EnableAuditPolicy();
         var (count, errors) = _sacl.ApplySacl(req.Path);
         _logger.LogInformation("Path added via Web GUI: {Path}", req.Path);
+        await _audit.WriteAsync(HttpContext, "path.add",
+            $"path={req.Path}, eventTypes={string.Join(",", eventTypes)}, sacl={count}, saclErrors={errors.Count}");
 
         return Ok(new
         {
@@ -79,7 +79,7 @@ public class SettingsController : ControllerBase
     }
 
     [HttpDelete("paths")]
-    public IActionResult RemovePath([FromQuery] string path, [FromQuery] bool removeSacl = false)
+    public async Task<IActionResult> RemovePath([FromQuery] string path, [FromQuery] bool removeSacl = false)
     {
         if (string.IsNullOrWhiteSpace(path))
             return BadRequest(new { error = Messages.Get("path.paramRequired") });
@@ -90,7 +90,7 @@ public class SettingsController : ControllerBase
         if (updated.Length == configs.Length)
             return NotFound(new { error = Messages.Get("path.notMonitored") });
 
-        SaveSettings(updated);
+        SavePathConfigs(updated);
 
         int saclCount = 0;
         List<string> saclErrors = [];
@@ -98,6 +98,7 @@ public class SettingsController : ControllerBase
             (saclCount, saclErrors) = _sacl.RemoveSacl(path);
 
         _logger.LogInformation("Path removed via Web GUI: {Path} (removeSacl={RemoveSacl})", path, removeSacl);
+        await _audit.WriteAsync(HttpContext, "path.remove", $"path={path}, removeSacl={removeSacl}, sacl={saclCount}");
 
         var message = removeSacl
             ? Messages.Get("path.removedSacl", saclCount)
@@ -107,7 +108,7 @@ public class SettingsController : ControllerBase
     }
 
     [HttpPost("paths/apply-sacl")]
-    public IActionResult ApplySacl([FromBody] PathRequest req)
+    public async Task<IActionResult> ApplySacl([FromBody] PathRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.Path))
             return BadRequest(new { error = Messages.Get("path.required") });
@@ -117,6 +118,7 @@ public class SettingsController : ControllerBase
 
         _sacl.EnableAuditPolicy();
         var (count, errors) = _sacl.ApplySacl(req.Path);
+        await _audit.WriteAsync(HttpContext, "path.applySacl", $"path={req.Path}, sacl={count}, saclErrors={errors.Count}");
 
         return Ok(new
         {
@@ -127,7 +129,7 @@ public class SettingsController : ControllerBase
     }
 
     [HttpPost("paths/event-types")]
-    public IActionResult UpdateEventTypes([FromBody] EventTypesRequest req)
+    public async Task<IActionResult> UpdateEventTypes([FromBody] EventTypesRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.Path))
             return BadRequest(new { error = Messages.Get("path.required") });
@@ -137,83 +139,57 @@ public class SettingsController : ControllerBase
             return BadRequest(new { error = Messages.Get("path.eventTypeRequired") });
 
         var (configs, _) = ReadSettingsDoc();
+        if (!configs.Any(c => c.Path.Equals(req.Path, StringComparison.OrdinalIgnoreCase)))
+            return NotFound(new { error = Messages.Get("path.notMonitored") });
+
         var updated = configs.Select(c =>
             c.Path.Equals(req.Path, StringComparison.OrdinalIgnoreCase)
                 ? c with { EventTypes = validTypes }
                 : c).ToArray();
 
-        if (!updated.Any(c => c.Path.Equals(req.Path, StringComparison.OrdinalIgnoreCase)))
-            return NotFound(new { error = Messages.Get("path.notMonitored") });
-
-        SaveSettings(updated);
+        SavePathConfigs(updated);
         _logger.LogInformation("EventTypes updated for {Path}: {Types}", req.Path, string.Join(",", validTypes));
+        await _audit.WriteAsync(HttpContext, "path.eventTypes", $"path={req.Path}, eventTypes={string.Join(",", validTypes)}");
         return Ok(new { pathConfigs = updated });
     }
 
-    private static void SaveSettings(PathConfig[] configs)
-    {
-        var (_, dns) = ReadSettingsDoc();
-        Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
-        var json = System.Text.Json.JsonSerializer.Serialize(
-            new
+    private static void SavePathConfigs(PathConfig[] configs) =>
+        SettingsStore.Update(root => root["MonitoredPaths"] = new JsonArray(configs
+            .Select(c => (JsonNode)new JsonObject
             {
-                MonitoredPaths = configs.Select(c => new { path = c.Path, eventTypes = c.EventTypes }),
-                DnsServer = dns
-            },
-            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        System.IO.File.WriteAllText(SettingsFile, json);
-    }
+                ["path"] = c.Path,
+                ["eventTypes"] = new JsonArray(c.EventTypes.Select(t => (JsonNode)JsonValue.Create(t)).ToArray())
+            })
+            .ToArray()));
 
-    private static void SaveDnsServer(string dnsServer)
-    {
-        var (configs, _) = ReadSettingsDoc();
-        Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
-        var json = System.Text.Json.JsonSerializer.Serialize(
-            new
-            {
-                MonitoredPaths = configs.Select(c => new { path = c.Path, eventTypes = c.EventTypes }),
-                DnsServer = dnsServer
-            },
-            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        System.IO.File.WriteAllText(SettingsFile, json);
-    }
+    internal static (PathConfig[] configs, string dnsServer) ReadSettingsDoc() => ParseSettings(SettingsStore.Load());
 
-    internal static (PathConfig[] configs, string dnsServer) ReadSettingsDoc()
+    internal static (PathConfig[] configs, string dnsServer) ParseSettings(JsonObject root)
     {
-        if (!System.IO.File.Exists(SettingsFile)) return ([], "");
-        try
+        var dns = root["DnsServer"] is JsonValue d && d.TryGetValue<string>(out var s) ? s : "";
+
+        var list = new List<PathConfig>();
+        if (root["MonitoredPaths"] is JsonArray arr)
         {
-            var json = System.IO.File.ReadAllText(SettingsFile);
-            var doc = System.Text.Json.JsonDocument.Parse(json);
-            var dns = doc.RootElement.TryGetProperty("DnsServer", out var d) ? d.GetString() ?? "" : "";
-
-            var configs = Array.Empty<PathConfig>();
-            if (doc.RootElement.TryGetProperty("MonitoredPaths", out var arr))
+            foreach (var el in arr)
             {
-                var list = new List<PathConfig>();
-                foreach (var el in arr.EnumerateArray())
+                if (el is JsonValue v && v.TryGetValue<string>(out var p))
                 {
-                    if (el.ValueKind == System.Text.Json.JsonValueKind.String)
-                    {
-                        // old format: plain string → upgrade to all types
-                        var p = el.GetString();
-                        if (!string.IsNullOrEmpty(p)) list.Add(new PathConfig(p, DefaultEventTypes));
-                    }
-                    else if (el.ValueKind == System.Text.Json.JsonValueKind.Object)
-                    {
-                        var p = el.TryGetProperty("path", out var pv) ? pv.GetString() ?? "" : "";
-                        if (string.IsNullOrEmpty(p)) continue;
-                        var types = el.TryGetProperty("eventTypes", out var tv)
-                            ? tv.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToArray()
-                            : DefaultEventTypes;
-                        list.Add(new PathConfig(p, types));
-                    }
+                    // old format: plain string → upgrade to all types
+                    if (!string.IsNullOrEmpty(p)) list.Add(new PathConfig(p, DefaultEventTypes));
                 }
-                configs = [.. list];
+                else if (el is JsonObject o && o["path"] is JsonValue pv && pv.TryGetValue<string>(out var path)
+                         && !string.IsNullOrEmpty(path))
+                {
+                    var types = o["eventTypes"] is JsonArray ta
+                        ? ta.Select(t => t is JsonValue tv && tv.TryGetValue<string>(out var ts) ? ts : "")
+                            .Where(t => t.Length > 0).ToArray()
+                        : DefaultEventTypes;
+                    list.Add(new PathConfig(path, types));
+                }
             }
-            return (configs, dns);
         }
-        catch { return ([], ""); }
+        return ([.. list], dns);
     }
 }
 

@@ -14,11 +14,13 @@ public class UsersController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole> _roleManager;
+    private readonly AuditLog _audit;
 
-    public UsersController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager)
+    public UsersController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager, AuditLog audit)
     {
         _userManager = userManager;
         _roleManager = roleManager;
+        _audit = audit;
     }
 
     // GET /api/users
@@ -56,6 +58,7 @@ public class UsersController : ControllerBase
         if (await _roleManager.RoleExistsAsync(role))
             await _userManager.AddToRoleAsync(user, role);
 
+        await _audit.WriteAsync(HttpContext, "user.create", $"user={user.UserName}, role={role}");
         return Ok(new { message = Messages.Get("user.created", user.UserName), id = user.Id });
     }
 
@@ -74,6 +77,7 @@ public class UsersController : ControllerBase
         if (!result.Succeeded)
             return BadRequest(new { error = Messages.Join(result) });
 
+        await _audit.WriteAsync(HttpContext, "user.delete", $"user={user.UserName}");
         return Ok(new { message = Messages.Get("user.deleted", user.UserName) });
     }
 
@@ -94,6 +98,9 @@ public class UsersController : ControllerBase
         var currentRoles = await _userManager.GetRolesAsync(user);
         await _userManager.RemoveFromRolesAsync(user, currentRoles);
         await _userManager.AddToRoleAsync(user, req.Role);
+        // Invalidate the user's existing tokens so the new role applies right away
+        await _userManager.UpdateSecurityStampAsync(user);
+        await _audit.WriteAsync(HttpContext, "user.role", $"user={user.UserName}, role={req.Role}");
 
         return Ok(new { message = Messages.Get("user.roleChanged") });
     }
@@ -113,6 +120,7 @@ public class UsersController : ControllerBase
         if (!result.Succeeded)
             return BadRequest(new { error = Messages.Join(result) });
 
+        await _audit.WriteAsync(HttpContext, "user.resetPassword", $"user={user.UserName}");
         return Ok(new { message = Messages.Get("password.reset") });
     }
 }

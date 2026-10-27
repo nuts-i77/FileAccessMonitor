@@ -369,9 +369,12 @@
             </select>
           </div>
           <!-- Search button -->
-          <div class="col-12 col-md-2">
-            <button class="btn btn-primary w-100" onclick="runSearch()">
+          <div class="col-12 col-md-2 d-flex gap-2">
+            <button class="btn btn-primary flex-grow-1" onclick="runSearch()">
               <i class="bi bi-search me-1"></i><span data-i18n="search.btn">検索</span>
+            </button>
+            <button class="btn btn-outline-secondary text-nowrap" id="exportCsvBtn" onclick="exportSearchCsv()" data-i18n-title="search.csvTitle" title="検索条件に一致する記録を CSV でダウンロード">
+              <i class="bi bi-download me-1"></i>CSV
             </button>
           </div>
         </div>
@@ -506,6 +509,134 @@
                   <div class="spinner-border spinner-border-sm"></div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notifications (Admin only) -->
+      <div class="col-12 d-none" id="alertsSettingsSection">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-bell me-1"></i><span data-i18n="alerts.title">通知</span>
+          </div>
+          <div class="card-body">
+            <p class="small text-muted mb-3" data-i18n="alerts.hint">1 人のユーザーが短時間に大量のファイルを削除・変更したときに通知します。</p>
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" id="alertEnabled">
+              <label class="form-check-label" for="alertEnabled" data-i18n="alerts.enabled">通知を有効にする</label>
+            </div>
+            <div class="row g-3">
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertDeleteThreshold" data-i18n="alerts.deleteThreshold">削除のしきい値（件）</label>
+                <input type="number" id="alertDeleteThreshold" class="form-control form-control-sm" min="0">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertWriteThreshold" data-i18n="alerts.writeThreshold">書込のしきい値（件）</label>
+                <input type="number" id="alertWriteThreshold" class="form-control form-control-sm" min="0">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertWindowMinutes" data-i18n="alerts.window">集計時間（分）</label>
+                <input type="number" id="alertWindowMinutes" class="form-control form-control-sm" min="1">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertCooldownMinutes" data-i18n="alerts.cooldown">再通知までの間隔（分）</label>
+                <input type="number" id="alertCooldownMinutes" class="form-control form-control-sm" min="1">
+              </div>
+              <div class="col-12 form-text mt-1" data-i18n="alerts.thresholdHint">0 にするとその種別は通知しません。</div>
+
+              <div class="col-12"><hr class="my-1"><span class="fw-semibold small" data-i18n="alerts.webhook">Webhook（Teams / Slack など）</span></div>
+              <div class="col-12 col-md-3">
+                <label class="form-label small text-muted" for="alertWebhookFormat" data-i18n="alerts.webhookFormat">形式</label>
+                <select id="alertWebhookFormat" class="form-select form-select-sm">
+                  <option value="teams">Microsoft Teams (Workflows)</option>
+                  <option value="slack">Slack</option>
+                  <option value="generic">JSON</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-9">
+                <label class="form-label small text-muted" for="alertWebhookUrl">URL</label>
+                <input type="password" id="alertWebhookUrl" class="form-control form-control-sm font-monospace" autocomplete="off">
+              </div>
+
+              <div class="col-12"><hr class="my-1"><span class="fw-semibold small" data-i18n="alerts.email">メール（SMTP）</span></div>
+              <div class="col-8 col-md-4">
+                <label class="form-label small text-muted" for="alertSmtpHost" data-i18n="alerts.smtpHost">SMTP サーバー</label>
+                <input type="text" id="alertSmtpHost" class="form-control form-control-sm" placeholder="例: smtp.example.com" data-i18n-ph="alerts.smtpHostPh">
+              </div>
+              <div class="col-4 col-md-2">
+                <label class="form-label small text-muted" for="alertSmtpPort" data-i18n="alerts.smtpPort">ポート</label>
+                <input type="number" id="alertSmtpPort" class="form-control form-control-sm" min="1" max="65535">
+              </div>
+              <div class="col-12 col-md-6 d-flex align-items-end">
+                <div class="form-check mb-1">
+                  <input class="form-check-input" type="checkbox" id="alertSmtpUseSsl">
+                  <label class="form-check-label small" for="alertSmtpUseSsl" data-i18n="alerts.smtpSsl">TLS を使用する（STARTTLS）</label>
+                </div>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertSmtpUser" data-i18n="alerts.smtpUser">ユーザー名（任意）</label>
+                <input type="text" id="alertSmtpUser" class="form-control form-control-sm" autocomplete="off">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertSmtpPassword" data-i18n="alerts.smtpPassword">パスワード</label>
+                <input type="password" id="alertSmtpPassword" class="form-control form-control-sm" autocomplete="new-password">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small text-muted" for="alertMailFrom" data-i18n="alerts.mailFrom">差出人</label>
+                <input type="text" id="alertMailFrom" class="form-control form-control-sm" placeholder="例: filemonitor@example.com" data-i18n-ph="alerts.mailFromPh">
+              </div>
+              <div class="col-12">
+                <label class="form-label small text-muted" for="alertMailTo" data-i18n="alerts.mailTo">宛先（複数はカンマ区切り）</label>
+                <input type="text" id="alertMailTo" class="form-control form-control-sm" placeholder="例: admin@example.com, security@example.com" data-i18n-ph="alerts.mailToPh">
+              </div>
+
+              <div class="col-12"><hr class="my-1"></div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertLanguage" data-i18n="alerts.language">通知の言語</label>
+                <select id="alertLanguage" class="form-select form-select-sm">
+                  <option value="ja">日本語</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+              <div class="col-12 d-flex gap-2">
+                <button class="btn btn-primary btn-sm" onclick="saveAlertSettings()">
+                  <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="sendTestAlert()">
+                  <i class="bi bi-send me-1"></i><span data-i18n="alerts.test">テスト送信</span>
+                </button>
+              </div>
+            </div>
+            <div id="alertsAlert" class="mt-2"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Operation log (Admin only) -->
+      <div class="col-12 d-none" id="auditLogSection">
+        <div class="card">
+          <div class="card-header py-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <span class="fw-semibold"><i class="bi bi-journal-text me-1"></i><span data-i18n="audit.title">操作ログ</span></span>
+            <div class="d-flex align-items-center gap-2">
+              <small class="text-muted" id="auditPaginationInfo"></small>
+              <nav><ul class="pagination pagination-sm mb-0" id="auditPagination"></ul></nav>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-sm mb-0">
+                <thead class="table-dark">
+                  <tr>
+                    <th style="width:170px" data-i18n="th.datetime">日時</th>
+                    <th style="width:160px" data-i18n="th.user">ユーザー</th>
+                    <th style="width:200px" data-i18n="audit.action">操作</th>
+                    <th data-i18n="audit.detail">内容</th>
+                    <th style="width:130px" data-i18n="audit.ip">接続元 IP</th>
+                  </tr>
+                </thead>
+                <tbody id="auditLogBody"></tbody>
+              </table>
             </div>
           </div>
         </div>

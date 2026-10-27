@@ -86,7 +86,17 @@ Remove-NetFirewallRule -DisplayName "File Access Monitor Web"
 Set-NetFirewallRule -DisplayName "File Access Monitor Web" -RemoteAddress 192.0.2.5   # プロキシの IP
 ```
 
-アプリは接続元の IP アドレスやスキーム（http/https）を使っていません。そのため、プロキシで `X-Forwarded-*` ヘッダーを特別に設定する必要はありません。CSP などのセキュリティヘッダーはアプリが付け、プロキシはそのまま中継します。
+CSP などのセキュリティヘッダーはアプリが付け、プロキシはそのまま中継します。
+
+操作ログには、操作ごとの接続元 IP アドレスを記録します。プロキシ経由の場合、そのままではプロキシの IP が記録されます。`appsettings.Production.json` にプロキシを登録すると、プロキシが送る `X-Forwarded-For` ヘッダーから本来の接続元 IP を記録します（下記の nginx の例は送信します。IIS の ARR と Caddy は既定で送信します）。
+
+```json
+{
+  "ReverseProxy": { "KnownProxies": [ "127.0.0.1" ] }
+}
+```
+
+同じサーバー上のプロキシなら `127.0.0.1`、別のマシンならプロキシの IP アドレスを指定します。登録したアドレスからは任意の接続元 IP を名乗れるため、自分で管理しているプロキシだけを登録してください。
 
 ### IIS（URL Rewrite + Application Request Routing）
 

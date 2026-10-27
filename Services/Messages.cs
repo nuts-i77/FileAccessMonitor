@@ -39,6 +39,33 @@ public static class Messages
         ["user.cannotChangeOwnRole"] = "You cannot change your own role.",
         ["user.invalidRole"] = "Role must be Admin or Viewer.",
         ["user.roleChanged"] = "Role changed.",
+        ["alerts.saved"] = "Notification settings saved.",
+        ["alerts.invalid"] = "Thresholds must be 0 or greater, and the window and cooldown must be at least 1 minute.",
+        ["alerts.noChannel"] = "Set a webhook URL or email settings first.",
+        ["alerts.smtpHostRequired"] = "Enter the SMTP server to send email.",
+        ["alerts.mailToRequired"] = "Enter at least one email recipient.",
+        ["alerts.testSent"] = "Test notification sent.",
+        ["alerts.testFailed"] = "Test notification failed: {0}",
+        ["alert.deleteTitle"] = "Mass deletion detected",
+        ["alert.writeTitle"] = "Mass file changes detected (possible ransomware)",
+        ["alert.user"] = "User: {0}",
+        ["alert.count"] = "Files: {0} within {1} minutes",
+        ["alert.period"] = "Period: {0} - {1}",
+        ["alert.client"] = "Client: {0}",
+        ["alert.server"] = "Server: {0}",
+        ["alert.folders"] = "Main folders:",
+        ["alert.samples"] = "Examples:",
+        ["alert.testTitle"] = "Test notification",
+        ["alert.testBody"] = "This is a test notification from FileAccessMonitor on {0}.",
+        ["csv.time"] = "Date/Time",
+        ["csv.timeUtc"] = "Date/Time (UTC)",
+        ["csv.user"] = "User",
+        ["csv.type"] = "Type",
+        ["csv.fileName"] = "File Name",
+        ["csv.folder"] = "Folder",
+        ["csv.path"] = "Full Path",
+        ["csv.ip"] = "Client IP",
+        ["csv.machine"] = "Client Machine",
     };
 
     public static readonly IReadOnlyDictionary<string, string> Ja = new Dictionary<string, string>
@@ -73,15 +100,47 @@ public static class Messages
         ["user.cannotChangeOwnRole"] = "自分自身のロールは変更できません。",
         ["user.invalidRole"] = "ロールは Admin または Viewer を指定してください。",
         ["user.roleChanged"] = "ロールを変更しました。",
+        ["alerts.saved"] = "通知設定を保存しました。",
+        ["alerts.invalid"] = "しきい値は 0 以上、集計時間と再通知までの間隔は 1 分以上を指定してください。",
+        ["alerts.noChannel"] = "先に Webhook URL またはメールの設定を行ってください。",
+        ["alerts.smtpHostRequired"] = "メールを送るには SMTP サーバーを入力してください。",
+        ["alerts.mailToRequired"] = "メールの宛先を 1 つ以上入力してください。",
+        ["alerts.testSent"] = "テスト通知を送信しました。",
+        ["alerts.testFailed"] = "テスト通知の送信に失敗しました: {0}",
+        ["alert.deleteTitle"] = "大量削除を検知しました",
+        ["alert.writeTitle"] = "大量のファイル変更を検知しました（ランサムウェアの可能性）",
+        ["alert.user"] = "ユーザー: {0}",
+        ["alert.count"] = "件数: {1} 分以内に {0} 件",
+        ["alert.period"] = "期間: {0} ～ {1}",
+        ["alert.client"] = "接続元: {0}",
+        ["alert.server"] = "サーバー: {0}",
+        ["alert.folders"] = "主なフォルダ:",
+        ["alert.samples"] = "ファイルの例:",
+        ["alert.testTitle"] = "テスト通知",
+        ["alert.testBody"] = "{0} の FileAccessMonitor からのテスト通知です。",
+        ["csv.time"] = "日時",
+        ["csv.timeUtc"] = "日時 (UTC)",
+        ["csv.user"] = "ユーザー",
+        ["csv.type"] = "種別",
+        ["csv.fileName"] = "ファイル名",
+        ["csv.folder"] = "フォルダ",
+        ["csv.path"] = "フルパス",
+        ["csv.ip"] = "接続元 IP",
+        ["csv.machine"] = "接続元端末",
     };
 
     public static bool IsJapanese => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ja";
 
-    public static string Get(string key, params object?[] args)
+    public static string Get(string key, params object?[] args) => Format(IsJapanese ? Ja : En, key, args);
+
+    // For text not tied to a request, e.g. alert notifications in the configured language.
+    public static string GetIn(string language, string key, params object?[] args) =>
+        Format(language.StartsWith("ja", StringComparison.OrdinalIgnoreCase) ? Ja : En, key, args);
+
+    private static string Format(IReadOnlyDictionary<string, string> dict, string key, object?[] args)
     {
-        var dict = IsJapanese ? Ja : En;
         var format = dict.TryGetValue(key, out var s) ? s : En.GetValueOrDefault(key, key);
-        return args.Length == 0 ? format : string.Format(CultureInfo.CurrentCulture, format, args);
+        return args.Length == 0 ? format : string.Format(CultureInfo.InvariantCulture, format, args);
     }
 
     public static string Join(IdentityResult result) =>

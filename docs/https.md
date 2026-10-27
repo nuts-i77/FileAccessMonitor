@@ -86,7 +86,17 @@ Remove-NetFirewallRule -DisplayName "File Access Monitor Web"
 Set-NetFirewallRule -DisplayName "File Access Monitor Web" -RemoteAddress 192.0.2.5   # the proxy's IP
 ```
 
-The app does not use the client IP address or the request scheme, so the proxy does not need to send any special `X-Forwarded-*` headers. The app sets its own security headers, including CSP, and the proxy passes them through.
+The app sets its own security headers, including CSP, and the proxy passes them through.
+
+The operation log records the client IP address of each request. Behind a proxy, that is the proxy's address unless you list the proxy in `appsettings.Production.json`; the app then takes the real client IP from the `X-Forwarded-For` header that the proxy sends (the nginx sample below sends it; IIS ARR and Caddy send it by default):
+
+```json
+{
+  "ReverseProxy": { "KnownProxies": [ "127.0.0.1" ] }
+}
+```
+
+Use `127.0.0.1` for a proxy on the same server, or the proxy's IP address otherwise. Only list proxies you control, because a listed address can claim any client IP.
 
 ### IIS (URL Rewrite + Application Request Routing)
 
