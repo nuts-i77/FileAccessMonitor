@@ -163,6 +163,30 @@ The screenshots use fictional sample data.
 | Write | `0x2` (WriteData) / `0x4` (AppendData) / `0x40000000` (GENERIC_WRITE) |
 | Delete | `0x10000` (DELETE), and event 4659 |
 
+## Comparison with other tools
+
+FileAccessMonitor aims at one job: letting a small team see who read, changed, or deleted files on a Windows file server, without building a log platform. If you need more than that, another tool is likely a better fit.
+
+| | FileAccessMonitor | Commercial auditing products<br>(e.g. Netwrix Auditor, ManageEngine ADAudit Plus) | Wazuh |
+|---|---|---|---|
+| Cost | Free (MIT) | Paid licenses | Free (open source); paid cloud and support available |
+| Setup | One installer on the file server | Installer; often needs a separate server and database | Wazuh server, indexer, and dashboard, plus an agent on each host |
+| Scope | File access on one Windows file server | File servers, NAS, Active Directory, Microsoft 365, and more | Security monitoring (SIEM/XDR) across many hosts |
+| Who **read** a file | Yes (Security log events 4663/4659) | Yes | File integrity monitoring covers changes only; reads need Security-log collection and your own rules |
+| Multiple servers in one view | No (one instance and GUI per server) | Yes | Yes |
+| Alerts | Mass delete / mass change, to Teams, Slack, a webhook, or email | Many built-in rules | Flexible rules and automated responses |
+| Reports | Search and CSV export | Built-in compliance and scheduled reports | Dashboards and compliance mappings |
+| Japanese UI | Yes | Varies by product | No |
+| Support | Community (GitHub Issues), no SLA | Vendor support | Community, or paid vendor support |
+
+**When to choose which**
+
+- **FileAccessMonitor**: you have one or a few Windows file servers, want answers to "who deleted this file?" or "who opened this folder?", and do not want to run a log platform.
+- **A commercial product**: you need to audit several servers, AD, or Microsoft 365 together, need compliance reports, or need vendor support.
+- **Wazuh**: you are building organization-wide security monitoring and file access is one of many sources.
+
+Product capabilities above are summarized from public information and may change. Check each vendor's documentation for details.
+
 ## Limitations
 
 - **Operations that do not open a file are not recorded.** This includes reading only attributes or timestamps (`0x80` ReadAttributes and similar) and listing folders. For example, when an incremental backup tool finds a file unchanged and skips copying it, that file is not recorded.
