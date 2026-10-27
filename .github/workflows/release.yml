@@ -28,11 +28,57 @@ jobs:
             choco install innosetup -y --no-progress
           }
 
+      # Code signing via SignPath Foundation. It runs only after the repository variable
+      # SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN are set; otherwise the
+      # release is built unsigned. The app exe is signed before it goes into the installer,
+      # then the installer itself is signed.
+      - name: Build app
+        shell: pwsh
+        run: ./build.ps1 -Version ("${{ github.ref_name }}".TrimStart('v'))
+
+      - name: Upload app exe for signing
+        id: upload-exe
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-exe
+          path: publish/FileAccessMonitor.exe
+
+      - name: Sign app exe
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'FileAccessMonitor' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.upload-exe.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: publish
+
       - name: Build installer
         shell: pwsh
-        run: |
-          $v = "${{ github.ref_name }}".TrimStart('v')
-          ./build-installer.ps1 -Version $v
+        run: ./build-installer.ps1 -Version ("${{ github.ref_name }}".TrimStart('v')) -SkipBuild
+
+      - name: Upload installer for signing
+        id: upload-setup
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-setup
+          path: dist/FileAccessMonitor-Setup-*.exe
+
+      - name: Sign installer
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'FileAccessMonitor' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
 
       - name: Package portable zip and checksums
         shell: pwsh

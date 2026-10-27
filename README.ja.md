@@ -209,6 +209,20 @@ GitHub Actions（`.github/workflows/ci.yml`）で push / Pull Request ごとに�
 .\restore-audit.ps1 -SharePaths "D:\Share"   # 監査設定を元に戻す場合
 ```
 
+## コード署名ポリシー
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+（[SignPath.io](https://about.signpath.io/) による無償のコード署名を利用しています。証明書は [SignPath Foundation](https://signpath.org/) が発行しています。）
+
+- 署名するのは、このリポジトリの[リリース用ワークフロー](.github/workflows/release.yml)がタグ付きのソースからビルドしたファイル（`FileAccessMonitor.exe` とインストーラー `FileAccessMonitor-Setup-<バージョン>.exe`）だけです。
+- コミッター・レビュアー: [nuts-i77](https://github.com/nuts-i77)
+- 承認者: [nuts-i77](https://github.com/nuts-i77)
+
+### プライバシーポリシー
+
+本プログラムは、利用者またはインストール・運用する人が明示的に指定しない限り、他のネットワーク上のシステムに情報を送信しません。外部に送信するのは、管理者が設定した場合だけです。具体的には、設定タブで指定した Webhook URL・メールサーバーへの通知と、同じく設定タブで指定した DNS サーバーへの接続元 IP アドレスの逆引きです。
+
 ## ライセンス
 
 [MIT License](LICENSE)

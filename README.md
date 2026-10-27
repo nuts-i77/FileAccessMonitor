@@ -216,6 +216,18 @@ If you installed from source:
 .\restore-audit.ps1 -SharePaths "D:\Share"   # to remove the audit settings as well
 ```
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- Only files built by this repository's [release workflow](.github/workflows/release.yml) from the tagged source are signed: `FileAccessMonitor.exe` and the installer `FileAccessMonitor-Setup-<version>.exe`.
+- Committers and reviewers: [nuts-i77](https://github.com/nuts-i77)
+- Approvers: [nuts-i77](https://github.com/nuts-i77)
+
+### Privacy policy
+
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. It sends data to other systems only when an administrator configures it to: notifications go to the webhook URLs and mail servers set on the Settings tab, and reverse DNS lookups of client IP addresses go to the DNS servers set there.
+
 ## License
 
 [MIT License](LICENSE)
