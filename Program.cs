@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS ""AspNetUserTokens"" (
         var admin = new ApplicationUser
         {
             UserName = "admin",
-            DisplayName = "管理者",
+            DisplayName = "Administrator",
             Email = "admin@localhost"
         };
         var password = SecretStore.CreateInitialAdminPassword();

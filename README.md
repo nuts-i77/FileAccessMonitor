@@ -4,6 +4,8 @@ English | [日本語](README.ja.md)
 
 FileAccessMonitor collects file access events (read, write, delete) on a Windows file server's shared folders from the Windows Security audit log. It stores them in SQLite and shows them in a web GUI.
 
+![Dashboard](docs/images/dashboard-en.png)
+
 > [!IMPORTANT]
 > This tool records who accessed which file and when. If you use it in an organization, tell the people being monitored in advance, in line with your workplace rules and privacy policy.
 
@@ -132,6 +134,16 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | Settings | Monitored folders, users, reverse DNS, data retention |
 
 The GUI is available in English and Japanese. Switch languages at the top right; on first visit the GUI follows the browser's language. Messages returned by the API use the selected language too.
+
+**Recent access log** — who opened which file, from which IP address and machine:
+
+![Recent access log](docs/images/recent-en.png)
+
+**Settings** — monitored folders and recorded access types, users, reverse DNS, and data retention:
+
+![Settings](docs/images/settings-en.png)
+
+The screenshots use fictional sample data.
 
 ## How it works
 

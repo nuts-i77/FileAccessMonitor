@@ -56,3 +56,9 @@ body {
   padding-bottom: 0.3rem;
   margin-bottom: 0.75rem;
 }
+
+/* On Japanese Windows, system-ui resolves to a Japanese font that draws "\" as "¥".
+   In English mode, prefer Segoe UI so paths show backslashes. */
+html[lang="en"] {
+  --bs-body-font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
