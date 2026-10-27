@@ -1,0 +1,58 @@
+body {
+  background-color: #f4f6f9;
+  font-size: 0.875rem;
+}
+
+.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.sortable:hover {
+  background: rgba(255,255,255,0.15);
+}
+.sortable::after {
+  content: ' ↕';
+  opacity: 0.4;
+  font-size: 0.75em;
+}
+
+.badge-read   { background-color: #0d6efd; }
+.badge-write  { background-color: #198754; }
+.badge-delete { background-color: #dc3545; }
+
+.access-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: #e9ecef;
+  overflow: hidden;
+  min-width: 60px;
+}
+.access-bar-fill {
+  height: 100%;
+  background: #0d6efd;
+  transition: width 0.3s;
+}
+
+.table-sm td, .table-sm th {
+  white-space: nowrap;
+}
+.path-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-tabs .nav-link {
+  color: #495057;
+}
+.nav-tabs .nav-link.active {
+  font-weight: 600;
+}
+
+.detail-section-title {
+  font-weight: 600;
+  border-bottom: 1px solid #dee2e6;
+  padding-bottom: 0.3rem;
+  margin-bottom: 0.75rem;
+}

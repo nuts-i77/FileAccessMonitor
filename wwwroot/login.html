@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ログイン - ファイルアクセス監視</title>
+  <link rel="stylesheet" href="lib/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="lib/bootstrap-icons/bootstrap-icons.min.css">
+  <style>
+    body { background: #f0f2f5; }
+    .login-card { max-width: 400px; margin: 10vh auto; }
+  </style>
+</head>
+<body>
+<div class="login-card px-3">
+  <div class="text-end mb-2">
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="langToggleBtn">EN</button>
+  </div>
+  <div class="text-center mb-4">
+    <i class="bi bi-hdd-network fs-1 text-primary"></i>
+    <h4 class="mt-2 fw-bold" data-i18n="appTitle">ファイルアクセス監視</h4>
+  </div>
+  <div class="card shadow-sm">
+    <div class="card-body p-4">
+      <h5 class="card-title mb-3" data-i18n="login">ログイン</h5>
+      <div id="loginAlert" class="d-none"></div>
+      <form id="loginForm">
+        <div class="mb-3">
+          <label class="form-label" data-i18n="username">ユーザー名</label>
+          <input type="text" id="username" class="form-control" autocomplete="username" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" data-i18n="password">パスワード</label>
+          <input type="password" id="password" class="form-control" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-primary w-100" id="loginBtn"></button>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+  const STRINGS = {
+    ja: {
+      appTitle: 'ファイルアクセス監視', login: 'ログイン', username: 'ユーザー名', password: 'パスワード',
+      signingIn: 'ログイン中...', failed: 'ログインに失敗しました。', network: '通信エラーが発生しました。'
+    },
+    en: {
+      appTitle: 'File Access Monitor', login: 'Sign in', username: 'Username', password: 'Password',
+      signingIn: 'Signing in...', failed: 'Sign-in failed.', network: 'A network error occurred.'
+    }
+  };
+  // Same rule as getLang() in js/app.js
+  const lang = localStorage.getItem('lang') || (navigator.language?.startsWith('ja') ? 'ja' : 'en');
+  const s = STRINGS[lang] || STRINGS.ja;
+
+  document.documentElement.lang = lang;
+  document.title = `${s.login} - ${s.appTitle}`;
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = s[el.dataset.i18n]; });
+  const langBtn = document.getElementById('langToggleBtn');
+  langBtn.textContent = lang === 'en' ? 'JA' : 'EN';
+  langBtn.addEventListener('click', () => {
+    localStorage.setItem('lang', lang === 'en' ? 'ja' : 'en');
+    location.reload();
+  });
+
+  const btn = document.getElementById('loginBtn');
+  const loginLabel = `<i class="bi bi-box-arrow-in-right me-1"></i>${s.login}`;
+  btn.innerHTML = loginLabel;
+
+  // Already logged in?
+  if (localStorage.getItem('jwt_token')) {
+    try {
+      const payload = JSON.parse(atob(localStorage.getItem('jwt_token').split('.')[1]));
+      if (payload.exp * 1000 > Date.now()) location.replace('/');
+    } catch {}
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${s.signingIn}`;
+
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept-Language': lang },
+        body: JSON.stringify({ username, password })
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        showAlert(d.error || s.failed);
+        return;
+      }
+      localStorage.setItem('jwt_token', d.token);
+      localStorage.setItem('jwt_user', JSON.stringify({ username: d.username, displayName: d.displayName, roles: d.roles }));
+      location.replace('/');
+    } catch {
+      showAlert(s.network);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = loginLabel;
+    }
+  });
+
+  function showAlert(msg) {
+    const el = document.getElementById('loginAlert');
+    el.className = 'alert alert-danger small';
+    el.textContent = msg;
+  }
+</script>
+</body>
+</html>

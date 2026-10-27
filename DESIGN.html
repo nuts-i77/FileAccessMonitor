@@ -1,0 +1,827 @@
+<title>FileAccessMonitor 設計書</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  --bg:       #f4f6f9;
+  --surface:  #ffffff;
+  --surface2: #eef1f6;
+  --border:   #d4dae6;
+  --fg:       #1a2133;
+  --fg-mid:   #4a5568;
+  --fg-muted: #7a869a;
+  --accent:   #2563a8;
+  --accent-lt:#dbeafe;
+  --green:    #16835c;
+  --green-lt: #d1fae5;
+  --red:      #b91c1c;
+  --red-lt:   #fee2e2;
+  --amber:    #92400e;
+  --amber-lt: #fef3c7;
+  --code-bg:  #f0f4fa;
+  --mono: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  --sans: "IBM Plex Sans JP", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:       #0f1623;
+    --surface:  #1a2133;
+    --surface2: #222e44;
+    --border:   #2d3f5c;
+    --fg:       #e8edf5;
+    --fg-mid:   #9aacca;
+    --fg-muted: #5e7499;
+    --accent:   #5b9bd5;
+    --accent-lt:#1e3456;
+    --green:    #34d399;
+    --green-lt: #064e3b;
+    --red:      #f87171;
+    --red-lt:   #450a0a;
+    --amber:    #fbbf24;
+    --amber-lt: #451a03;
+    --code-bg:  #162030;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:       #0f1623;
+  --surface:  #1a2133;
+  --surface2: #222e44;
+  --border:   #2d3f5c;
+  --fg:       #e8edf5;
+  --fg-mid:   #9aacca;
+  --fg-muted: #5e7499;
+  --accent:   #5b9bd5;
+  --accent-lt:#1e3456;
+  --green:    #34d399;
+  --green-lt: #064e3b;
+  --red:      #f87171;
+  --red-lt:   #450a0a;
+  --amber:    #fbbf24;
+  --amber-lt: #451a03;
+  --code-bg:  #162030;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--fg);
+  background: var(--bg);
+  padding-left: max(0px, env(safe-area-inset-left, 0px));
+  padding-right: max(0px, env(safe-area-inset-right, 0px));
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+.topbar {
+  grid-column: 1 / -1;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 14px max(20px, env(safe-area-inset-right, 0px)) 14px max(20px, env(safe-area-inset-left, 0px));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.topbar-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  background: var(--accent-lt);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+.topbar-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.topbar-sub {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-family: var(--mono);
+}
+
+nav {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.nav-group { margin-bottom: 20px; }
+.nav-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  padding: 0 16px 6px;
+}
+.nav-link {
+  display: block;
+  padding: 5px 16px;
+  font-size: 13px;
+  color: var(--fg-mid);
+  text-decoration: none;
+  border-left: 3px solid transparent;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.nav-link:hover { background: var(--surface2); color: var(--fg); }
+.nav-link.active { border-left-color: var(--accent); color: var(--accent); background: var(--accent-lt); }
+
+main {
+  padding: 32px max(28px, env(safe-area-inset-right, 0px)) 60px max(28px, env(safe-area-inset-left, 0px));
+  max-width: 860px;
+}
+section { margin-bottom: 52px; scroll-margin-top: 16px; }
+h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  text-wrap: balance;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 20px 0 8px;
+  text-wrap: balance;
+}
+p { margin: 0 0 10px; color: var(--fg-mid); max-width: 65ch; }
+p:last-child { margin-bottom: 0; }
+
+code, .mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--fg);
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--fg);
+  margin: 10px 0;
+}
+pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+.table-wrap { overflow-x: auto; margin: 10px 0; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 520px;
+}
+thead th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  background: var(--surface2);
+  padding: 7px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+tbody td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  color: var(--fg-mid);
+}
+tbody td:first-child { font-family: var(--mono); font-size: 12px; color: var(--fg); }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: var(--surface2); }
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.badge-get  { background: var(--green-lt); color: var(--green); }
+.badge-post { background: var(--accent-lt); color: var(--accent); }
+.badge-put  { background: var(--amber-lt); color: var(--amber); }
+.badge-del  { background: var(--red-lt); color: var(--red); }
+.badge-admin { background: var(--red-lt); color: var(--red); }
+.badge-viewer { background: var(--green-lt); color: var(--green); }
+.badge-tag  { background: var(--surface2); color: var(--fg-mid); border: 1px solid var(--border); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin: 10px 0;
+}
+.callout {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-lt);
+  color: var(--fg-mid);
+  border-radius: 0 6px 6px 0;
+  padding: 10px 14px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.callout.warn { border-left-color: var(--amber); background: var(--amber-lt); }
+.callout strong { color: var(--fg); }
+
+.endpoint {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.endpoint:last-child { border-bottom: none; }
+.endpoint-path { font-family: var(--mono); font-size: 12.5px; color: var(--fg); flex: 1; min-width: 0; }
+.endpoint-desc { color: var(--fg-muted); font-size: 12px; white-space: nowrap; }
+
+.fields { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.field {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 12px;
+  align-items: start;
+  font-size: 13px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.field:last-child { border-bottom: none; }
+.field-name { font-family: var(--mono); font-size: 12px; color: var(--fg); }
+.field-desc { color: var(--fg-mid); }
+
+.pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.pill {
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 20px;
+  padding: 4px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--fg-mid);
+}
+.pill strong { color: var(--fg); font-weight: 600; }
+
+@media (max-width: 700px) {
+  .shell { grid-template-columns: 1fr; }
+  nav { display: none; }
+  main { padding: 20px max(16px, env(safe-area-inset-right, 0px)) 40px max(16px, env(safe-area-inset-left, 0px)); }
+}
+</style>
+
+<div class="shell">
+  <div class="topbar">
+    <span class="topbar-badge">設計書</span>
+    <span class="topbar-title">FileAccessMonitor</span>
+    <span class="topbar-sub">v2 · 2026-10-26 · net10.0-windows</span>
+  </div>
+
+  <nav>
+    <div class="nav-group">
+      <div class="nav-label">概要</div>
+      <a class="nav-link" href="#overview">アーキテクチャ</a>
+      <a class="nav-link" href="#stack">技術スタック</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">バックエンド</div>
+      <a class="nav-link" href="#data">データモデル</a>
+      <a class="nav-link" href="#events">イベント処理</a>
+      <a class="nav-link" href="#services">サービス</a>
+      <a class="nav-link" href="#api">APIエンドポイント</a>
+      <a class="nav-link" href="#config">設定ファイル</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">フロントエンド</div>
+      <a class="nav-link" href="#ui">UIタブ</a>
+      <a class="nav-link" href="#i18n">多言語対応</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">運用</div>
+      <a class="nav-link" href="#deploy">デプロイ</a>
+      <a class="nav-link" href="#auth">認証・ロール</a>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- アーキテクチャ概要 -->
+    <section id="overview">
+      <h2>アーキテクチャ概要</h2>
+      <p>FileAccessMonitor は Windows サービスとして動作し、Windows セキュリティイベントログから SMB ファイルアクセスイベントを取得して REST API + SPA ダッシュボードで可視化するツールです。監視対象のファイルサーバー本体（既定ポート 8080）上で自己完結型 EXE として動作します。</p>
+
+      <pre class="mermaid">
+graph TD
+    WinAudit["Windows セキュリティイベントログ\n(4663 · 4659 · 4624 · 5140)"]
+    Svc["EventLogCollectorService\n(バックグラウンドワーカー)"]
+    DB["SQLite\nAccessRecord"]
+    API["ASP.NET Core 10\nREST API :8080"]
+    SPA["SPA\nwwwroot/index.html"]
+    Client["ブラウザ"]
+    DNS["DnsResolverService\n(UDP PTR 逆引き)"]
+
+    WinAudit -->|EventRecordWritten| Svc
+    Svc -->|IP解決| DNS
+    Svc -->|INSERT| DB
+    API -->|EF Core| DB
+    Client -->|JWT Bearer| API
+    API -->|静的ファイル配信| SPA
+      </pre>
+
+      <div class="callout">
+        <strong>制約事項：</strong>SACL の適用とセキュリティイベントログへのアクセスはローカル実行が必要なため、サービスはファイルサーバー上で直接動作させる必要があります。開発 PC からのデプロイは、WinRM が使える場合は <code>deploy-remote.ps1</code>、使えない場合は UNC パス経由のファイルコピーと <code>sc.exe</code>（RPC）によるサービス制御で行います（後述）。
+      </div>
+    </section>
+
+    <!-- 技術スタック -->
+    <section id="stack">
+      <h2>技術スタック</h2>
+      <div class="pills">
+        <span class="pill"><strong>ランタイム</strong> .NET 10.0-windows, UseWindowsService()</span>
+        <span class="pill"><strong>Web</strong> ASP.NET Core 10 (Microsoft.NET.Sdk.Web)</span>
+        <span class="pill"><strong>ORM</strong> Entity Framework Core 10 + SQLite</span>
+        <span class="pill"><strong>認証</strong> ASP.NET Identity + JWT Bearer</span>
+        <span class="pill"><strong>ログ</strong> Serilog.AspNetCore 8.0.3</span>
+        <span class="pill"><strong>発行</strong> PublishSingleFile=true, win-x64 自己完結型</span>
+        <span class="pill"><strong>SQLite ネイティブ</strong> SQLitePCLRaw.lib.e_sqlite3 3.53.3</span>
+        <span class="pill"><strong>UI</strong> Bootstrap 5.3.3, Bootstrap Icons, Chart.js 4.4.4</span>
+      </div>
+
+      <h3>プロジェクトファイルの主要設定</h3>
+      <pre><code>&lt;TargetFramework&gt;net10.0-windows&lt;/TargetFramework&gt;
+&lt;PublishSingleFile&gt;true&lt;/PublishSingleFile&gt;
+&lt;SelfContained&gt;true&lt;/SelfContained&gt;
+&lt;RuntimeIdentifier&gt;win-x64&lt;/RuntimeIdentifier&gt;</code></pre>
+
+      <div class="callout warn">
+        <strong>注意：</strong><code>wwwroot/</code> の静的ファイルは EXE に埋め込まれず、ファイルシステムから配信されます。<code>Accept-Encoding</code> ヘッダーに基づいて <code>.br</code>/<code>.gz</code> の事前圧縮ファイルも配信されます。発行フォルダには <code>wwwroot/</code> ディレクトリを含める必要があります。
+      </div>
+    </section>
+
+    <!-- データモデル -->
+    <section id="data">
+      <h2>データモデル</h2>
+      <h3>AccessRecord</h3>
+      <div class="card">
+        <div class="fields">
+          <div class="field"><span class="field-name">Id</span><span class="field-desc">long — 自動インクリメント主キー</span></div>
+          <div class="field"><span class="field-name">FilePath</span><span class="field-desc">string MaxLength(2000) — フルパス（例: <code>U:\share\foo.txt</code>）</span></div>
+          <div class="field"><span class="field-name">FileName</span><span class="field-desc">string MaxLength(500) — ファイル名のみ</span></div>
+          <div class="field"><span class="field-name">FolderPath</span><span class="field-desc">string MaxLength(2000) — 親ディレクトリ</span></div>
+          <div class="field"><span class="field-name">UserName</span><span class="field-desc">string MaxLength(200) — Windows アカウント（DOMAIN\user 形式）</span></div>
+          <div class="field"><span class="field-name">AccessType</span><span class="field-desc">string MaxLength(20) — <code>"Read"</code> | <code>"Write"</code> | <code>"Delete"</code></span></div>
+          <div class="field"><span class="field-name">AccessTime</span><span class="field-desc">DateTime UTC — イベント発生時刻</span></div>
+          <div class="field"><span class="field-name">ClientIp</span><span class="field-desc">string? MaxLength(100) — ログオン／SMB セッションキャッシュからのリモート IP</span></div>
+          <div class="field"><span class="field-name">ClientMachine</span><span class="field-desc">string? MaxLength(200) — DNS またはワークステーション名で解決したホスト名</span></div>
+        </div>
+      </div>
+
+      <h3>インデックス（AccessDbContext）</h3>
+      <pre><code>HasIndex(r => r.FilePath)
+HasIndex(r => r.FolderPath)
+HasIndex(r => r.AccessTime)
+HasIndex(r => r.UserName)
+HasIndex(r => new { r.FilePath, r.AccessTime })</code></pre>
+
+      <h3>スキーママイグレーション</h3>
+      <p>データベースは <code>EnsureCreated()</code> で作成されます。v2 で追加した <code>ClientIp</code>・<code>ClientMachine</code> 列は、起動時に <code>pragma_table_info</code> で存在を確認し、無い場合のみ <code>ALTER TABLE … ADD COLUMN</code> で追加されます（既存データを破壊しない非破壊的アップグレード）。</p>
+
+      <h3>Identity テーブル</h3>
+      <p><code>AccessDbContext</code> は <code>IdentityDbContext&lt;ApplicationUser&gt;</code> を継承しています。ASP.NET Identity のテーブル（ユーザー、ロール、クレームなど）はアクセスログと同じ SQLite ファイル（<code>C:\ProgramData\FileAccessMonitor\fileaccess.db</code>）に共存します。</p>
+    </section>
+
+    <!-- イベント処理パイプライン -->
+    <section id="events">
+      <h2>イベント処理パイプライン</h2>
+      <p><code>EventLogCollectorService</code> は以下の XPath で Windows セキュリティイベントログを購読します：</p>
+      <pre><code>*[System[(EventID=4663) or (EventID=4659) or (EventID=4624) or (EventID=5140)]]</code></pre>
+
+      <h3>各イベントの役割</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>イベント ID</th><th>用途</th><th>処理内容</th></tr></thead>
+          <tbody>
+            <tr><td>4663</td><td>オブジェクトアクセス（読み取り／書き込み）</td><td>AccessMask を解析してアクセス種別を判定し、監視対象パスのものを記録</td></tr>
+            <tr><td>4659</td><td>削除目的のハンドル要求</td><td>常に <code>Delete</code> として記録 — 現行 Windows での削除検知に重要</td></tr>
+            <tr><td>4624</td><td>ログオンイベント</td><td>ログオンセッション ID → (IP, マシン名) を <code>_logonCache</code> にキャッシュ</td></tr>
+            <tr><td>5140</td><td>ネットワーク共有アクセス</td><td>ユーザー名 → (IP, マシン名) を <code>_smbSessionCache</code> にキャッシュ</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>AccessMask の解析（イベント 4663）</h3>
+      <pre><code>0x10000           → Delete（削除）
+0x2 / 0x4 / 0x40000002 → Write（書き込み）
+0x1 / 0x80000000  → Read（読み取り）
+その他             → スキップ（記録しない）</code></pre>
+
+      <h3>IP / マシン名の解決</h3>
+      <p>実行時に2つのキャッシュを保持します：</p>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li><strong style="color:var(--fg)">_logonCache</strong> — ログオンセッション ID → (IP, マシン名)。起動時に過去30日分のイベントから事前ロード</li>
+        <li><strong style="color:var(--fg)">_smbSessionCache</strong> — ユーザー名 → (IP, マシン名)。<code>NetSessionEnum</code> Win32 API で30秒ごとに更新</li>
+      </ul>
+      <p>いずれのキャッシュでもマシン名が取得できない場合、<code>DnsResolverService.TryResolve(ip)</code> にフォールバックします。解決できない場合は <code>ClientMachine</code> に <code>null</code> が格納されます。</p>
+
+      <h3>パスの正規化</h3>
+      <p>イベントログのパスは NT デバイスパス形式（<code>\Device\HarddiskVolume3\...</code>）で届きます。起動時に <code>BuildDeviceMap()</code> が <code>QueryDosDevice</code> を呼び出して各ボリュームとドライブレターのマッピングを構築し、記録前にパスを変換します。</p>
+
+      <h3>フィルタリング</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li><code>$</code> で終わるアカウント名はスキップ（<code>ExcludeSystemAccounts=true</code>）</li>
+        <li><code>ExcludeProcessNames</code> に指定されたプロセス名はスキップ（<code>System</code>, <code>svchost.exe</code>, <code>SearchIndexer.exe</code>）</li>
+        <li>ファイルパスが監視対象パスのいずれかで始まる必要がある（設定した eventTypes に含まれるアクセス種別のみ記録）</li>
+      </ul>
+
+      <h3>起動時プリロード</h3>
+      <pre><code>XPath: *[System[(EventID=4624 or EventID=5140 or EventID=4659)
+        and TimeCreated[timediff(@SystemTime) &lt;= 2592000000]]]</code></pre>
+      <p>起動時に過去30日分のセキュリティイベントログを読み込んでキャッシュをウォームアップします。</p>
+    </section>
+
+    <!-- サービス -->
+    <section id="services">
+      <h2>サービス</h2>
+
+      <h3>EventLogCollectorService</h3>
+      <p><code>IHostedService</code> として登録されたコアのバックグラウンドワーカーです。詳細は上記「イベント処理パイプライン」を参照してください。</p>
+
+      <h3>DnsResolverService</h3>
+      <p>シングルトン。設定可能なプライベート DNS サーバーに対して UDP PTR 逆引きルックアップを行います。</p>
+      <div class="card">
+        <div class="fields">
+          <div class="field"><span class="field-name">SetDnsServer()</span><span class="field-desc">実行時に DNS サーバーアドレスを更新（SettingsController の保存時に呼び出し）</span></div>
+          <div class="field"><span class="field-name">GetDnsServer()</span><span class="field-desc">現在の DNS サーバーアドレスを返す</span></div>
+          <div class="field"><span class="field-name">TryResolve(ip)</span><span class="field-desc">逆引きルックアップ。正引きキャッシュ1時間、否定キャッシュ5分。サーバー未設定またはルックアップ失敗時は <code>null</code> を返す</span></div>
+        </div>
+      </div>
+      <p>PTR クエリ例: <code>192.0.2.31</code> → <code>31.2.0.192.in-addr.arpa</code>。生 UDP QTYPE=12 (PTR), QCLASS=IN, タイムアウト 1500ms。レスポンスの DNS ラベルポインタ圧縮にも対応。</p>
+
+      <h3>SaclManagerService</h3>
+      <p>シングルトン。監視対象パスの Windows SACL（監査 ACE）を管理します。</p>
+      <div class="card">
+        <div class="fields">
+          <div class="field"><span class="field-name">EnableAuditPolicy()</span><span class="field-desc"><code>auditpol /set /subcategory:"{0CCE921D-...}"</code> を実行してファイルシステムオブジェクトアクセス監査を有効化</span></div>
+          <div class="field"><span class="field-name">ApplySacl(path)</span><span class="field-desc"><code>FileSystemRights.ReadData|WriteData|AppendData|Delete</code>, <code>AuditFlags.Success</code>, <code>Everyone</code> の監査ルールをパス配下に再帰適用。既存の Everyone ルールは置き換え（属性読み取り等は監査しないことで Security ログの肥大化を防ぐ）</span></div>
+          <div class="field"><span class="field-name">RemoveSacl(path)</span><span class="field-desc"><code>Everyone</code> の監査ルールをパス配下から再帰的に削除</span></div>
+        </div>
+      </div>
+
+      <h3>RetentionService</h3>
+      <p>シングルトン兼 <code>IHostedService</code>。設定された保持ポリシーの期限を超えた <code>AccessRecord</code> 行を定期的に削除します。</p>
+    </section>
+
+    <!-- APIエンドポイント -->
+    <section id="api">
+      <h2>API エンドポイント</h2>
+
+      <h3>認証 — <code>AuthController</code></h3>
+      <div class="card">
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/auth/login</span>
+          <span class="endpoint-desc">JWT トークンを返す（有効期限 24h）</span>
+        </div>
+      </div>
+
+      <h3>統計 — <code>StatsController</code> <span class="badge badge-tag">Viewer 以上</span></h3>
+      <div class="card">
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/summary?days=7</span>
+          <span class="endpoint-desc">{total, uniqueFiles, uniqueUsers, byType}</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/top-files?limit=20&amp;days=7&amp;accessType=</span>
+          <span class="endpoint-desc">読取・書込・削除件数付きファイルランキング</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/top-folders?limit=20&amp;days=7</span>
+          <span class="endpoint-desc">フォルダランキング</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/top-users?limit=20&amp;days=7</span>
+          <span class="endpoint-desc">ユーザーランキング</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/timeline?days=7</span>
+          <span class="endpoint-desc">日別時系列データ</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/file-detail?path=…&amp;days=30</span>
+          <span class="endpoint-desc">{byUser, byType, timeline, recent(50)}</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/folder-detail?path=…&amp;days=30</span>
+          <span class="endpoint-desc">{byUser, byType, timeline, topFiles(20)}</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/user-detail?username=…&amp;days=30</span>
+          <span class="endpoint-desc">{byType, timeline, topFiles, recentFiles}</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/recent?page=1&amp;pageSize=50</span>
+          <span class="endpoint-desc">{total, page, pageSize, items[]}</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/stats/search?q=&amp;days=7&amp;type=&amp;user=&amp;ip=&amp;page=1&amp;pageSize=50</span>
+          <span class="endpoint-desc">横断検索 — FileName, FilePath, FolderPath, UserName, ClientIp, ClientMachine を検索対象</span>
+        </div>
+      </div>
+
+      <h3>設定 — <code>SettingsController</code> <span class="badge badge-admin">Admin 専用</span></h3>
+      <div class="card">
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/settings</span>
+          <span class="endpoint-desc">{pathConfigs[{path, eventTypes[]}], dnsServer}</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/settings/paths</span>
+          <span class="endpoint-desc">監視パス追加 + 監査ポリシー有効化 + SACL 適用</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-del">DELETE</span>
+          <span class="endpoint-path">/api/settings/paths?path=…&amp;removeSacl=</span>
+          <span class="endpoint-desc">監視パス削除（オプションで SACL も削除）</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/settings/paths/apply-sacl</span>
+          <span class="endpoint-desc">SACL の再適用のみ（パス一覧は変更なし）</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/settings/paths/event-types</span>
+          <span class="endpoint-desc">パス単位の監視イベント種別を更新 {path, eventTypes[]}</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/settings/dns</span>
+          <span class="endpoint-desc">Body: {dnsServer: "…"} — settings.json に保存して DnsResolverService に反映</span>
+        </div>
+      </div>
+
+      <h3>保持ポリシー — <code>RetentionController</code> <span class="badge badge-admin">Admin 専用</span></h3>
+      <div class="card">
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/retention</span>
+          <span class="endpoint-desc">現在のポリシーとレコード統計を取得</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-put">PUT</span>
+          <span class="endpoint-path">/api/retention</span>
+          <span class="endpoint-desc">保持日数を更新（0 = 無期限保持）</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/retention/cleanup</span>
+          <span class="endpoint-desc">即時クリーンアップを実行</span>
+        </div>
+      </div>
+
+      <h3>ユーザー管理 — <code>UsersController</code> <span class="badge badge-admin">Admin 専用</span></h3>
+      <div class="card">
+        <div class="endpoint">
+          <span class="badge badge-get">GET</span>
+          <span class="endpoint-path">/api/users</span>
+          <span class="endpoint-desc">ロール付きユーザー一覧</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/users</span>
+          <span class="endpoint-desc">ユーザー作成</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-del">DELETE</span>
+          <span class="endpoint-path">/api/users/{id}</span>
+          <span class="endpoint-desc">ユーザー削除（自分自身は削除不可）</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-put">PUT</span>
+          <span class="endpoint-path">/api/users/{id}/role</span>
+          <span class="endpoint-desc">ロール変更（自分自身のロールは変更不可）</span>
+        </div>
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/users/{id}/reset-password</span>
+          <span class="endpoint-desc">パスワードリセット（Admin が他ユーザーのパスワードを強制変更）</span>
+        </div>
+      </div>
+
+      <h3>自己管理 — <code>MeController</code> <span class="badge badge-tag">認証済み全ユーザー</span></h3>
+      <div class="card">
+        <div class="endpoint">
+          <span class="badge badge-post">POST</span>
+          <span class="endpoint-path">/api/me/change-password</span>
+          <span class="endpoint-desc">自分のパスワードを変更（現在のパスワードが必要）</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 設定ファイル -->
+    <section id="config">
+      <h2>設定ファイル</h2>
+
+      <h3>appsettings.json（EXE 内蔵・基本設定）</h3>
+      <pre><code>{
+  "Kestrel": { "Endpoints": { "Http": { "Url": "http://0.0.0.0:8080" } } },
+  "Jwt": {
+    "Issuer": "FileAccessMonitor",
+    "Audience": "FileAccessMonitor",
+    "ExpiresHours": 24
+  },
+  "MonitoredPaths": [],
+  "ExcludeSystemAccounts": true,
+  "ExcludeProcessNames": ["System", "svchost.exe", "SearchIndexer.exe"]
+}</code></pre>
+      <p><code>Jwt:Key</code> は通常指定しません。未指定（または 32 バイト未満・サンプル値）の場合、初回起動時にランダムな鍵を生成して <code>C:\ProgramData\FileAccessMonitor\jwt.key</code>（SYSTEM / Administrators のみ読み取り可）に保存します。</p>
+
+      <h3>ユーザー設定ファイル（実行時に書き換え可能）</h3>
+      <p>場所: <code>C:\ProgramData\FileAccessMonitor\settings.json</code></p>
+      <pre><code>{
+  "MonitoredPaths": [
+    { "path": "D:\\Share", "eventTypes": ["Read", "Write", "Delete"] },
+    { "path": "D:\\Confidential", "eventTypes": ["Write", "Delete"] }
+  ],
+  "DnsServer": "192.0.2.1"
+}</code></pre>
+      <p><code>IConfiguration</code> に <code>AddJsonFile(..., reloadOnChange: true)</code> で追加されます。旧フォーマット（文字列配列）は起動時に自動的に新フォーマットへ変換されます。</p>
+
+      <h3>データベースの場所</h3>
+      <p><code>C:\ProgramData\FileAccessMonitor\fileaccess.db</code>（SQLite）</p>
+    </section>
+
+    <!-- UI タブ -->
+    <section id="ui">
+      <h2>UI — SPA タブ</h2>
+      <p>単一 HTML ファイル（<code>wwwroot/index.html</code>）。タブ状態は <code>localStorage</code> と URL ハッシュで保持されます。有効なタブ ID: <code>dashboard</code>, <code>files</code>, <code>folders</code>, <code>users</code>, <code>recent</code>, <code>search</code>, <code>settings</code>。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>タブ</th><th>主な機能</th><th>備考</th></tr></thead>
+          <tbody>
+            <tr><td>dashboard</td><td>集計カード、時系列グラフ、円グラフ、上位10ファイル／フォルダ</td><td>期間セレクタが全ウィジェットに反映</td></tr>
+            <tr><td>files</td><td>ファイルアクセスランキング、クリックでファイル詳細モーダル</td><td>クライアント側でファイル名フィルタリング</td></tr>
+            <tr><td>folders</td><td>フォルダアクセスランキング、クリックでフォルダ詳細モーダル</td><td>クライアント側でフォルダ名フィルタリング</td></tr>
+            <tr><td>users</td><td>ユーザーアクセスランキング、クリックでユーザー詳細モーダル</td><td>—</td></tr>
+            <tr><td>recent</td><td>ページネーション付きアクセスログ（PAGE_SIZE=50）</td><td>renderPagination() でページ制御</td></tr>
+            <tr><td>search</td><td>横断検索: キーワード・期間・種別・ユーザーフィルタ、ページネーション</td><td>FileName, FilePath, FolderPath, UserName, ClientIp, ClientMachine を横断検索</td></tr>
+            <tr><td>settings</td><td>監視フォルダ管理、ユーザー管理、逆引き DNS、保持ポリシー</td><td>変更操作は Admin ロール必須</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>ページネーションヘルパー（app.js）</h3>
+      <pre><code>buildPageRange(current, total)      // 省略記号付きページ番号配列を返す
+renderPagination(el, infoEl, page, total, pageSize, gotoFn)
+// PAGE_SIZE = 50
+// API レスポンス形式: { total, page, pageSize, items }</code></pre>
+
+      <h3>接続元セルの表示（IP / マシン名）</h3>
+      <pre><code>// マシン名が IP と同一の場合は重複表示を防ぐ
+if (r.clientIp) srcParts.push(`&lt;span class="font-monospace"&gt;${esc(r.clientIp)}&lt;/span&gt;`);
+if (r.clientMachine && r.clientMachine !== r.clientIp) srcParts.push(esc(r.clientMachine));</code></pre>
+    </section>
+
+    <!-- 多言語対応 -->
+    <section id="i18n">
+      <h2>多言語対応（i18n）</h2>
+      <p>フラットな JS 辞書方式。言語ファイルは <code>wwwroot/lang/ja.js</code> と <code>wwwroot/lang/en.js</code> に配置。それぞれ <code>window.I18N_JA</code> / <code>window.I18N_EN</code> を定義します。<code>t(key)</code> 関数がアクティブな言語辞書を参照し、<code>data-i18n="key"</code> 属性を持つ要素は <code>applyI18n()</code> で言語切替時に一括更新されます。</p>
+
+      <h3>新しい i18n キーの追加方法</h3>
+      <p><code>lang/ja.js</code> と <code>lang/en.js</code> の両方に同じキー名で追加します。HTML では <code>data-i18n="key"</code>、JS では <code>t('key')</code> を使用します。テンプレート補間には <code>{n}</code>、<code>{u}</code>、<code>{p}</code> などのプレースホルダーを使い、呼び出し側で文字列置換します。</p>
+    </section>
+
+    <!-- デプロイ -->
+    <section id="deploy">
+      <h2>デプロイ</h2>
+
+      <h3>デプロイ先</h3>
+      <div class="card">
+        <div class="fields">
+          <div class="field"><span class="field-name">サーバー</span><span class="field-desc">監視対象のファイルサーバー（以下 <code>FILESERVER</code>）</span></div>
+          <div class="field"><span class="field-name">サービス名</span><span class="field-desc">FileAccessMonitor</span></div>
+          <div class="field"><span class="field-name">インストール先</span><span class="field-desc"><code>C:\FileAccessMonitor\publish\</code></span></div>
+          <div class="field"><span class="field-name">ポート</span><span class="field-desc">8080 (http)</span></div>
+          <div class="field"><span class="field-name">データベース</span><span class="field-desc"><code>C:\ProgramData\FileAccessMonitor\fileaccess.db</code></span></div>
+          <div class="field"><span class="field-name">ユーザー設定</span><span class="field-desc"><code>C:\ProgramData\FileAccessMonitor\settings.json</code></span></div>
+        </div>
+      </div>
+
+      <h3>ビルドスクリプト（build.ps1）</h3>
+      <pre><code>dotnet publish -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -o ./publish</code></pre>
+
+      <h3>WinRM が使える場合</h3>
+      <pre><code>.\deploy-remote.ps1 -ServerIP FILESERVER</code></pre>
+
+      <h3>手動デプロイ手順（WinRM が使えない場合）</h3>
+      <pre><code># 1. ビルド（リポジトリのルートで実行）
+.\build.ps1
+
+# 2. サービス停止
+sc.exe \\FILESERVER stop FileAccessMonitor
+
+# 3. EXE のロックが解放されるまで待機（プロセスが終了したことを確認）
+
+# 4. ファイルコピー
+#    EXE は実行中はロックされるため、停止後にコピーすること
+Get-ChildItem -Path .\publish -Recurse -File | ForEach-Object {
+    $dst = $_.FullName.Replace(
+        (Resolve-Path .\publish).Path,
+        "\\FILESERVER\C$\FileAccessMonitor\publish"
+    )
+    New-Item -ItemType Directory -Path (Split-Path $dst) -Force | Out-Null
+    Copy-Item $_.FullName $dst -Force
+}
+
+# 5. サービス起動
+sc.exe \\FILESERVER start FileAccessMonitor</code></pre>
+
+      <div class="callout warn">
+        <strong>注意：</strong><code>Copy-Item -Recurse -Force</code> は既存ファイルが更新されないことがある（タイムスタンプが変わらない場合）ため、ファイル単位のコピーループを使用してください。
+      </div>
+
+      <div class="callout">
+        <strong>確認方法：</strong><code>sc.exe \\FILESERVER qc FileAccessMonitor</code> を実行するとサービスの実際のバイナリパスを確認できます。デプロイ先がずれていると思われる場合に使用してください。
+      </div>
+    </section>
+
+    <!-- 認証・ロール -->
+    <section id="auth">
+      <h2>認証・ロール</h2>
+      <p>JWT Bearer 認証。トークンの有効期限は 24 時間（<code>Jwt:ExpiresHours</code> で変更可能）。2つのロール：</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ロール</th><th>権限</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge badge-viewer">Viewer</span></td><td>読み取り専用: ダッシュボード・統計・検索・最新アクセスログ・自分のパスワード変更</td></tr>
+            <tr><td><span class="badge badge-admin">Admin</span></td><td>Viewer の全機能 + 設定管理・ユーザー管理・保持ポリシー・SACL 操作・他ユーザーのパスワードリセット</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>ユーザー管理は ASP.NET Identity によってアクセスログと同じ SQLite DB に保存されます。初回起動時に管理者アカウントが自動作成されます。追加アカウントは設定タブ → ユーザー管理から作成できます。</p>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  const links = document.querySelectorAll('.nav-link');
+  const sections = document.querySelectorAll('section[id]');
+
+  function updateNav() {
+    let current = '';
+    sections.forEach(s => {
+      if (s.getBoundingClientRect().top <= 60) current = s.id;
+    });
+    links.forEach(l => {
+      l.classList.toggle('active', l.getAttribute('href') === '#' + current);
+    });
+  }
+
+  document.querySelector('main').addEventListener('scroll', updateNav);
+  window.addEventListener('scroll', updateNav);
+  updateNav();
+</script>

@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="ja" id="htmlRoot">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="app.title">ファイルアクセス監視</title>
+  <link rel="stylesheet" href="lib/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="lib/bootstrap-icons/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3 py-2">
+  <span class="navbar-brand mb-0 h1">
+    <i class="bi bi-hdd-network me-2"></i><span data-i18n="app.title">ファイルアクセス監視</span>
+  </span>
+  <div class="d-flex align-items-center gap-3">
+    <label class="text-white-50 small mb-0" data-i18n="nav.period">期間:</label>
+    <select id="daysFilter" class="form-select form-select-sm" style="width:120px">
+      <option value="1" data-i18n="days.1">過去1日</option>
+      <option value="7" selected data-i18n="days.7">過去7日</option>
+      <option value="30" data-i18n="days.30">過去30日</option>
+      <option value="90" data-i18n="days.90">過去90日</option>
+    </select>
+    <button class="btn btn-sm btn-outline-light" onclick="loadAll()">
+      <i class="bi bi-arrow-clockwise"></i> <span data-i18n="nav.refresh">更新</span>
+    </button>
+    <select id="autoReloadSelect" class="form-select form-select-sm" style="width:130px" onchange="setAutoReload(this.value)">
+      <option value="0" data-i18n="nav.auto.none">自動更新: なし</option>
+      <option value="30" data-i18n="nav.auto.30s">自動更新: 30秒</option>
+      <option value="60" data-i18n="nav.auto.1m">自動更新: 1分</option>
+      <option value="300" data-i18n="nav.auto.5m">自動更新: 5分</option>
+    </select>
+    <span id="reloadCountdown" class="text-white-50 small" style="min-width:40px"></span>
+    <div class="dropdown d-none d-sm-inline-block">
+      <button class="btn btn-sm btn-outline-light dropdown-toggle" data-bs-toggle="dropdown" id="navUserBtn">
+        <i class="bi bi-person me-1"></i><span id="navUserName"></span>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li>
+          <a class="dropdown-item" href="#" onclick="showChangePasswordSelf(); return false;">
+            <i class="bi bi-key me-2"></i><span data-i18n="modal.changePassword">パスワード変更</span>
+          </a>
+        </li>
+        <li><hr class="dropdown-divider"></li>
+        <li>
+          <a class="dropdown-item text-danger" href="#" onclick="logout(); return false;">
+            <i class="bi bi-box-arrow-right me-2"></i><span data-i18n="nav.logout">ログアウト</span>
+          </a>
+        </li>
+      </ul>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary" id="langToggleBtn" onclick="toggleLang()">EN</button>
+    <button class="btn btn-sm btn-outline-secondary d-sm-none" onclick="logout()">
+      <i class="bi bi-box-arrow-right"></i>
+    </button>
+  </div>
+</nav>
+
+<div class="container-fluid mt-3">
+
+  <!-- Summary Cards -->
+  <div class="row g-3 mb-3" id="summaryCards">
+    <div class="col-6 col-md-3">
+      <div class="card text-bg-primary h-100">
+        <div class="card-body">
+          <div class="small text-white-50" data-i18n="card.total">総アクセス数</div>
+          <div class="fs-3 fw-bold" id="totalCount">-</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-bg-success h-100">
+        <div class="card-body">
+          <div class="small text-white-50" data-i18n="card.files">対象ファイル数</div>
+          <div class="fs-3 fw-bold" id="uniqueFiles">-</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-bg-warning h-100">
+        <div class="card-body">
+          <div class="small text-white-50" data-i18n="card.users">アクセスユーザー数</div>
+          <div class="fs-3 fw-bold" id="uniqueUsers">-</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-bg-info h-100">
+        <div class="card-body">
+          <div class="small text-white-50" data-i18n="card.types">アクセス種別</div>
+          <div id="accessTypesBadge" class="mt-1"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <ul class="nav nav-tabs mb-3" id="mainTabs">
+    <li class="nav-item">
+      <a class="nav-link active" href="#" data-tab="dashboard" onclick="switchTab('dashboard', this)">
+        <i class="bi bi-speedometer2 me-1"></i><span data-i18n="tab.dashboard">ダッシュボード</span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-tab="files" onclick="switchTab('files', this)">
+        <i class="bi bi-file-earmark me-1"></i><span data-i18n="tab.files">ファイル別</span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-tab="folders" onclick="switchTab('folders', this)">
+        <i class="bi bi-folder me-1"></i><span data-i18n="tab.folders">フォルダ別</span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-tab="users" onclick="switchTab('users', this)">
+        <i class="bi bi-people me-1"></i><span data-i18n="tab.users">ユーザー別</span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-tab="recent" onclick="switchTab('recent', this)">
+        <i class="bi bi-clock-history me-1"></i><span data-i18n="tab.recent">最新アクセス</span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-tab="search" onclick="switchTab('search', this)">
+        <i class="bi bi-search me-1"></i><span data-i18n="tab.search">検索</span>
+      </a>
+    </li>
+    <li class="nav-item ms-auto">
+      <a class="nav-link" href="#" data-tab="settings" onclick="switchTab('settings', this)">
+        <i class="bi bi-gear me-1"></i><span data-i18n="tab.settings">設定</span>
+      </a>
+    </li>
+  </ul>
+
+  <!-- Dashboard Tab -->
+  <div id="tab-dashboard">
+    <div class="row g-3">
+      <div class="col-12 col-lg-8">
+        <div class="card h-100">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-graph-up me-1"></i><span data-i18n="dash.timeline">アクセス推移</span>
+          </div>
+          <div class="card-body">
+            <canvas id="timelineChart" height="120"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-4">
+        <div class="card h-100">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-pie-chart me-1"></i><span data-i18n="dash.typePie">アクセス種別</span>
+          </div>
+          <div class="card-body d-flex align-items-center justify-content-center">
+            <canvas id="typeChart" style="max-height:220px"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-6">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-trophy me-1"></i><span data-i18n="dash.topFiles">アクセス数 Top 10 ファイル</span>
+          </div>
+          <div class="card-body">
+            <canvas id="topFilesChart" height="200"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-6">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-trophy me-1"></i><span data-i18n="dash.topFolders">アクセス数 Top 10 フォルダ</span>
+          </div>
+          <div class="card-body">
+            <canvas id="topFoldersChart" height="200"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Files Tab -->
+  <div id="tab-files" class="d-none">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold"><i class="bi bi-file-earmark-text me-1"></i><span data-i18n="files.title">ファイル別アクセス集計</span></span>
+        <div class="d-flex gap-2">
+          <input type="text" id="fileSearch" class="form-control form-control-sm" placeholder="ファイル名で検索..." data-i18n-ph="files.searchPh" style="width:200px" oninput="filterTable('filesTable', this.value)">
+          <select id="fileTypeFilter" class="form-select form-select-sm" style="width:120px" onchange="loadFiles()">
+            <option value="" data-i18n="type.all">全種別</option>
+            <option value="Read" data-i18n="type.read">読取</option>
+            <option value="Write" data-i18n="type.write">書込</option>
+            <option value="Delete" data-i18n="type.delete">削除</option>
+          </select>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm mb-0" id="filesTable">
+            <thead class="table-dark sticky-top">
+              <tr>
+                <th onclick="sortTable('filesTable',0)" class="sortable" data-i18n="th.rank">#</th>
+                <th onclick="sortTable('filesTable',1)" class="sortable" data-i18n="th.filename">ファイル名</th>
+                <th onclick="sortTable('filesTable',2)" class="sortable" data-i18n="th.path">パス</th>
+                <th onclick="sortTable('filesTable',3)" class="sortable text-end" data-i18n="th.total">合計</th>
+                <th onclick="sortTable('filesTable',4)" class="sortable text-end" data-i18n="th.read">読取</th>
+                <th onclick="sortTable('filesTable',5)" class="sortable text-end" data-i18n="th.write">書込</th>
+                <th onclick="sortTable('filesTable',6)" class="sortable text-end" data-i18n="th.delete">削除</th>
+                <th onclick="sortTable('filesTable',7)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
+                <th data-i18n="th.topUser">主要ユーザー</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="filesTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Folders Tab -->
+  <div id="tab-folders" class="d-none">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold"><i class="bi bi-folder2-open me-1"></i><span data-i18n="folders.title">フォルダ別アクセス集計</span></span>
+        <input type="text" id="folderSearch" class="form-control form-control-sm" placeholder="フォルダ名で検索..." data-i18n-ph="folders.searchPh" style="width:200px" oninput="filterTable('foldersTable', this.value)">
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm mb-0" id="foldersTable">
+            <thead class="table-dark sticky-top">
+              <tr>
+                <th onclick="sortTable('foldersTable',0)" class="sortable" data-i18n="th.rank">#</th>
+                <th onclick="sortTable('foldersTable',1)" class="sortable" data-i18n="th.folderName">フォルダ名</th>
+                <th onclick="sortTable('foldersTable',2)" class="sortable" data-i18n="th.path">パス</th>
+                <th onclick="sortTable('foldersTable',3)" class="sortable text-end" data-i18n="th.total">合計</th>
+                <th onclick="sortTable('foldersTable',4)" class="sortable text-end" data-i18n="th.read">読取</th>
+                <th onclick="sortTable('foldersTable',5)" class="sortable text-end" data-i18n="th.write">書込</th>
+                <th onclick="sortTable('foldersTable',6)" class="sortable text-end" data-i18n="th.delete">削除</th>
+                <th onclick="sortTable('foldersTable',7)" class="sortable text-end" data-i18n="th.fileCount">ファイル数</th>
+                <th onclick="sortTable('foldersTable',8)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="foldersTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Users Tab -->
+  <div id="tab-users" class="d-none">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-person-lines-fill me-1"></i><span data-i18n="users.title">ユーザー別アクセス集計</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm mb-0" id="usersTable">
+            <thead class="table-dark sticky-top">
+              <tr>
+                <th data-i18n="th.rank">#</th>
+                <th data-i18n="th.username">ユーザー名</th>
+                <th class="text-end" data-i18n="th.total">合計</th>
+                <th class="text-end" data-i18n="th.read">読取</th>
+                <th class="text-end" data-i18n="th.write">書込</th>
+                <th class="text-end" data-i18n="th.delete">削除</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Tab -->
+  <div id="tab-recent" class="d-none">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-clock-history me-1"></i><span data-i18n="recent.title">最新アクセスログ</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm mb-0">
+            <thead class="table-dark sticky-top">
+              <tr>
+                <th data-i18n="th.datetime">日時</th>
+                <th data-i18n="th.filename">ファイル名</th>
+                <th data-i18n="th.path">パス</th>
+                <th data-i18n="th.user">ユーザー</th>
+                <th data-i18n="th.type">種別</th>
+                <th data-i18n="th.source">接続元</th>
+              </tr>
+            </thead>
+            <tbody id="recentTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card-footer py-2">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <small class="text-muted" id="recentPaginationInfo"></small>
+          <nav><ul class="pagination pagination-sm mb-0" id="recentPagination"></ul></nav>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search Tab -->
+  <div id="tab-search" class="d-none">
+    <div class="card mb-3">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-search me-1"></i><span data-i18n="search.title">横断検索</span>
+      </div>
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <!-- Multi-keyword tag input -->
+          <div class="col-12 col-md-5">
+            <label class="form-label small text-muted" data-i18n="search.keyword">キーワード</label>
+            <div id="searchTagsWrap" class="form-control d-flex flex-wrap gap-1 align-items-center"
+              style="min-height:38px;cursor:text;height:auto"
+              onclick="document.getElementById('searchTagInput').focus()">
+              <span id="searchTags"></span>
+              <input type="text" id="searchTagInput" class="border-0 p-0 flex-grow-1"
+                style="min-width:100px;outline:none;background:transparent"
+                placeholder="" data-i18n-ph="search.keywordPh"
+                onkeydown="handleTagKeydown(event)">
+            </div>
+            <div class="form-text" data-i18n="search.tagHint">Enter で追加 / 複数指定は AND 検索</div>
+          </div>
+          <!-- Period picker dropdown -->
+          <div class="col-6 col-md-3">
+            <label class="form-label small text-muted" data-i18n="search.period">期間</label>
+            <div class="dropdown">
+              <button class="btn btn-outline-secondary w-100 d-flex justify-content-between align-items-center"
+                type="button" id="searchPeriodBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                <span id="searchPeriodLabel" data-i18n="days.7">過去7日</span>
+                <i class="bi bi-chevron-down ms-2 small"></i>
+              </button>
+              <div class="dropdown-menu" style="min-width:230px;z-index:1030">
+                <button type="button" class="dropdown-item search-period-quick" data-days="1"  onclick="selectSearchPeriodQuick(1)"  data-i18n="days.1">過去1日</button>
+                <button type="button" class="dropdown-item active search-period-quick" data-days="7"  onclick="selectSearchPeriodQuick(7)"  data-i18n="days.7">過去7日</button>
+                <button type="button" class="dropdown-item search-period-quick" data-days="30" onclick="selectSearchPeriodQuick(30)" data-i18n="days.30">過去30日</button>
+                <button type="button" class="dropdown-item search-period-quick" data-days="90" onclick="selectSearchPeriodQuick(90)" data-i18n="days.90">過去90日</button>
+                <button type="button" class="dropdown-item search-period-quick" data-days="0"  onclick="selectSearchPeriodQuick(0)"  data-i18n="days.all">全期間</button>
+                <div class="dropdown-divider"></div>
+                <div class="px-3 py-1">
+                  <div class="small text-muted mb-1" data-i18n="search.custom">カスタム期間</div>
+                  <div class="d-flex gap-1 align-items-center">
+                    <input type="date" id="searchDateFrom" class="form-control form-control-sm" onchange="selectSearchPeriodCustom()">
+                    <span class="text-muted small">〜</span>
+                    <input type="date" id="searchDateTo" class="form-control form-control-sm" onchange="selectSearchPeriodCustom()">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Type filter -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small text-muted" data-i18n="search.type">種別</label>
+            <select id="searchType" class="form-select">
+              <option value="" data-i18n="type.all">全種別</option>
+              <option value="Read" data-i18n="type.read">読取</option>
+              <option value="Write" data-i18n="type.write">書込</option>
+              <option value="Delete" data-i18n="type.delete">削除</option>
+            </select>
+          </div>
+          <!-- Search button -->
+          <div class="col-12 col-md-2">
+            <button class="btn btn-primary w-100" onclick="runSearch()">
+              <i class="bi bi-search me-1"></i><span data-i18n="search.btn">検索</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="searchResults"></div>
+  </div>
+
+  <!-- Settings Tab -->
+  <div id="tab-settings" class="d-none">
+    <div class="row g-3">
+      <div class="col-12 col-lg-7">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-folder-check me-1"></i><span data-i18n="settings.monFolders">監視対象フォルダ</span>
+          </div>
+          <div class="card-body">
+            <div id="monitoredPathsList">
+              <div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-5">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-folder-plus me-1"></i><span data-i18n="settings.addFolder">フォルダを追加</span>
+          </div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label class="form-label small text-muted" data-i18n="settings.pathLabel">フォルダパス (例: D:\Share)</label>
+              <input type="text" id="newPathInput" class="form-control" placeholder="D:\Share" data-i18n-ph="settings.pathPh">
+            </div>
+            <div class="mb-3">
+              <label class="form-label small text-muted" data-i18n="settings.eventTypes">監視イベント種別</label>
+              <div class="d-flex gap-3">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="newPathRead" checked>
+                  <label class="form-check-label small" for="newPathRead" data-i18n="type.read">読取</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="newPathWrite" checked>
+                  <label class="form-check-label small" for="newPathWrite" data-i18n="type.write">書込</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="newPathDelete" checked>
+                  <label class="form-check-label small" for="newPathDelete" data-i18n="type.delete">削除</label>
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-primary w-100" onclick="addPath()">
+              <i class="bi bi-plus-circle me-1"></i><span data-i18n="btn.add">追加 &amp; SACL 適用</span>
+            </button>
+            <div class="mt-2 text-muted small">
+              <i class="bi bi-info-circle me-1"></i><span data-i18n="settings.saclInfo">追加時に監査ポリシーと SACL が自動設定されます。</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div id="settingsAlert"></div>
+      </div>
+      <!-- User Management (Admin only) -->
+      <div class="col-12 d-none" id="usermgmtSettingsSection">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
+            <span><i class="bi bi-people-fill me-1"></i><span data-i18n="settings.userMgmt">ユーザー管理</span></span>
+            <button class="btn btn-primary btn-sm" onclick="showCreateUser()">
+              <i class="bi bi-person-plus me-1"></i><span data-i18n="btn.addUser">ユーザー追加</span>
+            </button>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-sm mb-0">
+                <thead class="table-dark sticky-top">
+                  <tr>
+                    <th data-i18n="th.username">ユーザー名</th>
+                    <th data-i18n="th.displayName">表示名</th>
+                    <th style="width:150px" data-i18n="th.role">ロール</th>
+                    <th style="width:110px" data-i18n="th.actions">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="usermgmtTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div id="usermgmtAlert" class="mt-2"></div>
+      </div>
+
+      <!-- Reverse DNS -->
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-diagram-3 me-1"></i><span data-i18n="settings.dns">逆引き DNS サーバー</span>
+          </div>
+          <div class="card-body">
+            <p class="small text-muted mb-2" data-i18n="settings.dnsHint">IPアドレスからマシン名を解決するプライベート DNS サーバーを指定します。</p>
+            <div class="input-group input-group-sm" style="max-width:360px">
+              <input type="text" id="dnsServerInput" class="form-control font-monospace"
+                placeholder="192.168.0.1" data-i18n-ph="settings.dnsPh"
+                onkeydown="if(event.key==='Enter')saveDnsServer()">
+              <button class="btn btn-outline-primary" onclick="saveDnsServer()">
+                <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Data Retention Policy -->
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-clock-history me-1"></i><span data-i18n="settings.retention">データ保持ポリシー</span>
+          </div>
+          <div class="card-body">
+            <div class="row g-3 align-items-start">
+              <div class="col-12 col-md-5" id="retentionAdminSection">
+                <label class="form-label small text-muted" data-i18n="retention.label">保持日数（0 = 無期限保持）</label>
+                <div class="input-group input-group-sm">
+                  <input type="number" id="retentionDaysInput" class="form-control" min="0" max="3650" placeholder="例: 90" data-i18n-ph="retention.ph" style="max-width:100px">
+                  <span class="input-group-text" data-i18n="retention.unit">日間</span>
+                  <button class="btn btn-outline-primary" onclick="saveRetentionPolicy()">
+                    <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
+                  </button>
+                </div>
+                <div class="form-text" data-i18n="retention.hint">0 を設定すると無期限保持になります。</div>
+              </div>
+              <div class="col-12 col-md-7">
+                <div id="retentionStats" class="text-muted small">
+                  <div class="spinner-border spinner-border-sm"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Create User Modal -->
+<div class="modal fade" id="createUserModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-person-plus me-1"></i><span data-i18n="modal.createUser">ユーザー追加</span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label class="form-label small"><span data-i18n="modal.usernameLabel">ユーザー名</span> <span class="text-danger">*</span></label>
+          <input type="text" id="newUserUsername" class="form-control form-control-sm" placeholder="例: john" data-i18n-ph="modal.usernamePh" autocomplete="off">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small" data-i18n="modal.displayNameLabel">表示名</label>
+          <input type="text" id="newUserDisplayName" class="form-control form-control-sm" placeholder="例: John Doe" data-i18n-ph="modal.displayNamePh">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small"><span data-i18n="modal.passwordLabel">パスワード</span> <span class="text-danger">*</span></label>
+          <input type="password" id="newUserPassword" class="form-control form-control-sm" autocomplete="new-password">
+          <div class="form-text" data-i18n="modal.passwordHint">8文字以上</div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small" data-i18n="modal.roleLabel">ロール</label>
+          <select id="newUserRole" class="form-select form-select-sm">
+            <option value="Viewer" data-i18n="modal.roleViewer">Viewer（閲覧のみ）</option>
+            <option value="Admin" data-i18n="modal.roleAdmin">Admin（全操作）</option>
+          </select>
+        </div>
+        <div id="createUserError" class="d-none text-danger small mt-2"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-link text-muted py-1" data-bs-dismiss="modal" data-i18n="btn.cancel">キャンセル</button>
+        <button class="btn btn-primary btn-sm" id="createUserBtn" onclick="createUser()">
+          <i class="bi bi-check-lg me-1"></i><span data-i18n="btn.create">作成</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reset Password Modal -->
+<div class="modal fade" id="resetPasswordModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-key me-1"></i><span data-i18n="modal.resetPw">パスワードリセット</span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-3"><span data-i18n="modal.resetTarget">対象:</span> <strong id="resetPasswordUsername"></strong></p>
+        <div class="mb-2">
+          <label class="form-label small"><span data-i18n="modal.newPwLabel">新しいパスワード</span> <span class="text-danger">*</span></label>
+          <input type="password" id="resetNewPassword" class="form-control form-control-sm" autocomplete="new-password">
+          <div class="form-text" data-i18n="modal.passwordHint">8文字以上</div>
+        </div>
+        <div id="resetPasswordError" class="d-none text-danger small mt-2"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-link text-muted py-1" data-bs-dismiss="modal" data-i18n="btn.cancel">キャンセル</button>
+        <button class="btn btn-warning btn-sm" id="resetPasswordBtn" onclick="doResetPassword()">
+          <i class="bi bi-key me-1"></i><span data-i18n="btn.reset">リセット</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Path Modal -->
+<div class="modal fade" id="deletePathModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-trash me-1"></i><span data-i18n="modal.deletePath">監視対象の削除</span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-1" data-i18n="modal.deleteTarget">対象フォルダ:</p>
+        <p id="deletePathName" class="font-monospace small text-break fw-semibold mb-3"></p>
+        <p class="mb-0" data-i18n="modal.deleteQuestion">SACL（監査エントリ）をどうしますか？</p>
+      </div>
+      <div class="modal-footer flex-column align-items-stretch gap-2">
+        <button class="btn btn-outline-secondary" onclick="confirmDeletePath(false)">
+          <i class="bi bi-stop-circle me-1"></i><span data-i18n="modal.keepSacl">監視のみ停止（SACL は残す）</span>
+        </button>
+        <button class="btn btn-danger" onclick="confirmDeletePath(true)">
+          <i class="bi bi-trash me-1"></i><span data-i18n="modal.removeSacl">監視停止 ＋ SACL も削除</span>
+        </button>
+        <button class="btn btn-link text-muted py-1" data-bs-dismiss="modal" data-i18n="btn.cancel">キャンセル</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Change Own Password Modal -->
+<div class="modal fade" id="changePasswordModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-key me-1"></i><span data-i18n="modal.changePassword">パスワード変更</span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label class="form-label small"><span data-i18n="modal.currentPassword">現在のパスワード</span> <span class="text-danger">*</span></label>
+          <input type="password" id="changeCurrentPassword" class="form-control form-control-sm" autocomplete="current-password">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small"><span data-i18n="modal.newPwLabel">新しいパスワード</span> <span class="text-danger">*</span></label>
+          <input type="password" id="changeNewPassword" class="form-control form-control-sm" autocomplete="new-password">
+          <div class="form-text" data-i18n="modal.passwordHint">8文字以上</div>
+        </div>
+        <div id="changePasswordError" class="d-none text-danger small mt-2"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-link text-muted py-1" data-bs-dismiss="modal" data-i18n="btn.cancel">キャンセル</button>
+        <button class="btn btn-primary btn-sm" id="changePasswordBtn" onclick="changePasswordSelf()">
+          <i class="bi bi-check-lg me-1"></i><span data-i18n="btn.save">保存</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal fade" id="detailModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="detailModalTitle" data-i18n="btn.detail">詳細</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="detailModalBody">
+        <div class="text-center py-4"><div class="spinner-border"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="lib/bootstrap/bootstrap.bundle.min.js"></script>
+<script src="lib/chartjs/chart.umd.min.js"></script>
+<script src="lang/ja.js"></script>
+<script src="lang/en.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
