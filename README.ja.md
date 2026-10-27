@@ -17,7 +17,7 @@ Windows ファイルサーバーの共有フォルダへのアクセス（読取
 
 ### インストーラーで導入する（推奨）
 
-[Releases](https://github.com/nuts-i77/FileAccessMonitor-Windows/releases) から `FileAccessMonitor-Setup-<バージョン>.exe` をダウンロードし、ファイルサーバー上で実行します。インストーラーは次の処理を行います。
+[Releases](https://github.com/nuts-i77/FileAccessMonitor/releases) から `FileAccessMonitor-Setup-<バージョン>.exe` をダウンロードし、ファイルサーバー上で実行します。インストーラーは次の処理を行います。
 
 - `C:\Program Files\FileAccessMonitor` にインストール
 - Windows サービス `FileAccessMonitor` を登録して起動

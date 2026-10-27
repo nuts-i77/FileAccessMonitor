@@ -17,7 +17,7 @@ FileAccessMonitor collects file access events (read, write, delete) on a Windows
 
 ### Install with the installer (recommended)
 
-Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.com/nuts-i77/FileAccessMonitor-Windows/releases) and run it on the file server. The installer does the following:
+Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.com/nuts-i77/FileAccessMonitor/releases) and run it on the file server. The installer does the following:
 
 - Installs to `C:\Program Files\FileAccessMonitor`
 - Registers and starts the `FileAccessMonitor` Windows service
