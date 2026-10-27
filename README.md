@@ -95,7 +95,7 @@ wevtutil sl Security /ms:1073741824   # 1 GB
 
 - **JWT signing key**: generated at random on first start and saved to `C:\ProgramData\FileAccessMonitor\jwt.key`, which only SYSTEM and Administrators can read. If you set a `Jwt:Key` of 32 bytes or more in `appsettings.json`, that key is used instead.
 - **Sign-in lockout**: after 5 failed sign-ins in a row, the account is locked for 15 minutes.
-- **Transport encryption**: the default is plain HTTP. To use HTTPS, either add an HTTPS endpoint and certificate under `Kestrel.Endpoints`, or put the app behind a reverse proxy such as IIS. Do this if the GUI is reachable from outside your LAN, or if passwords must not travel in clear text.
+- **Transport encryption**: the default is plain HTTP. To use HTTPS, either add an HTTPS endpoint and certificate under `Kestrel.Endpoints`, or put the app behind a reverse proxy such as IIS, nginx, or Caddy. See [docs/https.md](docs/https.md) for sample configurations. Do this if the GUI is reachable from outside your LAN, or if passwords must not travel in clear text.
 - **Roles**: `Admin` can change settings and manage users. `Viewer` can only view.
 
 To report a vulnerability, please follow [SECURITY.md](SECURITY.md) instead of opening a public issue.

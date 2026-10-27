@@ -88,7 +88,7 @@ wevtutil sl Security /ms:1073741824   # 1GB
 
 - **JWT 署名鍵**: 初回起動時にランダム生成し `C:\ProgramData\FileAccessMonitor\jwt.key`（SYSTEM / Administrators のみ読み取り可）に保存します。`appsettings.json` に 32 バイト以上の `Jwt:Key` を設定した場合はそちらを使用します
 - **ログイン試行制限**: 5 回連続で失敗すると、そのアカウントは 15 分間ロックされます
-- **通信の暗号化**: 既定は HTTP です。社内 LAN 外からアクセスさせる場合や、パスワードを平文で流したくない場合は、`Kestrel.Endpoints` に HTTPS エンドポイントと証明書を設定するか、リバースプロキシ（IIS 等）経由で HTTPS 化してください
+- **通信の暗号化**: 既定は HTTP です。社内 LAN 外からアクセスさせる場合や、パスワードを平文で流したくない場合は、`Kestrel.Endpoints` に HTTPS エンドポイントと証明書を設定するか、リバースプロキシ（IIS・nginx・Caddy 等）経由で HTTPS 化してください。設定例は [docs/https.ja.md](docs/https.ja.md) を参照してください
 - **ロール**: `Admin`（設定・ユーザー管理可）と `Viewer`（閲覧のみ）
 
 脆弱性を見つけた場合は、公開 Issue ではなく [SECURITY.md](SECURITY.md) の手順（非公開報告）でご連絡ください。
