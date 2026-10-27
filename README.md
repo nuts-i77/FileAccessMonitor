@@ -15,6 +15,21 @@ FileAccessMonitor collects file access events (read, write, delete) on a Windows
 
 ## Setup
 
+### Install with the installer (recommended)
+
+Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.com/nuts-i77/FileAccessMonitor-Windows/releases) and run it on the file server. The installer does the following:
+
+- Installs to `C:\Program Files\FileAccessMonitor`
+- Registers and starts the `FileAccessMonitor` Windows service
+- Lets you choose the web GUI port (default 8080) and, optionally, adds a firewall rule for it
+
+When you run a newer installer, it upgrades the existing install and keeps your settings. Then continue with [3. First sign-in](#3-first-sign-in).
+
+> [!NOTE]
+> The installer is not code-signed, so Windows SmartScreen may show a warning. Choose **More info** → **Run anyway**. To verify the download, compare its hash with `SHA256SUMS.txt` on the release page by running `Get-FileHash <file>`.
+
+To build from source instead, follow steps 1 and 2.
+
 ### 1. Build (on your development PC)
 
 ```powershell
@@ -95,6 +110,8 @@ To report a vulnerability, please follow [SECURITY.md](SECURITY.md) instead of o
 | `ExcludeSystemAccounts` | Ignore access by SYSTEM and computer accounts (`xxx$`) | `true` |
 | `ExcludeProcessNames` | Process names to ignore | `System`, `svchost.exe`, `SearchIndexer.exe` |
 
+With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor\` and is replaced on upgrade. Put your own changes in `appsettings.Production.json` in the same folder instead. The installer creates that file with the port you chose, and your changes to it are kept on upgrade.
+
 ### Runtime settings and data (`C:\ProgramData\FileAccessMonitor\`)
 
 | File | Contents |
@@ -144,9 +161,15 @@ dotnet build FileAccessMonitor.csproj
 dotnet test tests/FileAccessMonitor.Tests
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app on every push and pull request.
+To build the installer locally, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run `.\build-installer.ps1 -Version 1.0.0`. The output goes to `dist\`.
+
+GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app on every push and pull request. Pushing a tag such as `v1.0.0` runs `.github/workflows/release.yml`, which builds the installer and a portable zip and publishes them as a GitHub Release.
 
 ## Uninstall
+
+If you used the installer, uninstall **File Access Monitor** from **Settings → Apps**. The service and firewall rule are removed. Access records, settings, and keys stay in `C:\ProgramData\FileAccessMonitor\`; delete that folder if you no longer need them. To remove the audit entries (SACLs), run `C:\Program Files\FileAccessMonitor\scripts\restore-audit.ps1` before uninstalling.
+
+If you installed from source:
 
 ```powershell
 .\install-service.ps1 -Uninstall

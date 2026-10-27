@@ -16,3 +16,4 @@ publish/
 *.db-wal
 *.log
 logs/
+dist/

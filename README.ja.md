@@ -15,6 +15,21 @@ Windows ファイルサーバーの共有フォルダへのアクセス（読取
 
 ## セットアップ
 
+### インストーラーで導入する（推奨）
+
+[Releases](https://github.com/nuts-i77/FileAccessMonitor-Windows/releases) から `FileAccessMonitor-Setup-<バージョン>.exe` をダウンロードし、ファイルサーバー上で実行します。インストーラーは次の処理を行います。
+
+- `C:\Program Files\FileAccessMonitor` にインストール
+- Windows サービス `FileAccessMonitor` を登録して起動
+- Web GUI のポートを指定（既定値は 8080）。必要ならファイアウォール規則も追加
+
+新しいバージョンのインストーラーを実行すると、設定を引き継いだまま上書き更新します。インストール後は [3. 初回ログイン](#3-初回ログイン) に進んでください。
+
+> [!NOTE]
+> インストーラーはコード署名していないため、Windows SmartScreen の警告が表示されることがあります。**詳細情報** → **実行** で続行してください。ダウンロードしたファイルが正しいか確かめるには、`Get-FileHash <ファイル>` で求めたハッシュ値を、リリースページの `SHA256SUMS.txt` と照合してください。
+
+ソースからビルドする場合は、以下の 1・2 の手順を行います。
+
 ### 1. ビルド（開発 PC）
 
 ```powershell
@@ -88,6 +103,8 @@ wevtutil sl Security /ms:1073741824   # 1GB
 | `ExcludeSystemAccounts` | SYSTEM やコンピューターアカウント（`xxx$`）のアクセスを除外 | `true` |
 | `ExcludeProcessNames` | 除外するプロセス名 | `System`, `svchost.exe`, `SearchIndexer.exe` |
 
+インストーラーで導入した場合、`appsettings.json` は `C:\Program Files\FileAccessMonitor\` にあり、更新時に上書きされます。独自の設定は同じフォルダの `appsettings.Production.json` に書いてください。このファイルはインストーラーが指定ポートで作成し、更新時も内容が保持されます。
+
 ### 実行時の設定・データ（`C:\ProgramData\FileAccessMonitor\`）
 
 | ファイル | 内容 |
@@ -137,9 +154,15 @@ dotnet build FileAccessMonitor.csproj
 dotnet test tests/FileAccessMonitor.Tests
 ```
 
-GitHub Actions（`.github/workflows/ci.yml`）で push / Pull Request ごとにビルド・テスト・発行を実行します。
+インストーラーを手元で作る場合は、[Inno Setup 6](https://jrsoftware.org/isinfo.php) をインストールしてから `.\build-installer.ps1 -Version 1.0.0` を実行します。`dist\` に出力されます。
+
+GitHub Actions（`.github/workflows/ci.yml`）で push / Pull Request ごとにビルド・テスト・発行を実行します。`v1.0.0` のようなタグを push すると、`.github/workflows/release.yml` がインストーラーと zip 版を作成し、GitHub Releases に公開します。
 
 ## アンインストール
+
+インストーラーで導入した場合は、**設定 → アプリ** から **File Access Monitor** をアンインストールします。サービスとファイアウォール規則は削除されます。アクセス記録・設定・鍵は `C:\ProgramData\FileAccessMonitor\` に残るので、不要であればそのフォルダを削除してください。監査エントリ (SACL) も削除する場合は、アンインストールの前に `C:\Program Files\FileAccessMonitor\scripts\restore-audit.ps1` を実行してください。
+
+ソースから導入した場合:
 
 ```powershell
 .\install-service.ps1 -Uninstall

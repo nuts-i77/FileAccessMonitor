@@ -25,4 +25,4 @@ jobs:
         run: dotnet test tests/FileAccessMonitor.Tests -c Release --logger "console;verbosity=normal"
 
       - name: Publish (self-contained, win-x64)
-        run: dotnet publish FileAccessMonitor.csproj -c Release -r win-x64 --self-contained true -o publish /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
+        run: dotnet publish FileAccessMonitor.csproj -c Release -r win-x64 --self-contained true -o publish /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:DebugType=None /p:IsTransformWebConfigDisabled=true

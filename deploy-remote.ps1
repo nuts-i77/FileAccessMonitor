@@ -8,6 +8,8 @@
 
 .PARAMETER RemotePath
     Install folder on the server. Default: C:\FileAccessMonitor
+    Used only when the service is not registered yet; otherwise files go to the
+    folder the service runs from (e.g. C:\Program Files\FileAccessMonitor).
 
 .PARAMETER Credential
     PSCredential for the remote server. Prompted if omitted.
@@ -50,7 +52,7 @@ $session = New-PSSession @sessionParams
 # 3. Stop service, copy files, start service
 Write-Host "[3/4] Deploying..." -ForegroundColor Cyan
 
-Invoke-Command -Session $session -ScriptBlock {
+$targetDir = Invoke-Command -Session $session -ScriptBlock {
     param($RemotePath)
     Stop-Service FileAccessMonitor -Force -ErrorAction SilentlyContinue
     # Wait until the process actually exits (up to 30s)
@@ -64,11 +66,22 @@ Invoke-Command -Session $session -ScriptBlock {
     # Force-kill if still running
     Get-Process -Name FileAccessMonitor -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
-    New-Item -ItemType Directory -Force "$RemotePath\publish" | Out-Null
+
+    # Deploy to wherever the registered service runs from (e.g. Program Files when
+    # it was installed with setup.exe); otherwise to $RemotePath\publish.
+    $svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\FileAccessMonitor"
+    $target = if (Test-Path $svcKey) {
+        Split-Path ((Get-ItemProperty $svcKey).ImagePath.Trim('"'))
+    } else {
+        "$RemotePath\publish"
+    }
+    New-Item -ItemType Directory -Force $target | Out-Null
+    $target
 } -ArgumentList $RemotePath
 
+Write-Host "  -> $targetDir" -ForegroundColor Gray
 Copy-Item -Path "$PSScriptRoot\publish\*" `
-          -Destination "$RemotePath\publish\" `
+          -Destination "$targetDir\" `
           -ToSession $session -Recurse -Force
 
 $status = Invoke-Command -Session $session -ScriptBlock {
