@@ -92,6 +92,9 @@ function getDays() {
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}), ...authHeaders() };
+  // Statistics follow the server filter (except the list of servers itself)
+  if (path.startsWith('/api/stats/') && !path.startsWith('/api/stats/servers') && !/[?&]server=/.test(path) && serverParam())
+    path += (path.includes('?') ? '&' : '?') + serverParam();
   const res = await fetch(path, { ...options, headers });
   if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
   const data = await res.json().catch(() => ({}));
@@ -225,7 +228,7 @@ async function loadTopCharts() {
   topFilesChart = new Chart(ctxF, {
     type: 'bar',
     data: {
-      labels: files.map(f => f.fileName || f.filePath),
+      labels: files.map(f => serverPath(f, f.fileName || f.filePath)),
       datasets: [
         { label: t('type.read'),   data: files.map(f => f.read),   backgroundColor: TYPE_COLORS.Read },
         { label: t('type.write'),  data: files.map(f => f.write),  backgroundColor: TYPE_COLORS.Write },
@@ -246,7 +249,7 @@ async function loadTopCharts() {
   topFoldersChart = new Chart(ctxD, {
     type: 'bar',
     data: {
-      labels: folders.map(f => f.folderName || f.folderPath),
+      labels: folders.map(f => serverPath(f, f.folderName || f.folderPath)),
       datasets: [
         { label: t('type.read'),   data: folders.map(f => f.read),   backgroundColor: TYPE_COLORS.Read },
         { label: t('type.write'),  data: folders.map(f => f.write),  backgroundColor: TYPE_COLORS.Write },
@@ -275,6 +278,7 @@ async function loadFiles() {
     <tr>
       <td>${i + 1}</td>
       <td><i class="bi bi-file-earmark text-muted me-1"></i>${esc(f.fileName)}</td>
+      <td class="col-server">${esc(f.serverName || '')}</td>
       <td class="path-cell text-muted" title="${esc(f.filePath)}">${esc(f.filePath)}</td>
       <td class="text-end">
         <div class="d-flex align-items-center gap-2 justify-content-end">
@@ -288,7 +292,7 @@ async function loadFiles() {
       <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td>${fmtDate(f.lastAccess)}</td>
       <td><span class="text-truncate d-inline-block" style="max-width:120px" title="${esc(f.topUser || '')}">${esc(f.topUser || '-')}</span></td>
-      <td><button class="btn btn-sm btn-outline-secondary py-0" data-path="${esc(f.filePath)}" onclick="showFileDetail(this.dataset.path)">${t('btn.detail')}</button></td>
+      <td><button class="btn btn-sm btn-outline-secondary py-0" data-path="${esc(f.filePath)}" data-server="${esc(f.serverName || '')}" onclick="showFileDetail(this.dataset.path, this.dataset.server)">${t('btn.detail')}</button></td>
     </tr>`).join('');
 }
 
@@ -302,6 +306,7 @@ async function loadFolders() {
     <tr>
       <td>${i + 1}</td>
       <td><i class="bi bi-folder-fill text-warning me-1"></i>${esc(f.folderName || f.folderPath)}</td>
+      <td class="col-server">${esc(f.serverName || '')}</td>
       <td class="path-cell text-muted" title="${esc(f.folderPath)}">${esc(f.folderPath)}</td>
       <td class="text-end">
         <div class="d-flex align-items-center gap-2 justify-content-end">
@@ -315,7 +320,7 @@ async function loadFolders() {
       <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td class="text-end">${fmtNum(f.uniqueFiles)}</td>
       <td>${fmtDate(f.lastAccess)}</td>
-      <td><button class="btn btn-sm btn-outline-secondary py-0" data-path="${esc(f.folderPath)}" onclick="showFolderDetail(this.dataset.path)">${t('btn.detail')}</button></td>
+      <td><button class="btn btn-sm btn-outline-secondary py-0" data-path="${esc(f.folderPath)}" data-server="${esc(f.serverName || '')}" onclick="showFolderDetail(this.dataset.path, this.dataset.server)">${t('btn.detail')}</button></td>
     </tr>`).join('');
 }
 
@@ -358,6 +363,7 @@ function buildUserDetailHtml(d) {
     <tr>
       <td>${i + 1}</td>
       <td title="${esc(f.filePath)}">${esc(f.fileName)}</td>
+      <td class="col-server">${esc(f.serverName || '')}</td>
       <td class="text-end fw-bold">${fmtNum(f.total)}</td>
       <td class="text-end text-primary">${fmtNum(f.read)}</td>
       <td class="text-end text-success">${fmtNum(f.write)}</td>
@@ -370,10 +376,11 @@ function buildUserDetailHtml(d) {
     `<tr>
       <td class="text-muted">${fmtDate(r.accessTime)}</td>
       <td title="${esc(r.filePath)}">${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
+      <td class="col-server">${esc(r.serverName || '')}</td>
       <td>${typeBadge(r.accessType)}</td>
     </tr>`).join('');
 
-  const noData = `<tr><td colspan="3" class="text-muted text-center">${t('msg.noData')}</td></tr>`;
+  const noData = `<tr><td colspan="4" class="text-muted text-center">${t('msg.noData')}</td></tr>`;
 
   return `
     <div class="row g-3">
@@ -387,22 +394,30 @@ function buildUserDetailHtml(d) {
           <tbody>${typeRows || noData}</tbody>
         </table>
         <div class="mt-2"><canvas id="detailTypeChart" height="120"></canvas></div>
+        <div class="col-server mt-3">
+          <div class="detail-section-title"><i class="bi bi-hdd me-1"></i>${t('detail.byServer')}</div>
+          <table class="table table-sm">
+            <thead><tr><th>${t('th.server')}</th><th class="text-end">${t('detail.count')}</th></tr></thead>
+            <tbody>${(d.byServer || []).map(s =>
+              `<tr><td>${esc(s.server)}</td><td class="text-end">${fmtNum(s.count)}</td></tr>`).join('') || noData}</tbody>
+          </table>
+        </div>
       </div>
       <div class="col-12 col-md-8">
         <div class="detail-section-title"><i class="bi bi-file-earmark me-1"></i>${t('detail.fileList')}</div>
         <div style="max-height:300px;overflow-y:auto">
           <table class="table table-sm table-hover">
             <thead class="table-light sticky-top">
-              <tr><th>#</th><th>${t('th.filename')}</th><th class="text-end">${t('th.total')}</th><th class="text-end">${t('th.read')}</th><th class="text-end">${t('th.write')}</th><th class="text-end">${t('th.delete')}</th><th class="text-end">${t('th.rename')}</th><th>${t('th.lastAccess')}</th></tr>
+              <tr><th>#</th><th>${t('th.filename')}</th><th class="col-server">${t('th.server')}</th><th class="text-end">${t('th.total')}</th><th class="text-end">${t('th.read')}</th><th class="text-end">${t('th.write')}</th><th class="text-end">${t('th.delete')}</th><th class="text-end">${t('th.rename')}</th><th>${t('th.lastAccess')}</th></tr>
             </thead>
-            <tbody>${fileRows || `<tr><td colspan="8" class="text-muted text-center">${t('msg.noData')}</td></tr>`}</tbody>
+            <tbody>${fileRows || `<tr><td colspan="9" class="text-muted text-center">${t('msg.noData')}</td></tr>`}</tbody>
           </table>
         </div>
       </div>
       <div class="col-12">
         <div class="detail-section-title"><i class="bi bi-clock-history me-1"></i>${t('detail.recent')}</div>
         <table class="table table-sm">
-          <thead><tr><th>${t('th.datetime')}</th><th>${t('th.filename')}</th><th>${t('th.type')}</th></tr></thead>
+          <thead><tr><th>${t('th.datetime')}</th><th>${t('th.filename')}</th><th class="col-server">${t('th.server')}</th><th>${t('th.type')}</th></tr></thead>
           <tbody>${recentRows || noData}</tbody>
         </table>
       </div>
@@ -469,6 +484,7 @@ async function loadRecent(page = 1) {
     <tr>
       <td class="text-muted">${fmtDate(r.accessTime)}</td>
       <td>${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
+      <td class="col-server">${esc(r.serverName || '')}</td>
       <td class="path-cell text-muted" title="${esc(r.folderPath)}">${esc(r.folderPath)}</td>
       <td>${esc(r.userName)}</td>
       <td>${typeBadge(r.accessType)}</td>
@@ -569,7 +585,8 @@ async function exportSearchCsv() {
   btn.disabled = true;
   try {
     const tz = -new Date().getTimezoneOffset();
-    const res = await fetch(`/api/stats/search/export?tzOffsetMinutes=${tz}${searchQuery()}`, { headers: authHeaders() });
+    const server = serverParam() ? `&${serverParam()}` : '';
+    const res = await fetch(`/api/stats/search/export?tzOffsetMinutes=${tz}${searchQuery()}${server}`, { headers: authHeaders() });
     if (res.status === 401) { logout(); return; }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || 'file-access.csv';
@@ -611,6 +628,7 @@ async function loadSearch(page = 1) {
       return `<tr>
         <td class="text-muted">${fmtDate(r.accessTime)}</td>
         <td>${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
+        <td class="col-server">${esc(r.serverName || '')}</td>
         <td class="path-cell text-muted" title="${esc(r.folderPath)}">${esc(r.folderPath)}</td>
         <td>${esc(r.userName)}</td>
         <td>${typeBadge(r.accessType)}</td>
@@ -631,6 +649,7 @@ async function loadSearch(page = 1) {
                 <tr>
                   <th>${t('th.datetime')}</th>
                   <th>${t('th.filename')}</th>
+                  <th class="col-server">${t('th.server')}</th>
                   <th>${t('th.path')}</th>
                   <th>${t('th.user')}</th>
                   <th>${t('th.type')}</th>
@@ -666,26 +685,31 @@ async function loadSearch(page = 1) {
 }
 
 // ── Detail Modals ─────────────────────────────────────────────────
-async function showFileDetail(path) {
+// The same path can exist on several file servers, so details are asked for one server
+function detailServerParam(server) {
+  return server ? `&server=${encodeURIComponent(server)}` : '';
+}
+
+async function showFileDetail(path, server = '') {
   const modal = new bootstrap.Modal(document.getElementById('detailModal'));
-  document.getElementById('detailModalTitle').textContent = t('detail.fileDetail') + path;
+  document.getElementById('detailModalTitle').textContent = t('detail.fileDetail') + serverPath({ serverName: server }, path);
   document.getElementById('detailModalBody').innerHTML =
     '<div class="text-center py-4"><div class="spinner-border"></div></div>';
   modal.show();
 
-  const d = await api(`/api/stats/file-detail?path=${encodeURIComponent(path)}&days=${getDays()}`);
+  const d = await api(`/api/stats/file-detail?path=${encodeURIComponent(path)}&days=${getDays()}${detailServerParam(server)}`);
   document.getElementById('detailModalBody').innerHTML = buildDetailHtml(d, 'file');
   renderDetailCharts(d);
 }
 
-async function showFolderDetail(path) {
+async function showFolderDetail(path, server = '') {
   const modal = new bootstrap.Modal(document.getElementById('detailModal'));
-  document.getElementById('detailModalTitle').textContent = t('detail.folderDetail') + path;
+  document.getElementById('detailModalTitle').textContent = t('detail.folderDetail') + serverPath({ serverName: server }, path);
   document.getElementById('detailModalBody').innerHTML =
     '<div class="text-center py-4"><div class="spinner-border"></div></div>';
   modal.show();
 
-  const d = await api(`/api/stats/folder-detail?path=${encodeURIComponent(path)}&days=${getDays()}`);
+  const d = await api(`/api/stats/folder-detail?path=${encodeURIComponent(path)}&days=${getDays()}${detailServerParam(server)}`);
   document.getElementById('detailModalBody').innerHTML = buildDetailHtml(d, 'folder');
   renderDetailCharts(d);
 }
@@ -804,17 +828,43 @@ function fmtSize(bytes) {
   return `${n.toLocaleString(undefined, { maximumFractionDigits: i === 0 ? 0 : 1 })} ${units[i]}`;
 }
 
+// Scope entries are "SERVER|path" or "path" (every server)
+function parseScopeEntry(entry) {
+  const bar = entry.indexOf('|');
+  return bar < 0 ? { server: '', path: entry } : { server: entry.slice(0, bar), path: entry.slice(bar + 1) };
+}
+
 async function loadUnusedTab() {
+  const sel = document.getElementById('unusedServer');
+  if (sel.dataset.loaded) return;
+  if (isAdmin()) {
+    if (!serverList) await loadServerList();
+    sel.innerHTML = serverOptions('');
+  } else {
+    // A Viewer with a scope: the servers of their entries, or every server with records they may see
+    const entries = myScope.map(parseScopeEntry);
+    const names = [...new Set([...entries.filter(e => e.server).map(e => e.server),
+      ...(entries.some(e => !e.server) ? knownServers : [])])].sort();
+    sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  }
+  sel.dataset.loaded = '1';
+  document.getElementById('unusedServerCol').classList.toggle('d-none', sel.options.length < 2);
+  await loadUnusedFolders();
+}
+
+// Folder suggestions for the selected server
+async function loadUnusedFolders() {
+  const server = document.getElementById('unusedServer').value;
   const list = document.getElementById('unusedFolderList');
-  if (list.dataset.loaded) return;
+  let paths = [];
   try {
     // A Viewer with a scope may only look inside it (and cannot read the settings)
-    const paths = isAdmin() ? ((await api('/api/settings')).pathConfigs || []).map(c => c.path) : myScope;
-    list.innerHTML = paths.map(p => `<option value="${esc(p)}">`).join('');
-    list.dataset.loaded = '1';
-    const input = document.getElementById('unusedFolder');
-    if (!input.value && paths.length) input.value = paths[0];
+    paths = isAdmin()
+      ? ((await api(`/api/settings${server ? `?server=${encodeURIComponent(server)}` : ''}`)).pathConfigs || []).map(c => c.path)
+      : myScope.map(parseScopeEntry).filter(e => !e.server || e.server.toUpperCase() === server.toUpperCase()).map(e => e.path);
   } catch { /* the folder can still be typed */ }
+  list.innerHTML = paths.map(p => `<option value="${esc(p)}">`).join('');
+  document.getElementById('unusedFolder').value = paths[0] || '';
 }
 
 let lastUnused = null;
@@ -833,7 +883,9 @@ async function searchUnused(folderOverride) {
   btn.disabled = true;
   el.innerHTML = `<div class="text-center py-4"><div class="spinner-border"></div><div class="small text-muted mt-2">${t('unused.scanning')}</div></div>`;
   try {
-    lastUnused = await api(`/api/unused-files?folder=${encodeURIComponent(folder)}&days=${days}&criterion=${criterion}`);
+    const server = document.getElementById('unusedServer').value;
+    lastUnused = await api(`/api/unused-files?folder=${encodeURIComponent(folder)}&days=${days}&criterion=${criterion}` +
+      (server ? `&server=${encodeURIComponent(server)}` : ''));
     renderUnused();
   } catch (e) {
     el.innerHTML = `<div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</div>`;
@@ -1016,6 +1068,30 @@ function showUpdateBanner(cache) {
   </div>`;
 }
 
+// Agents should run the monitoring server's version: tell Admins when some do not
+// (a local build, 0.0.0, has no version to compare)
+function showAgentUpdateBanner(d) {
+  const el = document.getElementById('agentUpdateBanner');
+  if (!el) return;
+  const outdated = (d?.agents || []).filter(a => !a.disabled && a.version && a.version !== d.serverVersion);
+  if (!d || d.serverVersion === '0.0.0' || outdated.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="alert alert-warning py-2 small d-flex align-items-center gap-2 flex-wrap">
+    <i class="bi bi-hdd-stack"></i>
+    <span>${t('agents.outdatedBanner', { n: outdated.length, v: esc('v' + d.serverVersion) })}</span>
+    <span class="text-muted">${outdated.map(a => esc(a.name)).join(', ')}</span>
+    <a href="#" class="alert-link ms-auto" onclick="openAgentsSettings(); return false;">${t('agents.showAgents')}</a>
+  </div>`;
+}
+
+async function checkAgentVersions() {
+  try { showAgentUpdateBanner(await api('/api/agents')); } catch { /* not shown */ }
+}
+
+function openAgentsSettings() {
+  switchTab('settings', document.querySelector('[data-tab="settings"]'));
+  setTimeout(() => document.getElementById('agentsSection')?.scrollIntoView({ behavior: 'smooth' }), 500);
+}
+
 function dismissUpdate(version) {
   writeStore(UPDATE_DISMISSED_KEY, version);
   document.getElementById('updateBanner').innerHTML = '';
@@ -1032,6 +1108,177 @@ async function saveUpdateCheck(enabled) {
     loadAuditLog(1);
   } catch (e) {
     showSettingsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
+// ── File servers (filter) ─────────────────────────────────────────
+// The server filter appears once records come from more than one file server
+let knownServers = [];
+
+async function loadServers() {
+  try { knownServers = await api('/api/stats/servers'); } catch { knownServers = []; }
+  const sel = document.getElementById('serverFilter');
+  const current = sel.value;
+  sel.innerHTML = `<option value="">${t('servers.all')}</option>` +
+    knownServers.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  sel.value = knownServers.includes(current) ? current : '';
+  sel.classList.toggle('d-none', knownServers.length < 2);
+  document.body.classList.toggle('single-server', knownServers.length < 2);
+}
+
+function selectedServer() {
+  return document.getElementById('serverFilter')?.value || '';
+}
+
+// Appended to every /api/stats request
+function serverParam() {
+  const s = selectedServer();
+  return s ? `server=${encodeURIComponent(s)}` : '';
+}
+
+// Path shown in lists: with the server name when there are several
+function serverPath(r, path) {
+  return knownServers.length > 1 && r.serverName ? `${r.serverName}: ${path}` : path;
+}
+
+// ── Agents (Admin only) ───────────────────────────────────────────
+let enrollment = null;
+
+function showAgentsAlert(html, type = 'success') {
+  const el = document.getElementById('agentsAlert');
+  if (!el) return;
+  el.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show py-2 small">
+    ${html}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>`;
+}
+
+async function loadAgents() {
+  const tbody = document.getElementById('agentsTableBody');
+  try {
+    const d = await api('/api/agents');
+    showAgentUpdateBanner(d);
+    // The agent port opens only once agents are in use (turned on by the first registration code)
+    if (d.restartNeeded) showAgentsAlert(t('agents.restartPending', { p: d.port }), 'warning');
+    else if (!d.featureOn) showAgentsAlert(t('agents.featureOff', { p: d.port }), 'info');
+    else if (!d.endpointReady) showAgentsAlert(t('agents.notReady'), 'warning');
+    else document.getElementById('agentsAlert').innerHTML = '';
+    // An agent that has not been in touch for 5 minutes is shown as offline
+    const status = a => a.disabled
+      ? `<span class="badge bg-secondary">${t('agents.stDisabled')}</span>`
+      : a.lastSeenAt && Date.now() - new Date(a.lastSeenAt + (/[Z+]/.test(a.lastSeenAt) ? '' : 'Z')) < 5 * 60 * 1000
+        ? `<span class="badge bg-success">${t('agents.stOnline')}</span>`
+        : `<span class="badge bg-warning text-dark">${t('agents.stOffline')}</span>`;
+    // Agents should run the monitoring server's version (local builds, 0.0.0, are not compared)
+    const version = a => esc(a.version || '-') + (a.version && d.serverVersion !== '0.0.0' && a.version !== d.serverVersion
+      ? ` <span class="badge bg-warning text-dark" title="${t('agents.updateHint', { v: esc(d.serverVersion) })}">${t('agents.needsUpdate')}</span>` : '');
+    // A growing outbox means records are not getting through
+    const outbox = a => a.outboxCount > 0
+      ? `<span class="${a.outboxCount >= 100 ? 'text-danger fw-semibold' : 'text-warning'}">${fmtNum(a.outboxCount)}</span>` : '0';
+    const auditPolicy = a => a.auditPolicyOk == null ? '-'
+      : a.auditPolicyOk ? `<span class="badge bg-success-subtle text-success-emphasis">${t('agents.auditOn')}</span>`
+        : `<span class="badge bg-danger" title="${t('agents.auditOffHint')}">${t('agents.auditOff')}</span>`;
+    tbody.innerHTML = d.agents.map(a => `<tr>
+      <td><i class="bi bi-hdd me-1 text-muted"></i>${esc(a.name)}</td>
+      <td>${fmtDate(a.lastSeenAt)}</td>
+      <td>${version(a)}</td>
+      <td>${status(a)}</td>
+      <td class="text-end">${outbox(a)}</td>
+      <td>${auditPolicy(a)}</td>
+      <td><div class="d-flex gap-1">
+        <button class="btn btn-sm btn-outline-secondary py-0" title="${t(a.disabled ? 'agents.enable' : 'agents.disable')}"
+          onclick="setAgentDisabled('${esc(a.id)}', ${!a.disabled})"><i class="bi ${a.disabled ? 'bi-play' : 'bi-pause'}"></i></button>
+        <button class="btn btn-sm btn-outline-danger py-0" title="${t('agents.remove')}"
+          data-name="${esc(a.name)}" onclick="deleteAgent('${esc(a.id)}', this.dataset.name)"><i class="bi bi-trash"></i></button>
+      </div></td>
+    </tr>`).join('') || `<tr><td colspan="7" class="text-muted text-center py-3">${t('agents.none')}</td></tr>`;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-danger small p-3">${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function createEnrollment() {
+  try {
+    enrollment = await api('/api/agents/enrollment', { method: 'POST' });
+    document.getElementById('enrollUrl').value = enrollment.url;
+    showConnection(enrollment.connection);
+    document.getElementById('enrollExpires').textContent = fmtDate(enrollment.expiresAt);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('enrollModal')).show();
+    loadAuditLog(1);
+  } catch (e) {
+    // First use turns the feature on and asks for a service restart: refresh the card's notice too
+    await loadAgents();
+    loadAuditLog(1);
+    showAgentsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'warning');
+  }
+}
+
+function showConnection(connection) {
+  document.getElementById('enrollConnection').value = connection;
+  document.getElementById('enrollCommand').textContent =
+    `& "C:\\Program Files\\FileAccessMonitor\\FileAccessMonitor.exe" enroll ${connection}; Restart-Service FileAccessMonitor`;
+}
+
+// Same code and certificate, another address (e.g. the IP address instead of a host name)
+async function rebuildConnection() {
+  if (!enrollment) return;
+  try {
+    const d = await api('/api/agents/connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: document.getElementById('enrollUrl').value.trim(), fingerprint: enrollment.fingerprint, code: enrollment.code })
+    });
+    showConnection(d.connection);
+  } catch (e) {
+    alertInModal(e.message);
+  }
+}
+
+function alertInModal(message) {
+  document.getElementById('enrollConnection').value = message;
+}
+
+// navigator.clipboard exists only on HTTPS or localhost; the GUI is usually opened over plain
+// HTTP, so fall back to copying the selected text
+async function copyConnection(btn) {
+  const box = document.getElementById('enrollConnection');
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(box.value);
+    copied = true;
+  } catch {
+    box.focus();
+    box.select();
+    try { copied = document.execCommand('copy'); } catch { /* text stays selected for Ctrl+C */ }
+  }
+  if (!copied || !btn) return;
+  btn.innerHTML = `<i class="bi bi-check-lg me-1"></i>${t('agents.copied')}`;
+  setTimeout(() => { btn.innerHTML = '<i class="bi bi-clipboard"></i>'; }, 2000);
+}
+
+async function setAgentDisabled(id, disabled) {
+  try {
+    const d = await api(`/api/agents/${encodeURIComponent(id)}/disabled`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled })
+    });
+    showAgentsAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`);
+    loadAgents();
+    loadAuditLog(1);
+  } catch (e) {
+    showAgentsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
+async function deleteAgent(id, name) {
+  if (!confirm(t('agents.confirmRemove', { n: name }))) return;
+  try {
+    const d = await api(`/api/agents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    showAgentsAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`);
+    loadAgents();
+    loadAuditLog(1);
+  } catch (e) {
+    showAgentsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
   }
 }
 
@@ -1105,9 +1352,70 @@ function sortTable(tableId, colIdx) {
 }
 
 // ── Settings Tab ──────────────────────────────────────────────────
+// Monitored folders and recording rules are per file server: '' is this monitoring server,
+// otherwise an agent's server name
+function settingsServer() {
+  return document.getElementById('settingsServer')?.value || '';
+}
+
+function withSettingsServer(url) {
+  const s = settingsServer();
+  return s ? `${url}${url.includes('?') ? '&' : '?'}server=${encodeURIComponent(s)}` : url;
+}
+
+// Shown while an agent does the work on its server (it can take a while for large folders)
+function runningMessage() {
+  return settingsServer() ? t('msg.agentRunning', { s: settingsServer() }) : t('msg.applying');
+}
+
+// Server pickers: this machine first ('' = local), then the agents
+let serverList = null;
+
+async function loadServerList() {
+  if (!isAdmin()) return [];
+  try { serverList = await api('/api/settings/servers'); } catch { serverList = null; }
+  return serverList?.servers || [];
+}
+
+function serverOptions(selected, { includeAll = false } = {}) {
+  if (!serverList) return '';
+  const opts = includeAll ? [`<option value="">${t('servers.all')}</option>`] : [];
+  serverList.servers.forEach(name => {
+    const value = !includeAll && name === serverList.local ? '' : name;
+    const label = name === serverList.local ? `${name} ${t('servers.thisServer')}` : name;
+    opts.push(`<option value="${esc(value)}" ${value === selected ? 'selected' : ''}>${esc(label)}</option>`);
+  });
+  return opts.join('');
+}
+
 async function loadSettings() {
+  if (isAdmin()) {
+    const current = settingsServer();
+    const servers = await loadServerList();
+    const sel = document.getElementById('settingsServer');
+    sel.innerHTML = serverOptions(current);
+    document.getElementById('settingsServerBar').classList.toggle('d-none', servers.length < 2);
+  }
+  await loadServerSettings();
+  loadRetentionPolicy();
+  if (isAdmin()) {
+    ['usermgmtSettingsSection', 'agentsSection', 'appInfoSection', 'recordingSettingsSection', 'alertsSettingsSection', 'auditLogSection']
+      .forEach(id => document.getElementById(id)?.classList.remove('d-none'));
+    loadUsersMgmt();
+    loadAgents();
+    loadAppInfo();
+    loadAlertSettings();
+    loadAuditLog(1);
+  } else {
+    const s = document.getElementById('retentionAdminSection');
+    if (s) s.classList.add('d-none');
+  }
+}
+
+// Monitored folders and recording rules of the server picked in the settings tab
+async function loadServerSettings() {
   try {
-    const d = await api('/api/settings');
+    const d = await api(withSettingsServer('/api/settings'));
     // Support both new pathConfigs and legacy monitoredPaths response
     const configs = d.pathConfigs
       || (d.monitoredPaths || []).map(p => ({ path: p, eventTypes: ['Read', 'Write', 'Delete'] }));
@@ -1118,19 +1426,7 @@ async function loadSettings() {
     document.getElementById('monitoredPathsList').innerHTML =
       `<div class="text-danger small">${esc(e.message)}</div>`;
   }
-  loadRetentionPolicy();
-  if (isAdmin()) {
-    ['usermgmtSettingsSection', 'appInfoSection', 'recordingSettingsSection', 'alertsSettingsSection', 'auditLogSection']
-      .forEach(id => document.getElementById(id)?.classList.remove('d-none'));
-    loadUsersMgmt();
-    loadAppInfo();
-    loadRecordingSettings();
-    loadAlertSettings();
-    loadAuditLog(1);
-  } else {
-    const s = document.getElementById('retentionAdminSection');
-    if (s) s.classList.add('d-none');
-  }
+  if (isAdmin()) loadRecordingSettings();
 }
 
 // ── Retention Policy ──────────────────────────────────────────────
@@ -1277,13 +1573,13 @@ async function addPath() {
 
   const btn = event.currentTarget;
   btn.disabled = true;
-  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${t('msg.applying')}`;
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${runningMessage()}`;
 
   try {
     const res = await fetch('/api/settings/paths', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ path, eventTypes })
+      body: JSON.stringify({ path, eventTypes, server: settingsServer() || null })
     });
     const d = await res.json();
     if (!res.ok) {
@@ -1320,12 +1616,12 @@ async function confirmDeletePath(removeSacl) {
   if (!path) return;
 
   if (removeSacl) {
-    showSettingsAlert(`<span class="spinner-border spinner-border-sm me-1"></span>${t('msg.removingSacl')}`, 'info');
+    showSettingsAlert(`<span class="spinner-border spinner-border-sm me-1"></span>${settingsServer() ? runningMessage() : t('msg.removingSacl')}`, 'info');
   }
 
   try {
     const res = await fetch(
-      `/api/settings/paths?path=${encodeURIComponent(path)}&removeSacl=${removeSacl}`,
+      withSettingsServer(`/api/settings/paths?path=${encodeURIComponent(path)}&removeSacl=${removeSacl}`),
       { method: 'DELETE', headers: { ...authHeaders() } }
     );
     const d = await res.json();
@@ -1360,7 +1656,7 @@ async function updatePathEventTypes(path) {
     const d = await api('/api/settings/paths/event-types', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, eventTypes })
+      body: JSON.stringify({ path, eventTypes, server: settingsServer() || null })
     });
     // Silently update — no alert needed for checkbox toggle
     if (d.pathConfigs) renderPathsList(d.pathConfigs);
@@ -1374,11 +1670,11 @@ async function reapplySacl(path) {
   const confirmed = confirm(t('msg.saclConfirm', { p: path }));
   if (!confirmed) return;
   try {
-    showSettingsAlert(`<span class="spinner-border spinner-border-sm me-1"></span>${t('msg.applyingSacl')}`, 'info');
+    showSettingsAlert(`<span class="spinner-border spinner-border-sm me-1"></span>${settingsServer() ? runningMessage() : t('msg.applyingSacl')}`, 'info');
     const res = await fetch('/api/settings/paths/apply-sacl', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ path })
+      body: JSON.stringify({ path, server: settingsServer() || null })
     });
     const d = await res.json();
     if (!res.ok) {
@@ -1405,9 +1701,9 @@ let usersCache = [];
 // Admins always see everything; a Viewer sees everything unless folders are assigned
 function scopeCell(u, role) {
   if (role === 'Admin') return `<td class="text-muted small">${t('scope.all')}</td>`;
-  const paths = u.scopePaths || [];
+  const paths = (u.scopePaths || []).map(parseScopeEntry);
   const summary = paths.length
-    ? paths.map(p => `<div class="font-monospace text-break">${esc(p)}</div>`).join('')
+    ? paths.map(e => `<div class="font-monospace text-break">${esc(e.server ? `${e.server}: ${e.path}` : e.path)}</div>`).join('')
     : `<span class="text-muted">${t('scope.all')}</span>`;
   const mail = u.notifyEmail ? `<div class="text-muted"><i class="bi bi-envelope me-1"></i>${esc(u.notifyEmail)}</div>` : '';
   return `<td class="small">
@@ -1418,12 +1714,33 @@ function scopeCell(u, role) {
   </td>`;
 }
 
+// One folder of the scope: a server ('' = every server) and a path
+function addScopeRow(server = '', path = '') {
+  const row = document.createElement('div');
+  row.className = 'scope-row input-group input-group-sm';
+  row.innerHTML = `
+    <select class="form-select" style="max-width:40%">${serverOptions(server, { includeAll: true })}</select>
+    <input type="text" class="form-control font-monospace" placeholder="D:\\Share\\Sales">
+    <button type="button" class="btn btn-outline-secondary" title="${t('scope.removeRow')}"><i class="bi bi-x"></i></button>`;
+  row.querySelector('input').value = path;
+  // A server named in the scope but no longer known still shows (and is kept) as is
+  const sel = row.querySelector('select');
+  if (server && ![...sel.options].some(o => o.value.toUpperCase() === server.toUpperCase()))
+    sel.insertAdjacentHTML('beforeend', `<option value="${esc(server)}" selected>${esc(server)}</option>`);
+  else if (server)
+    sel.value = [...sel.options].find(o => o.value.toUpperCase() === server.toUpperCase()).value;
+  row.querySelector('button').onclick = () => row.remove();
+  document.getElementById('scopeRows').appendChild(row);
+}
+
 function showScopeEditor(id) {
   const u = usersCache.find(x => x.id === id);
   if (!u) return;
   document.getElementById('scopeModal').dataset.userId = id;
   document.getElementById('scopeUsername').textContent = u.username;
-  document.getElementById('scopePaths').value = (u.scopePaths || []).join('\n');
+  document.getElementById('scopeRows').innerHTML = '';
+  (u.scopePaths || []).map(parseScopeEntry).forEach(e => addScopeRow(e.server, e.path));
+  if (!u.scopePaths?.length) addScopeRow();
   document.getElementById('scopeNotifyEmail').value = u.notifyEmail || '';
   document.getElementById('scopeError').classList.add('d-none');
   bootstrap.Modal.getOrCreateInstance(document.getElementById('scopeModal')).show();
@@ -1437,7 +1754,10 @@ async function saveScope() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        paths: document.getElementById('scopePaths').value.split('\n').map(s => s.trim()).filter(Boolean),
+        paths: [...document.querySelectorAll('#scopeRows .scope-row')]
+          .map(row => ({ server: row.querySelector('select').value, path: row.querySelector('input').value.trim() }))
+          .filter(e => e.path)
+          .map(e => e.server ? `${e.server}|${e.path}` : e.path),
         notifyEmail: document.getElementById('scopeNotifyEmail').value.trim()
       })
     });
@@ -1669,7 +1989,7 @@ const setLines = (id, list) => { document.getElementById(id).value = (list || []
 
 async function loadRecordingSettings() {
   try {
-    const s = await api('/api/settings/recording');
+    const s = await api(withSettingsServer('/api/settings/recording'));
     setLines('recExcludeFiles', s.excludeFilePatterns);
     setLines('recExcludeUsers', s.excludeUsers);
     setLines('recExcludeProcesses', s.excludeProcesses);
@@ -1681,7 +2001,7 @@ async function loadRecordingSettings() {
 
 async function saveRecordingSettings() {
   try {
-    const d = await api('/api/settings/recording', {
+    const d = await api(withSettingsServer('/api/settings/recording'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1725,6 +2045,7 @@ async function loadAlertSettings() {
     set('alertReadThreshold', s.readThreshold);
     set('alertWindowMinutes', s.windowMinutes);
     set('alertCooldownMinutes', s.cooldownMinutes);
+    set('alertAgentOfflineMinutes', s.agentOfflineMinutes);
     set('alertLanguage', s.language);
     set('alertWebhookFormat', s.webhookFormat);
     set('alertSmtpHost', s.smtpHost);
@@ -1740,6 +2061,11 @@ async function loadAlertSettings() {
     const pw = document.getElementById('alertSmtpPassword');
     pw.value = '';
     pw.placeholder = s.smtpPasswordSet ? t('alerts.secretSet') : '';
+    set('alertProxyUrl', s.proxyUrl);
+    set('alertProxyUser', s.proxyUser);
+    const proxyPw = document.getElementById('alertProxyPassword');
+    proxyPw.value = '';
+    proxyPw.placeholder = s.proxyPasswordSet ? t('alerts.secretSet') : '';
   } catch (e) {
     showAlertsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
   }
@@ -1761,6 +2087,7 @@ function alertFormBody() {
     readThreshold: num('alertReadThreshold'),
     windowMinutes: num('alertWindowMinutes'),
     cooldownMinutes: num('alertCooldownMinutes'),
+    agentOfflineMinutes: num('alertAgentOfflineMinutes'),
     language: val('alertLanguage'),
     webhookFormat: val('alertWebhookFormat'),
     webhookUrl: secretField('alertWebhookUrl'),
@@ -1771,6 +2098,9 @@ function alertFormBody() {
     smtpPassword: secretField('alertSmtpPassword'),
     mailFrom: val('alertMailFrom'),
     mailTo: val('alertMailTo'),
+    proxyUrl: val('alertProxyUrl'),
+    proxyUser: val('alertProxyUser'),
+    proxyPassword: secretField('alertProxyPassword'),
   };
 }
 
@@ -1883,10 +2213,11 @@ let myScope = [];
 
 (async () => {
   try { myScope = (await api('/api/auth/me')).scopePaths || []; } catch { /* keep defaults */ }
+  await loadServers();
   if (myScope.length) {
     const badge = document.getElementById('navScopeBadge');
     badge.classList.remove('d-none');
-    badge.title = myScope.join('\n');
+    badge.title = myScope.map(parseScopeEntry).map(e => e.server ? `${e.server}: ${e.path}` : e.path).join('\n');
   }
 
   const VALID_TABS = ['dashboard', 'files', 'folders', 'users', 'recent', 'search', 'settings'];
@@ -1894,7 +2225,7 @@ let myScope = [];
     document.getElementById('navUnused')?.classList.remove('d-none');
     VALID_TABS.push('unused');
   }
-  if (isAdmin()) checkForUpdate();
+  if (isAdmin()) { checkForUpdate(); checkAgentVersions(); }
   const hashTab = location.hash.slice(1);
   const startTab = VALID_TABS.includes(hashTab) ? hashTab : 'dashboard';
   const startLink = document.querySelector(`[data-tab="${startTab}"]`);

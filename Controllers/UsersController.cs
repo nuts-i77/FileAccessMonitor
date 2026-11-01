@@ -43,7 +43,7 @@ public class UsersController : ControllerBase
             result.Add(new
             {
                 id = u.Id, username = u.UserName, displayName = u.DisplayName, email = u.Email, roles,
-                scopePaths = AccessScope.ParsePaths(scope?.Paths), notifyEmail = scope?.NotifyEmail,
+                scopePaths = AccessScope.Parse(scope?.Paths).Select(e => e.ToString()), notifyEmail = scope?.NotifyEmail,
             });
         }
         return Ok(result);
@@ -101,15 +101,25 @@ public class UsersController : ControllerBase
 
     // PUT /api/users/{id}/scope  — folders a Viewer may see, and where to mail alerts about them
     [HttpPut("{id}/scope")]
-    public async Task<IActionResult> SetScope(string id, [FromBody] ScopeRequest req)
+    public async Task<IActionResult> SetScope(string id, [FromBody] ScopeRequest req,
+        [FromServices] ServerConfigService servers)
     {
         var user = await _userManager.FindByIdAsync(id);
         if (user == null) return NotFound(new { error = Messages.Get("user.notFound") });
 
-        var paths = AccessScope.ParsePaths(string.Join('\n', req.Paths ?? []));
-        var (configs, _) = SettingsController.ReadSettingsDoc();
-        if (paths.FirstOrDefault(p => !configs.Any(c => EventLogCollectorService.IsUnderPath(p, c.Path))) is { } outside)
-            return BadRequest(new { error = Messages.Get("scope.notMonitored", outside) });
+        // Each folder must be monitored on its server, or on some server when no server is named
+        var paths = AccessScope.Parse(req.Paths ?? []);
+        var monitored = new Dictionary<string, PathConfig[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in await servers.ServerNamesAsync())
+            monitored[name] = await servers.GetPathsAsync(ServerConfigService.IsLocal(name) ? null : name);
+        foreach (var entry in paths)
+        {
+            if (entry.Server != null && !monitored.ContainsKey(entry.Server))
+                return BadRequest(new { error = Messages.Get("agents.notFound") });
+            var candidates = entry.Server == null ? monitored.Values.SelectMany(c => c) : monitored[entry.Server];
+            if (!candidates.Any(c => EventLogCollectorService.IsUnderPath(entry.Path, c.Path)))
+                return BadRequest(new { error = Messages.Get("scope.notMonitored", entry.ToString().Replace("|", ": ")) });
+        }
 
         var email = string.IsNullOrWhiteSpace(req.NotifyEmail) ? null : req.NotifyEmail.Trim();
         if (email != null && !System.Net.Mail.MailAddress.TryCreate(email, out _))

@@ -12,9 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
-var logDir = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-    "FileAccessMonitor", "logs");
+var logDir = Path.Combine(AppPaths.DataDir, "logs");
 Directory.CreateDirectory(logDir);
 
 Log.Logger = new LoggerConfiguration()
@@ -30,12 +28,23 @@ Log.Logger = new LoggerConfiguration()
         outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
+// Agent registration from the command line (also run by the installer)
+if (args.Length > 0 && args[0] is "enroll" or "unenroll")
+{
+    Environment.ExitCode = await AgentHost.RunCommandAsync(args);
+    return;
+}
+// Registered as an agent: collect and send only, no web GUI or database
+if (AgentConfig.Exists)
+{
+    await AgentHost.RunAsync(args);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog();
 
-var userSettingsFile = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-    "FileAccessMonitor", "settings.json");
+var userSettingsFile = Path.Combine(AppPaths.DataDir, "settings.json");
 builder.Configuration.AddJsonFile(userSettingsFile, optional: true, reloadOnChange: true);
 
 builder.Host.UseWindowsService(options =>
@@ -43,10 +52,15 @@ builder.Host.UseWindowsService(options =>
     options.ServiceName = "FileAccessMonitor";
 });
 
-var dbPath = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-    "FileAccessMonitor", "fileaccess.db");
+var dbPath = Path.Combine(AppPaths.DataDir, "fileaccess.db");
 Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+
+// HTTPS port for agents (only /api/agent/* is served there). Opened only once agents are in use
+// (one is registered, or an Admin turned the feature on by issuing a registration code), so a
+// standalone install listens on no port it does not need.
+var agentPort = AgentEndpoint.Port(builder.Configuration);
+if (AgentEndpoint.InUse(builder.Configuration, dbPath) && AgentEndpoint.Initialize(Log.Logger) is { } agentCert)
+    builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(agentPort, listen => listen.UseHttps(agentCert)));
 
 builder.Services.AddDbContext<AccessDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath}"));
@@ -113,8 +127,7 @@ builder.Services.AddAuthentication(options =>
 // Encrypts alert secrets (webhook URL, SMTP password) stored in settings.json
 builder.Services.AddDataProtection()
     .SetApplicationName("FileAccessMonitor")
-    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "FileAccessMonitor", "keys")))
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(AppPaths.DataDir, "keys")))
     .ProtectKeysWithDpapi(protectToLocalMachine: true);
 
 // Behind a reverse proxy, take the client IP (for the operation log) from X-Forwarded-For,
@@ -135,8 +148,11 @@ builder.Services.AddSingleton<AuditLog>();
 builder.Services.AddSingleton<AlertService>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<UserScopeService>();
+builder.Services.AddScoped<ServerConfigService>();
+builder.Services.AddSingleton<AgentJobs>();
 builder.Services.AddSingleton<IRecordSink, LocalRecordSink>();
 builder.Services.AddHostedService<EventLogCollectorService>();
+builder.Services.AddHostedService<AgentMonitorService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RetentionService>());
 builder.Services.AddControllers();
@@ -246,6 +262,30 @@ CREATE TABLE IF NOT EXISTS ""UserScopes"" (
     ""UserId"" TEXT NOT NULL CONSTRAINT ""PK_UserScopes"" PRIMARY KEY,
     ""Paths"" TEXT NOT NULL, ""NotifyEmail"" TEXT NULL)");
 
+    // v7: agents (file servers sending their records here)
+    await db.Database.ExecuteSqlRawAsync(@"
+CREATE TABLE IF NOT EXISTS ""Agents"" (
+    ""Id"" TEXT NOT NULL CONSTRAINT ""PK_Agents"" PRIMARY KEY,
+    ""Name"" TEXT NOT NULL, ""KeyHash"" TEXT NOT NULL, ""CreatedAt"" TEXT NOT NULL, ""LastSeenAt"" TEXT NULL,
+    ""Version"" TEXT NULL, ""LastBatchSeq"" INTEGER NOT NULL, ""Disabled"" INTEGER NOT NULL)");
+    await db.Database.ExecuteSqlRawAsync(@"
+CREATE TABLE IF NOT EXISTS ""AgentEnrollments"" (
+    ""CodeHash"" TEXT NOT NULL CONSTRAINT ""PK_AgentEnrollments"" PRIMARY KEY,
+    ""ExpiresAt"" TEXT NOT NULL)");
+    // v8: per-agent monitored folders and recording rules
+    var agentColumns = await db.Database
+        .SqlQueryRaw<string>(@"SELECT ""name"" AS ""Value"" FROM pragma_table_info('Agents')")
+        .ToListAsync();
+    if (!agentColumns.Contains("Config", StringComparer.OrdinalIgnoreCase))
+        await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""Config"" TEXT NULL");
+    if (!agentColumns.Contains("ConfigVersion", StringComparer.OrdinalIgnoreCase))
+        await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""ConfigVersion"" INTEGER NOT NULL DEFAULT 0");
+    // v9: agent health as reported by the agent
+    if (!agentColumns.Contains("OutboxCount", StringComparer.OrdinalIgnoreCase))
+        await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""OutboxCount"" INTEGER NOT NULL DEFAULT 0");
+    if (!agentColumns.Contains("AuditPolicyOk", StringComparer.OrdinalIgnoreCase))
+        await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""AuditPolicyOk"" INTEGER NULL");
+
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     foreach (var role in new[] { "Admin", "Viewer" })
     {
@@ -297,6 +337,18 @@ app.Use(async (context, next) =>
     headers["X-Content-Type-Options"] = "nosniff";
     headers["X-Frame-Options"] = "DENY";
     headers["Referrer-Policy"] = "no-referrer";
+    await next();
+});
+
+// The agent port serves the agent API only, and the agent API is served on that port only
+app.Use(async (context, next) =>
+{
+    var onAgentPort = context.Connection.LocalPort == agentPort;
+    if (onAgentPort != context.Request.Path.StartsWithSegments("/api/agent"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
     await next();
 });
 

@@ -8,9 +8,7 @@ namespace FileAccessMonitor.Services;
 // only SYSTEM and Administrators can read.
 public static class SecretStore
 {
-    private static readonly string DataDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "FileAccessMonitor");
+    private static readonly string DataDir = AppPaths.DataDir;
 
     private static readonly string JwtKeyFile = Path.Combine(DataDir, "jwt.key");
 
@@ -49,7 +47,8 @@ public static class SecretStore
         try { File.Delete(InitialAdminPasswordFile); } catch { }
     }
 
-    private static void WriteProtected(string path, string content)
+    // Readable by SYSTEM and Administrators only
+    internal static void WriteProtected(string path, string content)
     {
         Directory.CreateDirectory(DataDir);
         if (File.Exists(path)) File.Delete(path);

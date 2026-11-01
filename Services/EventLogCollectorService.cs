@@ -328,6 +328,9 @@ public class EventLogCollectorService : BackgroundService
         // Event 4660: the file of a pending DELETE access was actually deleted
         if (ev.Id == 4660)
             return _deleteTracker.Confirm(data.GetValueOrDefault("ProcessId", ""), data.GetValueOrDefault("HandleId", ""));
+        // Before any filter below: a DELETE access, recorded or not, ends a pending one on the same handle
+        if (ev.Id == 4663 && (ParseMask(data.GetValueOrDefault("AccessMask", "0x0")) & DeleteRight) != 0)
+            _deleteTracker.Release(data.GetValueOrDefault("ProcessId", ""), data.GetValueOrDefault("HandleId", ""));
 
         var objectType = data.GetValueOrDefault("ObjectType", "");
         if (!string.Equals(objectType, "File", StringComparison.OrdinalIgnoreCase))

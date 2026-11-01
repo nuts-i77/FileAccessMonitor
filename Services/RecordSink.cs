@@ -79,6 +79,6 @@ public class LocalRecordSink(IServiceScopeFactory scopeFactory, AlertService ale
     public async Task ReportGapAsync(string auditDetail, string messageKey, params object[] args)
     {
         await audit.WriteAsync(AuditLog.SystemUser, "collector.gap", auditDetail);
-        _ = Task.Run(() => alerts.NotifyGapAsync(messageKey, args));
+        _ = Task.Run(() => alerts.NotifyGapAsync(EventLogCollectorService.ServerName, messageKey, args));
     }
 }

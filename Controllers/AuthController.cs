@@ -70,7 +70,7 @@ public class AuthController : ControllerBase
         if (user == null) return Unauthorized();
         var roles = await _userManager.GetRolesAsync(user);
         // Folders this user is limited to (empty = everything)
-        var scope = HttpContext.RequestServices.GetRequiredService<UserScopeService>().Get(User) ?? [];
+        var scope = (HttpContext.RequestServices.GetRequiredService<UserScopeService>().Get(User) ?? []).Select(e => e.ToString());
         return Ok(new { username = user.UserName, displayName = user.DisplayName, roles, scopePaths = scope });
     }
 

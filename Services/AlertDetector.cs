@@ -7,7 +7,8 @@ public record AlertRules(int DeleteThreshold, int WriteThreshold, int WindowMinu
 public record Alert(
     string AccessType, string UserName, int Count, int WindowMinutes,
     DateTime FromUtc, DateTime ToUtc, string? ClientIp, string? ClientMachine,
-    IReadOnlyList<(string Folder, int Count)> TopFolders, IReadOnlyList<string> SamplePaths);
+    IReadOnlyList<(string Folder, int Count)> TopFolders, IReadOnlyList<string> SamplePaths,
+    string ServerName = ""); // file server(s) the accesses happened on
 
 // Detects bursts: one user deleting, writing, or reading at least N files within M minutes.
 // Uses the event time, so a backlog read after a restart is judged by when it happened.
@@ -66,8 +67,10 @@ public class AlertDetector(AlertRules rules)
             .Select(g => (g.Key, g.Count()))
             .ToList();
         var samples = items.Select(i => i.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).Take(5).ToList();
+        var servers = string.Join(", ", items.Select(i => i.ServerName).Where(s => s.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase));
 
         return new Alert(first.AccessType, first.UserName, items.Count, Rules.WindowMinutes,
-            first.AccessTime, latest.AccessTime, latest.ClientIp, latest.ClientMachine, topFolders, samples);
+            first.AccessTime, latest.AccessTime, latest.ClientIp, latest.ClientMachine, topFolders, samples, servers);
     }
 }

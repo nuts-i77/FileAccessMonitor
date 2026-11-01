@@ -64,3 +64,8 @@ body {
 html[lang="en"] {
   --bs-body-font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
+
+/* The server column appears only when records come from more than one file server */
+body.single-server .col-server {
+  display: none;
+}

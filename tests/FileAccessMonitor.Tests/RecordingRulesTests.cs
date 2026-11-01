@@ -138,6 +138,19 @@ public class RecordingRulesTests
     }
 
     [Fact]
+    public void Deleting_an_unrecorded_file_on_a_reused_handle_does_not_delete_the_earlier_file()
+    {
+        // Office-style save: doc.txt renamed away (pending), then the excluded old.tmp deleted on the
+        // same handle id; the collector releases the handle before dropping the excluded event
+        var t = new DeleteTracker(_ => true);
+        t.Add("0x1a2c", "0x5f0", Rec("Delete", path: @"D:\Share\doc.txt"), null, AllTypes, T0);
+        t.Release("0x1a2c", "0x5f0");
+        Assert.Null(t.Confirm("0x1a2c", "0x5f0"));
+        var r = Assert.Single(t.Expire(T0, T0));
+        Assert.Equal((@"D:\Share\doc.txt", "Write"), (r.FilePath, r.AccessType));
+    }
+
+    [Fact]
     public void Folder_that_still_exists_is_neither_deleted_nor_renamed()
     {
         var folder = Rec("Delete", path: @"D:\Share\docs");

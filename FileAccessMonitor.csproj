@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>FileAccessMonitor</RootNamespace>
+    <!-- Development builds; release builds pass /p:Version (build.ps1 -Version) -->
+    <Version>0.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

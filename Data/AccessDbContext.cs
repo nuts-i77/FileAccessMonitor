@@ -12,6 +12,8 @@ public class AccessDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<AuditLogEntry> AuditLogs { get; set; }
     public DbSet<CollectorState> CollectorStates { get; set; }
     public DbSet<UserScope> UserScopes { get; set; }
+    public DbSet<Agent> Agents { get; set; }
+    public DbSet<AgentEnrollment> AgentEnrollments { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

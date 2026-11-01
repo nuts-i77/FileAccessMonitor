@@ -7,7 +7,10 @@
 param(
     [Parameter(Mandatory = $true)] [ValidateSet('Install', 'Uninstall', 'Stop')] [string]$Action,
     [int]$Port = 8080,
-    [switch]$Firewall
+    [switch]$Firewall,
+    # Monitoring server: also open the HTTPS port agents connect to
+    [int]$AgentPort = 8443,
+    [switch]$AgentFirewall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +18,7 @@ $ServiceName    = 'FileAccessMonitor'
 $ServiceDisplay = 'File Access Monitor'
 $ServiceDesc    = 'Monitors and aggregates file access on shared directories.'
 $FirewallRule   = "$ServiceDisplay Web"   # same name as install-service.ps1
+$AgentRule      = "$ServiceDisplay Agents"
 $ExePath        = Join-Path $PSScriptRoot 'FileAccessMonitor.exe'
 
 function Stop-MonitorService {
@@ -51,6 +55,11 @@ switch ($Action) {
             New-NetFirewallRule -DisplayName $FirewallRule -Direction Inbound -Protocol TCP `
                                 -LocalPort $Port -Action Allow -Profile Any | Out-Null
         }
+        Get-NetFirewallRule -DisplayName $AgentRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        if ($AgentFirewall) {
+            New-NetFirewallRule -DisplayName $AgentRule -Direction Inbound -Protocol TCP `
+                                -LocalPort $AgentPort -Action Allow -Profile Any | Out-Null
+        }
 
         Start-Service -Name $ServiceName
     }
@@ -61,5 +70,6 @@ switch ($Action) {
             sc.exe delete $ServiceName | Out-Null
         }
         Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        Get-NetFirewallRule -DisplayName $AgentRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     }
 }

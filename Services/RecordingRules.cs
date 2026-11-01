@@ -23,8 +23,10 @@ public class RecordingSettings
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    public static RecordingSettings Load() =>
-        SettingsStore.Load()[SettingsKey]?.Deserialize<RecordingSettings>(JsonOptions) ?? new RecordingSettings();
+    public static RecordingSettings Load() => FromNode(SettingsStore.Load()[SettingsKey]);
+
+    public static RecordingSettings FromNode(System.Text.Json.Nodes.JsonNode? node) =>
+        node?.Deserialize<RecordingSettings>(JsonOptions) ?? new RecordingSettings();
 
     public void Save() =>
         SettingsStore.Update(root => root[SettingsKey] = JsonSerializer.SerializeToNode(this));
@@ -141,6 +143,16 @@ public class DeleteTracker
         if (_pending.Remove(key, out var previous))
             Resolved.Add(previous); // handle id reused: the earlier access was not a deletion
         _pending[key] = new Pending(record, otherType, eventTypes, nowUtc);
+    }
+
+    // A new DELETE access on a handle means an earlier pending access with the same handle id was
+    // not a deletion (the handle was closed and its id reused). Called for every DELETE access,
+    // also ones that are not recorded (e.g. excluded *.tmp files), so that their 4660 cannot be
+    // taken for the earlier file's deletion.
+    public void Release(string processId, string handleId)
+    {
+        if (_pending.Remove((processId, handleId), out var previous))
+            Resolved.Add(previous);
     }
 
     // Event 4660 (object deleted). Returns the deleted file's record, if one was pending.

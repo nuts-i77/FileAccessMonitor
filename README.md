@@ -91,6 +91,36 @@ By default the Windows Security log holds only about 20 MB. On a busy server, ol
 wevtutil sl Security /ms:1073741824   # 1 GB
 ```
 
+### 6. Collect from several file servers (agents)
+
+One install can show the records of several file servers. Install FileAccessMonitor normally on the server that will show the web GUI (the monitoring server); on each other file server, install it as an **agent**, which only collects and sends.
+
+1. On the monitoring server, open TCP port **8443** (the agent port) in Windows Firewall. The installer can add the rule.
+2. Under **Settings → Agents**, choose **Issue registration code**. The first time, this turns the agent feature on: restart the service (`Restart-Service FileAccessMonitor`) so the agent port opens, and choose **Issue registration code** again. Until then, a standalone install does not listen on the agent port at all. If the file servers reach the monitoring server by another name or by IP address, change the address there and choose **Apply**. Copy the connection string; it is valid for 24 hours and can be used once.
+3. On the file server, run the installer, choose **Agent**, and paste the connection string. To turn an existing install into an agent, run in an elevated PowerShell:
+
+   ```powershell
+   & "C:\Program Files\FileAccessMonitor\FileAccessMonitor.exe" enroll <connection string>
+   Restart-Service FileAccessMonitor
+   ```
+4. On the file server, set up auditing of the shared folders in an elevated PowerShell. `-ExecutionPolicy Bypass` runs this one script even where scripts are disabled:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File "C:\Program Files\FileAccessMonitor\scripts\setup-audit.ps1" -SharePaths "D:\Share"
+   ```
+
+How it works and limits:
+
+- Agents connect to the monitoring server; the monitoring server never connects to them. The connection uses HTTPS with a certificate the monitoring server creates itself; agents trust exactly that certificate (its fingerprint is in the connection string), so no certificate authority is needed.
+- Records are kept in a local outbox on the agent (`C:\ProgramData\FileAccessMonitor\outbox`, up to 2 GB) until the monitoring server has saved them, so nothing is lost while it is unreachable.
+- When records come from more than one server, a server filter appears at the top of the web GUI, and lists show the server name with the path.
+- Monitored folders and recording rules are set per server: pick the server at the top of the **Settings** tab. An agent picks up changes within a minute. When a folder is added on an agent's server, the agent checks it exists and sets its audit entries (SACL); the **Unused Files** tab lists files on the chosen server through its agent. These need the agent to be online. Until folders are set for an agent's server, the agent records every audited access on it.
+- Viewing scopes can name a server for each folder (or apply to the path on every server).
+- The **Agents** list shows each agent's last contact, version (flagged when it differs from the monitoring server's), batches waiting to be sent, and whether file access auditing is on. When notifications are on, an agent that has not been in touch for 15 minutes (configurable; 0 turns it off) is reported, and again when it is back.
+- Alerts and notifications name the file server the accesses happened on.
+- Record times come from each file server's clock; keep the servers' clocks synchronized (NTP; domain members do this by default).
+- `FileAccessMonitor.exe unenroll` turns an agent back into a standalone install.
+
 ## Security
 
 - **JWT signing key**: generated at random on first start and saved to `C:\ProgramData\FileAccessMonitor\jwt.key`, which only SYSTEM and Administrators can read. If you set a `Jwt:Key` of 32 bytes or more in `appsettings.json`, that key is used instead.
@@ -138,15 +168,15 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | Unused Files | Files in a monitored folder that nobody read (or accessed) in a period, found by scanning the folder, with their size totaled per subfolder (Admin only; up to 100,000 files per scan) |
 | Settings | Monitored folders, users, recording rules (exclusions and merging of repeated reads), reverse DNS, data retention, notifications, operation log |
 
-Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it).
+Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it). If the internet is reached through a proxy, set it in the notification settings (webhooks only; the service runs as SYSTEM, so the Windows proxy setting does not apply).
 
 The GUI is available in English and Japanese. Switch languages at the top right; on first visit the GUI follows the browser's language. Messages returned by the API use the selected language too.
 
-**Recent access log** — who opened which file, from which IP address and machine:
+**Recent access log** — who opened which file, on which file server, from which IP address and machine:
 
 ![Recent access log](docs/images/recent-en.png)
 
-**Settings** — monitored folders and recorded access types, users, reverse DNS, and data retention:
+**Settings** — per-server monitored folders and recording rules (here for the agent FS01), then the settings for all servers:
 
 ![Settings](docs/images/settings-en.png)
 
@@ -218,6 +248,8 @@ dotnet test tests/FileAccessMonitor.Tests
 
 To build the installer locally, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run `.\build-installer.ps1 -Version 1.0.0`. The output goes to `dist\`.
 
+To run a second instance for development or demos without touching an installed one, set the `FILEACCESSMONITOR_DATA` environment variable to another data folder (default `C:\ProgramData\FileAccessMonitor`) and another port, e.g. `$env:Kestrel__Endpoints__Http__Url = 'http://localhost:5099'`.
+
 GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app on every push and pull request. Pushing a tag such as `v1.0.0` runs `.github/workflows/release.yml`, which builds the installer and a portable zip and publishes them as a GitHub Release.
 
 ## Uninstall
@@ -243,7 +275,7 @@ Without the GitHub CLI, compare the output of `Get-FileHash <file>` with `SHA256
 
 ## Privacy policy
 
-This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. It sends data to other systems only when an administrator configures it to: notifications go to the webhook URLs and mail servers set on the Settings tab, and reverse DNS lookups of client IP addresses go to the DNS servers set there.
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. It sends data to other systems only when an administrator configures it to: notifications go to the webhook URLs and mail servers set on the Settings tab, and reverse DNS lookups of client IP addresses go to the DNS servers set there. An agent sends its access records to the monitoring server it was registered with.
 
 Update check: when an Admin opens the web GUI, at most once a day, the Admin's browser asks the GitHub API (`api.github.com`) for the latest release of this project. Like any web request, this reveals the browser's IP address and user agent to GitHub. No data about the file server or its records is sent, and the file server itself does not connect out. Turn it off under **Settings → App info**.
 

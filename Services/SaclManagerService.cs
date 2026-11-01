@@ -35,6 +35,47 @@ public class SaclManagerService
         }
     }
 
+    // "File System" audit subcategory, as set by EnableAuditPolicy
+    private static readonly Guid FileSystemSubcategory = new("0CCE921D-69AE-11D9-BED3-505054503030");
+    private const uint PolicyAuditEventSuccess = 1;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct AuditPolicyInformation
+    {
+        public Guid AuditSubCategoryGuid;
+        public uint AuditingInformation;
+        public Guid AuditCategoryGuid;
+    }
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AuditQuerySystemPolicy(Guid[] subCategoryGuids, uint policyCount, out IntPtr auditPolicy);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll")]
+    private static extern void AuditFree(IntPtr buffer);
+
+    // Whether successful file access is audited (without it nothing is recorded); null if unknown.
+    // Read through the API rather than auditpol's output, which is localized.
+    public static bool? IsFileSystemAuditOn()
+    {
+        try
+        {
+            if (!AuditQuerySystemPolicy([FileSystemSubcategory], 1, out var buffer)) return null;
+            try
+            {
+                var info = System.Runtime.InteropServices.Marshal.PtrToStructure<AuditPolicyInformation>(buffer);
+                return (info.AuditingInformation & PolicyAuditEventSuccess) != 0;
+            }
+            finally
+            {
+                AuditFree(buffer);
+            }
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return null;
+        }
+    }
+
     // Only rights that the collector turns into Read/Write/Delete records.
     // FileSystemRights.Read/Write would also audit ReadAttributes, ReadEA,
     // ReadPermissions, WriteAttributes etc., which floods the Security log

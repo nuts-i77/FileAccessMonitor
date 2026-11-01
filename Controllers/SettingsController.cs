@@ -4,33 +4,48 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace FileAccessMonitor.Controllers;
 
+// Monitored folders and recording rules are per file server (?server= / "server" in the body;
+// empty = this machine). On an agent's server, checking a folder and setting its SACL are done by
+// the agent, as a job it picks up.
 [ApiController]
 [Route("api/[controller]")]
 [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 public class SettingsController : ControllerBase
 {
     private static readonly string[] DefaultEventTypes = ["Read", "Write", "Delete"];
+    // Setting a SACL walks every file below the folder, which can take minutes on a large share
+    private static readonly TimeSpan SaclJobTimeout = TimeSpan.FromMinutes(15);
 
     private readonly SaclManagerService _sacl;
     private readonly DnsResolverService _dns;
+    private readonly ServerConfigService _servers;
+    private readonly AgentJobs _jobs;
     private readonly AuditLog _audit;
     private readonly ILogger<SettingsController> _logger;
 
-    public SettingsController(SaclManagerService sacl, DnsResolverService dns,
-        AuditLog audit, ILogger<SettingsController> logger)
+    public SettingsController(SaclManagerService sacl, DnsResolverService dns, ServerConfigService servers,
+        AgentJobs jobs, AuditLog audit, ILogger<SettingsController> logger)
     {
         _sacl = sacl;
         _dns = dns;
+        _servers = servers;
+        _jobs = jobs;
         _audit = audit;
         _logger = logger;
     }
 
     [HttpGet]
-    public IActionResult Get()
+    public async Task<IActionResult> Get([FromQuery] string? server = null)
     {
-        var (configs, dns) = ReadSettingsDoc();
-        return Ok(new { pathConfigs = configs, dnsServer = dns });
+        if (await CheckServerAsync(server) is { } error) return error;
+        var (_, dns) = ReadSettingsDoc();
+        return Ok(new { pathConfigs = await _servers.GetPathsAsync(server), dnsServer = dns });
     }
+
+    // GET /api/settings/servers  — this machine and the agents, for the server pickers
+    [HttpGet("servers")]
+    public async Task<IActionResult> Servers() =>
+        Ok(new { local = ServerConfigService.LocalName, servers = await _servers.ServerNamesAsync() });
 
     [HttpPost("dns")]
     public async Task<IActionResult> SetDns([FromBody] DnsRequest req)
@@ -66,13 +81,18 @@ public class SettingsController : ControllerBase
     private static bool UpdateCheckEnabled() =>
         SettingsStore.Load()["UpdateCheck"] is not JsonValue v || !v.TryGetValue<bool>(out var b) || b;
 
-    // GET /api/settings/recording  — exclusions and read merging
+    // GET /api/settings/recording?server=  — exclusions and read merging
     [HttpGet("recording")]
-    public IActionResult GetRecording() => Ok(RecordingSettings.Load());
+    public async Task<IActionResult> GetRecording([FromQuery] string? server = null)
+    {
+        if (await CheckServerAsync(server) is { } error) return error;
+        return Ok(await _servers.GetRecordingAsync(server));
+    }
 
     [HttpPut("recording")]
-    public async Task<IActionResult> PutRecording([FromBody] RecordingSettings req)
+    public async Task<IActionResult> PutRecording([FromBody] RecordingSettings req, [FromQuery] string? server = null)
     {
+        if (await CheckServerAsync(server) is { } error) return error;
         if (req.MergeReadMinutes < 0 || req.MergeReadMinutes > RecordingSettings.MaxMergeReadMinutes)
             return BadRequest(new { error = Messages.Get("recording.invalidMinutes", RecordingSettings.MaxMergeReadMinutes) });
 
@@ -91,10 +111,11 @@ public class SettingsController : ControllerBase
             .Any(list => list.Count > 200 || list.Any(s => s.Length > 260)))
             return BadRequest(new { error = Messages.Get("recording.tooMany") });
 
-        settings.Save();
+        await _servers.SaveRecordingAsync(server, settings);
         await _audit.WriteAsync(HttpContext, "recording.update",
-            $"files=[{string.Join(", ", settings.ExcludeFilePatterns)}], users=[{string.Join(", ", settings.ExcludeUsers)}], " +
-            $"processes=[{string.Join(", ", settings.ExcludeProcesses)}], mergeReadMinutes={settings.MergeReadMinutes}");
+            $"server={ServerLabel(server)}, files=[{string.Join(", ", settings.ExcludeFilePatterns)}], " +
+            $"users=[{string.Join(", ", settings.ExcludeUsers)}], processes=[{string.Join(", ", settings.ExcludeProcesses)}], " +
+            $"mergeReadMinutes={settings.MergeReadMinutes}");
         return Ok(new { message = Messages.Get("recording.saved"), settings });
     }
 
@@ -103,11 +124,9 @@ public class SettingsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(req.Path))
             return BadRequest(new { error = Messages.Get("path.required") });
+        if (await CheckServerAsync(req.Server) is { } serverError) return serverError;
 
-        if (!Directory.Exists(req.Path))
-            return BadRequest(new { error = Messages.Get("path.notFound", req.Path) });
-
-        var (configs, _) = ReadSettingsDoc();
+        var configs = await _servers.GetPathsAsync(req.Server);
         if (configs.Any(c => c.Path.Equals(req.Path, StringComparison.OrdinalIgnoreCase)))
             return Conflict(new { error = Messages.Get("path.duplicate") });
 
@@ -115,51 +134,60 @@ public class SettingsController : ControllerBase
             ? et.Where(t => DefaultEventTypes.Contains(t)).ToArray()
             : DefaultEventTypes;
 
-        var updated = configs.Append(new PathConfig(req.Path, eventTypes)).ToArray();
-        SavePathConfigs(updated);
+        var (sacl, error) = await ApplySaclOnAsync(req.Server, req.Path);
+        if (error != null) return error;
 
-        _sacl.EnableAuditPolicy();
-        var (count, errors) = _sacl.ApplySacl(req.Path);
-        _logger.LogInformation("Path added via Web GUI: {Path}", req.Path);
+        var updated = configs.Append(new PathConfig(req.Path, eventTypes)).ToArray();
+        await _servers.SavePathsAsync(req.Server, updated);
+        _logger.LogInformation("Path added via Web GUI: {Server} {Path}", ServerLabel(req.Server), req.Path);
         await _audit.WriteAsync(HttpContext, "path.add",
-            $"path={req.Path}, eventTypes={string.Join(",", eventTypes)}, sacl={count}, saclErrors={errors.Count}");
+            $"server={ServerLabel(req.Server)}, path={req.Path}, eventTypes={string.Join(",", eventTypes)}, " +
+            $"sacl={sacl.Count}, saclErrors={sacl.Errors.Count}");
 
         return Ok(new
         {
-            message = Messages.Get("path.added", count),
-            saclCount = count,
-            saclErrors = errors,
+            message = Messages.Get("path.added", sacl.Count),
+            saclCount = sacl.Count,
+            saclErrors = sacl.Errors,
             pathConfigs = updated
         });
     }
 
     [HttpDelete("paths")]
-    public async Task<IActionResult> RemovePath([FromQuery] string path, [FromQuery] bool removeSacl = false)
+    public async Task<IActionResult> RemovePath([FromQuery] string path, [FromQuery] bool removeSacl = false,
+        [FromQuery] string? server = null)
     {
         if (string.IsNullOrWhiteSpace(path))
             return BadRequest(new { error = Messages.Get("path.paramRequired") });
+        if (await CheckServerAsync(server) is { } serverError) return serverError;
 
-        var (configs, _) = ReadSettingsDoc();
+        var configs = await _servers.GetPathsAsync(server);
         var updated = configs.Where(c => !c.Path.Equals(path, StringComparison.OrdinalIgnoreCase)).ToArray();
-
         if (updated.Length == configs.Length)
             return NotFound(new { error = Messages.Get("path.notMonitored") });
 
-        SavePathConfigs(updated);
+        var sacl = new SaclResult(0, []);
+        if (removeSacl)
+        {
+            if (ServerConfigService.IsLocal(server))
+            {
+                if (Directory.Exists(path)) sacl = new SaclResult(_sacl.RemoveSacl(path));
+            }
+            else
+            {
+                var (result, error) = await RunOnAgentAsync(server!, "removeSacl", new JsonObject { ["path"] = path });
+                if (error != null) return error;
+                sacl = SaclResult.From(result!);
+            }
+        }
+        await _servers.SavePathsAsync(server, updated);
 
-        int saclCount = 0;
-        List<string> saclErrors = [];
-        if (removeSacl && Directory.Exists(path))
-            (saclCount, saclErrors) = _sacl.RemoveSacl(path);
+        _logger.LogInformation("Path removed via Web GUI: {Server} {Path} (removeSacl={RemoveSacl})", ServerLabel(server), path, removeSacl);
+        await _audit.WriteAsync(HttpContext, "path.remove",
+            $"server={ServerLabel(server)}, path={path}, removeSacl={removeSacl}, sacl={sacl.Count}");
 
-        _logger.LogInformation("Path removed via Web GUI: {Path} (removeSacl={RemoveSacl})", path, removeSacl);
-        await _audit.WriteAsync(HttpContext, "path.remove", $"path={path}, removeSacl={removeSacl}, sacl={saclCount}");
-
-        var message = removeSacl
-            ? Messages.Get("path.removedSacl", saclCount)
-            : Messages.Get("path.removed");
-
-        return Ok(new { message, saclCount, saclErrors, pathConfigs = updated });
+        var message = removeSacl ? Messages.Get("path.removedSacl", sacl.Count) : Messages.Get("path.removed");
+        return Ok(new { message, saclCount = sacl.Count, saclErrors = sacl.Errors, pathConfigs = updated });
     }
 
     [HttpPost("paths/apply-sacl")]
@@ -167,19 +195,18 @@ public class SettingsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(req.Path))
             return BadRequest(new { error = Messages.Get("path.required") });
+        if (await CheckServerAsync(req.Server) is { } serverError) return serverError;
 
-        if (!Directory.Exists(req.Path))
-            return BadRequest(new { error = Messages.Get("path.notFound", req.Path) });
-
-        _sacl.EnableAuditPolicy();
-        var (count, errors) = _sacl.ApplySacl(req.Path);
-        await _audit.WriteAsync(HttpContext, "path.applySacl", $"path={req.Path}, sacl={count}, saclErrors={errors.Count}");
+        var (sacl, error) = await ApplySaclOnAsync(req.Server, req.Path);
+        if (error != null) return error;
+        await _audit.WriteAsync(HttpContext, "path.applySacl",
+            $"server={ServerLabel(req.Server)}, path={req.Path}, sacl={sacl.Count}, saclErrors={sacl.Errors.Count}");
 
         return Ok(new
         {
-            message = Messages.Get("path.saclApplied", count),
-            saclCount = count,
-            saclErrors = errors
+            message = Messages.Get("path.saclApplied", sacl.Count),
+            saclCount = sacl.Count,
+            saclErrors = sacl.Errors
         });
     }
 
@@ -188,12 +215,13 @@ public class SettingsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(req.Path))
             return BadRequest(new { error = Messages.Get("path.required") });
+        if (await CheckServerAsync(req.Server) is { } serverError) return serverError;
 
         var validTypes = req.EventTypes.Where(t => DefaultEventTypes.Contains(t)).ToArray();
         if (validTypes.Length == 0)
             return BadRequest(new { error = Messages.Get("path.eventTypeRequired") });
 
-        var (configs, _) = ReadSettingsDoc();
+        var configs = await _servers.GetPathsAsync(req.Server);
         if (!configs.Any(c => c.Path.Equals(req.Path, StringComparison.OrdinalIgnoreCase)))
             return NotFound(new { error = Messages.Get("path.notMonitored") });
 
@@ -202,20 +230,74 @@ public class SettingsController : ControllerBase
                 ? c with { EventTypes = validTypes }
                 : c).ToArray();
 
-        SavePathConfigs(updated);
-        _logger.LogInformation("EventTypes updated for {Path}: {Types}", req.Path, string.Join(",", validTypes));
-        await _audit.WriteAsync(HttpContext, "path.eventTypes", $"path={req.Path}, eventTypes={string.Join(",", validTypes)}");
+        await _servers.SavePathsAsync(req.Server, updated);
+        _logger.LogInformation("EventTypes updated for {Server} {Path}: {Types}", ServerLabel(req.Server), req.Path, string.Join(",", validTypes));
+        await _audit.WriteAsync(HttpContext, "path.eventTypes",
+            $"server={ServerLabel(req.Server)}, path={req.Path}, eventTypes={string.Join(",", validTypes)}");
         return Ok(new { pathConfigs = updated });
     }
 
-    private static void SavePathConfigs(PathConfig[] configs) =>
-        SettingsStore.Update(root => root["MonitoredPaths"] = new JsonArray(configs
-            .Select(c => (JsonNode)new JsonObject
-            {
-                ["path"] = c.Path,
-                ["eventTypes"] = new JsonArray(c.EventTypes.Select(t => (JsonNode)JsonValue.Create(t)).ToArray())
-            })
-            .ToArray()));
+    private static string ServerLabel(string? server) =>
+        ServerConfigService.IsLocal(server) ? ServerConfigService.LocalName : server!;
+
+    // An unknown server name is an error; this machine always exists
+    private async Task<IActionResult?> CheckServerAsync(string? server) =>
+        ServerConfigService.IsLocal(server) || await _servers.FindAgentAsync(server!) != null
+            ? null
+            : NotFound(new { error = Messages.Get("agents.notFound") });
+
+    private record SaclResult(int Count, List<string> Errors)
+    {
+        public SaclResult((int count, List<string> errors) r) : this(r.count, r.errors) { }
+
+        public static SaclResult From(JsonObject o) => new(
+            o["count"]?.GetValue<int>() ?? 0,
+            o["errors"] is JsonArray a ? a.Select(e => e?.GetValue<string>() ?? "").ToList() : []);
+    }
+
+    // Checks the folder exists and sets its SACL, here or on the agent's server
+    private async Task<(SaclResult Result, IActionResult? Error)> ApplySaclOnAsync(string? server, string path)
+    {
+        if (ServerConfigService.IsLocal(server))
+        {
+            if (!Directory.Exists(path))
+                return (new(0, []), BadRequest(new { error = Messages.Get("path.notFound", path) }));
+            _sacl.EnableAuditPolicy();
+            return (new SaclResult(_sacl.ApplySacl(path)), null);
+        }
+
+        var (result, error) = await RunOnAgentAsync(server!, "applySacl", new JsonObject { ["path"] = path });
+        if (error != null) return (new(0, []), error);
+        if (result!["exists"]?.GetValue<bool>() != true)
+            return (new(0, []), BadRequest(new { error = Messages.Get("path.notFound", path) }));
+        return (SaclResult.From(result), null);
+    }
+
+    private async Task<(JsonObject? Result, IActionResult? Error)> RunOnAgentAsync(string server, string type, JsonObject args)
+    {
+        var agent = await _servers.FindAgentAsync(server);
+        if (agent == null) return (null, NotFound(new { error = Messages.Get("agents.notFound") }));
+        if (agent.Disabled) return (null, BadRequest(new { error = Messages.Get("agents.isDisabled", agent.Name) }));
+        try
+        {
+            var result = await _jobs.RunAsync(agent.Id, type, args, SaclJobTimeout, HttpContext.RequestAborted);
+            if (result["error"]?.GetValue<string>() is { } message)
+                return (null, BadRequest(new { error = Messages.Get("agents.jobFailed", agent.Name, message) }));
+            return (result, null);
+        }
+        catch (TimeoutException)
+        {
+            return (null, StatusCode(StatusCodes.Status504GatewayTimeout, new { error = Messages.Get("agents.noAnswer", agent.Name) }));
+        }
+    }
+
+    internal static JsonArray PathConfigsToJson(PathConfig[] configs) => new(configs
+        .Select(c => (JsonNode)new JsonObject
+        {
+            ["path"] = c.Path,
+            ["eventTypes"] = new JsonArray(c.EventTypes.Select(t => (JsonNode)JsonValue.Create(t)).ToArray())
+        })
+        .ToArray());
 
     internal static (PathConfig[] configs, string dnsServer) ReadSettingsDoc() => ParseSettings(SettingsStore.Load());
 
@@ -249,7 +331,7 @@ public class SettingsController : ControllerBase
 }
 
 public record PathConfig(string Path, string[] EventTypes);
-public record PathRequest(string Path, string[]? EventTypes = null);
-public record EventTypesRequest(string Path, string[] EventTypes);
+public record PathRequest(string Path, string[]? EventTypes = null, string? Server = null);
+public record EventTypesRequest(string Path, string[] EventTypes, string? Server = null);
 public record DnsRequest(string? DnsServer);
 public record AppSettingsRequest(bool UpdateCheck);

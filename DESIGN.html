@@ -303,22 +303,35 @@ tbody tr:hover td { background: var(--surface2); }
   <div class="topbar">
     <span class="topbar-badge">設計書</span>
     <span class="topbar-title">FileAccessMonitor</span>
-    <span class="topbar-sub">v2 · 2026-10-26 · net10.0-windows</span>
+    <span class="topbar-sub">v1.5 · 2026-11-01 · net10.0-windows</span>
   </div>
 
   <nav>
     <div class="nav-group">
       <div class="nav-label">概要</div>
       <a class="nav-link" href="#overview">アーキテクチャ</a>
+      <a class="nav-link" href="#roles">構成と役割</a>
       <a class="nav-link" href="#stack">技術スタック</a>
     </div>
     <div class="nav-group">
-      <div class="nav-label">バックエンド</div>
+      <div class="nav-label">記録</div>
       <a class="nav-link" href="#data">データモデル</a>
       <a class="nav-link" href="#events">イベント処理</a>
+      <a class="nav-link" href="#delete">削除・名前変更・フォルダ</a>
+      <a class="nav-link" href="#rules">記録ルール</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">エージェント</div>
+      <a class="nav-link" href="#agent-endpoint">エージェント用ポート</a>
+      <a class="nav-link" href="#agent-protocol">登録と送信</a>
+      <a class="nav-link" href="#agent-config">設定の配布と指示</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">バックエンド</div>
       <a class="nav-link" href="#services">サービス</a>
       <a class="nav-link" href="#api">APIエンドポイント</a>
       <a class="nav-link" href="#config">設定ファイル</a>
+      <a class="nav-link" href="#alerts">通知</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">フロントエンド</div>
@@ -327,8 +340,9 @@ tbody tr:hover td { background: var(--surface2); }
     </div>
     <div class="nav-group">
       <div class="nav-label">運用</div>
+      <a class="nav-link" href="#auth">認証・ロール・閲覧範囲</a>
+      <a class="nav-link" href="#build">ビルド・リリース</a>
       <a class="nav-link" href="#deploy">デプロイ</a>
-      <a class="nav-link" href="#auth">認証・ロール</a>
     </div>
   </nav>
 
@@ -337,29 +351,46 @@ tbody tr:hover td { background: var(--surface2); }
     <!-- アーキテクチャ概要 -->
     <section id="overview">
       <h2>アーキテクチャ概要</h2>
-      <p>FileAccessMonitor は Windows サービスとして動作し、Windows セキュリティイベントログから SMB ファイルアクセスイベントを取得して REST API + SPA ダッシュボードで可視化するツールです。監視対象のファイルサーバー本体（既定ポート 8080）上で自己完結型 EXE として動作します。</p>
+      <p>FileAccessMonitor は Windows サービスとして動作し、Windows セキュリティイベントログからファイルアクセス（読取・書込・削除・名前変更）を収集して、REST API と SPA の Web GUI で可視化するツールです。1 台で完結する構成のほか、複数のファイルサーバーにエージェントを置き、1 台の監視サーバーに記録を集める構成をとれます。</p>
 
-      <pre class="mermaid">
-graph TD
-    WinAudit["Windows セキュリティイベントログ\n(4663 · 4659 · 4624 · 5140)"]
-    Svc["EventLogCollectorService\n(バックグラウンドワーカー)"]
-    DB["SQLite\nAccessRecord"]
-    API["ASP.NET Core 10\nREST API :8080"]
-    SPA["SPA\nwwwroot/index.html"]
-    Client["ブラウザ"]
-    DNS["DnsResolverService\n(UDP PTR 逆引き)"]
-
-    WinAudit -->|EventRecordWritten| Svc
-    Svc -->|IP解決| DNS
-    Svc -->|INSERT| DB
-    API -->|EF Core| DB
-    Client -->|JWT Bearer| API
-    API -->|静的ファイル配信| SPA
-      </pre>
+      <pre><code>[ファイルサーバー A]                [ファイルサーバー B]
+  エージェント                        エージェント
+  Security ログ → 収集 → 送信待ち     （同じ）
+  名前変更/フォルダ判定・SACL・
+  フォルダ一覧（指示に応じて）
+        │ HTTPS :8443（エージェントから接続、証明書は指紋で固定）
+        ▼
+[監視サーバー]（1 台構成ではこれだけ）
+  Security ログ → 収集（自分自身の分）
+  SQLite（記録・ユーザー・エージェント・操作ログ）
+  ASP.NET Core REST API + SPA（http :8080）
+  通知（Webhook / メール）・エージェントの無応答検知
+        ▲
+        │ JWT Bearer
+     ブラウザ（管理者のブラウザは GitHub に最新版を問い合わせる）</code></pre>
 
       <div class="callout">
-        <strong>制約事項：</strong>SACL の適用とセキュリティイベントログへのアクセスはローカル実行が必要なため、サービスはファイルサーバー上で直接動作させる必要があります。開発 PC からのデプロイは、WinRM が使える場合は <code>deploy-remote.ps1</code>、使えない場合は UNC パス経由のファイルコピーと <code>sc.exe</code>（RPC）によるサービス制御で行います（後述）。
+        <strong>前提：</strong>SACL の適用と Security ログの読み取りはローカルでしかできないため、収集は各ファイルサーバー上で行います（1 台構成では監視サーバー自身、複数台ではエージェント）。通信は常にエージェントから監視サーバーへ向かい、監視サーバーからファイルサーバーへは接続しません。
       </div>
+    </section>
+
+    <!-- 構成と役割 -->
+    <section id="roles">
+      <h2>構成と役割</h2>
+      <p>同じ EXE が、起動時の状態によって 2 つの役割のどちらかで動きます。インストーラーで役割を選びます。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>役割</th><th>判定</th><th>動くもの</th></tr></thead>
+          <tbody>
+            <tr><td>1 台構成 / 監視サーバー</td><td><code>agent.json</code> がない</td><td>ローカル収集（<code>LocalRecordSink</code>）、Web GUI と API、DB、通知、エージェント用ポート（エージェント利用時のみ）、エージェント監視</td></tr>
+            <tr><td>エージェント</td><td><code>%ProgramData%\FileAccessMonitor\agent.json</code> がある</td><td>収集（<code>RemoteRecordSink</code>）、送信（<code>AgentSender</code>）、指示の実行（<code>AgentJobRunner</code>）。Web GUI と DB はない（<code>AgentHost.RunAsync</code>）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>コマンドライン</h3>
+      <pre><code>FileAccessMonitor.exe enroll &lt;接続文字列&gt;   # 監視サーバーに登録して agent.json を作る（インストーラーも使用）
+FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構成に戻す</code></pre>
+      <p>データフォルダは既定で <code>C:\ProgramData\FileAccessMonitor</code>。環境変数 <code>FILEACCESSMONITOR_DATA</code> で別のフォルダを指定でき（<code>AppPaths.DataDir</code>）、インストール済みの環境に影響を与えずに開発用・デモ用のインスタンスを動かせます。</p>
     </section>
 
     <!-- 技術スタック -->
@@ -370,292 +401,312 @@ graph TD
         <span class="pill"><strong>Web</strong> ASP.NET Core 10 (Microsoft.NET.Sdk.Web)</span>
         <span class="pill"><strong>ORM</strong> Entity Framework Core 10 + SQLite</span>
         <span class="pill"><strong>認証</strong> ASP.NET Identity + JWT Bearer</span>
+        <span class="pill"><strong>秘密情報</strong> ASP.NET Core Data Protection（マシン DPAPI）</span>
         <span class="pill"><strong>ログ</strong> Serilog.AspNetCore 8.0.3</span>
         <span class="pill"><strong>発行</strong> PublishSingleFile=true, win-x64 自己完結型</span>
         <span class="pill"><strong>SQLite ネイティブ</strong> SQLitePCLRaw.lib.e_sqlite3 3.53.3</span>
         <span class="pill"><strong>UI</strong> Bootstrap 5.3.3, Bootstrap Icons, Chart.js 4.4.4</span>
+        <span class="pill"><strong>インストーラー</strong> Inno Setup 6</span>
       </div>
 
       <h3>プロジェクトファイルの主要設定</h3>
       <pre><code>&lt;TargetFramework&gt;net10.0-windows&lt;/TargetFramework&gt;
-&lt;PublishSingleFile&gt;true&lt;/PublishSingleFile&gt;
-&lt;SelfContained&gt;true&lt;/SelfContained&gt;
-&lt;RuntimeIdentifier&gt;win-x64&lt;/RuntimeIdentifier&gt;</code></pre>
+&lt;Version&gt;0.0.0&lt;/Version&gt;   &lt;!-- 開発ビルド。リリースは build.ps1 -Version で上書き --&gt;
+&lt;InternalsVisibleTo Include="FileAccessMonitor.Tests" /&gt;</code></pre>
+      <p>発行時のオプション（<code>PublishSingleFile</code>、<code>SelfContained</code>、<code>win-x64</code>）は <code>build.ps1</code> が指定します。版番号は <code>AssemblyInformationalVersion</code> の <code>+</code> より前を使い（<code>SettingsController.AppVersion</code>）、<code>0.0.0</code> は開発版として扱います（更新のお知らせ・「要更新」の比較対象外）。</p>
 
       <div class="callout warn">
-        <strong>注意：</strong><code>wwwroot/</code> の静的ファイルは EXE に埋め込まれず、ファイルシステムから配信されます。<code>Accept-Encoding</code> ヘッダーに基づいて <code>.br</code>/<code>.gz</code> の事前圧縮ファイルも配信されます。発行フォルダには <code>wwwroot/</code> ディレクトリを含める必要があります。
+        <strong>注意：</strong><code>wwwroot/</code> の静的ファイルは EXE に埋め込まれず、ファイルシステムから配信されます。発行フォルダには <code>wwwroot/</code> を含める必要があります。
       </div>
     </section>
 
     <!-- データモデル -->
     <section id="data">
       <h2>データモデル</h2>
-      <h3>AccessRecord</h3>
+      <p>すべて 1 つの SQLite ファイル（<code>fileaccess.db</code>）に入ります。<code>AccessDbContext</code> は <code>IdentityDbContext&lt;ApplicationUser&gt;</code> を継承しています。</p>
+
+      <h3>AccessRecord（アクセス記録）</h3>
       <div class="card">
         <div class="fields">
           <div class="field"><span class="field-name">Id</span><span class="field-desc">long — 自動インクリメント主キー</span></div>
-          <div class="field"><span class="field-name">FilePath</span><span class="field-desc">string MaxLength(2000) — フルパス（例: <code>U:\share\foo.txt</code>）</span></div>
-          <div class="field"><span class="field-name">FileName</span><span class="field-desc">string MaxLength(500) — ファイル名のみ</span></div>
-          <div class="field"><span class="field-name">FolderPath</span><span class="field-desc">string MaxLength(2000) — 親ディレクトリ</span></div>
-          <div class="field"><span class="field-name">UserName</span><span class="field-desc">string MaxLength(200) — Windows アカウント（DOMAIN\user 形式）</span></div>
-          <div class="field"><span class="field-name">AccessType</span><span class="field-desc">string MaxLength(20) — <code>"Read"</code> | <code>"Write"</code> | <code>"Delete"</code></span></div>
-          <div class="field"><span class="field-name">AccessTime</span><span class="field-desc">DateTime UTC — イベント発生時刻</span></div>
-          <div class="field"><span class="field-name">ClientIp</span><span class="field-desc">string? MaxLength(100) — ログオン／SMB セッションキャッシュからのリモート IP</span></div>
-          <div class="field"><span class="field-name">ClientMachine</span><span class="field-desc">string? MaxLength(200) — DNS またはワークステーション名で解決したホスト名</span></div>
+          <div class="field"><span class="field-name">FilePath</span><span class="field-desc">string(2000) — フルパス（ドライブレター形式）</span></div>
+          <div class="field"><span class="field-name">FileName</span><span class="field-desc">string(500) — ファイル名のみ</span></div>
+          <div class="field"><span class="field-name">FolderPath</span><span class="field-desc">string(2000) — 親フォルダ</span></div>
+          <div class="field"><span class="field-name">UserName</span><span class="field-desc">string(200) — <code>DOMAIN\user</code></span></div>
+          <div class="field"><span class="field-name">AccessType</span><span class="field-desc">string(20) — <code>Read</code> | <code>Write</code> | <code>Delete</code> | <code>Rename</code>（名前変更・移動。記録されるのは変更前のパス）</span></div>
+          <div class="field"><span class="field-name">AccessTime</span><span class="field-desc">DateTime UTC — イベント発生時刻（そのファイルサーバーの時計）</span></div>
+          <div class="field"><span class="field-name">ClientIp / ClientMachine</span><span class="field-desc">string? — 接続元 IP と端末名</span></div>
+          <div class="field"><span class="field-name">IsFolder</span><span class="field-desc">bool — フォルダの記録（削除・名前変更のときだけ記録される）</span></div>
+          <div class="field"><span class="field-name">ServerName</span><span class="field-desc">string(255) — アクセスが発生したファイルサーバー。ローカル収集では <code>Environment.MachineName</code>、エージェントの記録では登録名（エージェントの申告ではなくサーバー側で付ける）</span></div>
         </div>
       </div>
+      <p>インデックス: <code>FilePath</code>, <code>FolderPath</code>, <code>AccessTime</code>, <code>UserName</code>, <code>ServerName</code>, <code>(FilePath, AccessTime)</code>。</p>
 
-      <h3>インデックス（AccessDbContext）</h3>
-      <pre><code>HasIndex(r => r.FilePath)
-HasIndex(r => r.FolderPath)
-HasIndex(r => r.AccessTime)
-HasIndex(r => r.UserName)
-HasIndex(r => new { r.FilePath, r.AccessTime })</code></pre>
+      <h3>その他のテーブル</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>テーブル</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td>AuditLogs</td><td>操作ログ（Time, UserName, Action, Detail, ClientIp）。ログイン、設定変更、CSV 出力、通知の送信、エージェントの登録・無応答など。Time にインデックス</td></tr>
+            <tr><td>CollectorStates</td><td>キー/値。<code>LastRecordId</code> = ローカル収集の Security ログ読み取り位置</td></tr>
+            <tr><td>UserScopes</td><td>Viewer の閲覧範囲（UserId, Paths, NotifyEmail）。Paths は 1 行 1 件で <code>SERVER|D:\Share</code> または <code>D:\Share</code>（全サーバー）</td></tr>
+            <tr><td>Agents</td><td>エージェント（Id, Name, KeyHash, CreatedAt, LastSeenAt, Version, LastBatchSeq, Disabled, Config, ConfigVersion, OutboxCount, AuditPolicyOk）</td></tr>
+            <tr><td>AgentEnrollments</td><td>未使用の登録コード（CodeHash, ExpiresAt）。使うと削除</td></tr>
+            <tr><td>AspNet*</td><td>ASP.NET Identity（ユーザー、ロール Admin / Viewer ほか）</td></tr>
+          </tbody>
+        </table>
+      </div>
 
-      <h3>スキーママイグレーション</h3>
-      <p>データベースは <code>EnsureCreated()</code> で作成されます。v2 で追加した <code>ClientIp</code>・<code>ClientMachine</code> 列は、起動時に <code>pragma_table_info</code> で存在を確認し、無い場合のみ <code>ALTER TABLE … ADD COLUMN</code> で追加されます（既存データを破壊しない非破壊的アップグレード）。</p>
-
-      <h3>Identity テーブル</h3>
-      <p><code>AccessDbContext</code> は <code>IdentityDbContext&lt;ApplicationUser&gt;</code> を継承しています。ASP.NET Identity のテーブル（ユーザー、ロール、クレームなど）はアクセスログと同じ SQLite ファイル（<code>C:\ProgramData\FileAccessMonitor\fileaccess.db</code>）に共存します。</p>
+      <h3>スキーマの更新</h3>
+      <p>新規 DB は <code>EnsureCreated()</code> で作成します。既存 DB は起動時（<code>Program.cs</code>）に、<code>CREATE TABLE IF NOT EXISTS</code> と、<code>pragma_table_info</code> で存在を確認したうえでの <code>ALTER TABLE … ADD COLUMN</code> で非破壊的に更新します。列を追加したときの一度きりのデータ移行:</p>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li><code>IsFolder</code> 追加時 — 他の記録が親フォルダとして持つパスを <code>IsFolder = 1</code> にする</li>
+        <li><code>ServerName</code> 追加時 — 既存の記録すべてにこのマシンの名前を入れる</li>
+      </ul>
     </section>
 
     <!-- イベント処理パイプライン -->
     <section id="events">
       <h2>イベント処理パイプライン</h2>
-      <p><code>EventLogCollectorService</code> は以下の XPath で Windows セキュリティイベントログを購読します：</p>
-      <pre><code>*[System[(EventID=4663) or (EventID=4659) or (EventID=4624) or (EventID=5140)]]</code></pre>
+      <p><code>EventLogCollectorService</code> が次の XPath で Security ログを購読します（1 台構成・監視サーバー・エージェント共通）。</p>
+      <pre><code>*[System[(EventID=4663) or (EventID=4659) or (EventID=4660) or (EventID=4624) or (EventID=5140)]]</code></pre>
 
-      <h3>各イベントの役割</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>イベント ID</th><th>用途</th><th>処理内容</th></tr></thead>
+          <thead><tr><th>イベント ID</th><th>内容</th><th>処理</th></tr></thead>
           <tbody>
-            <tr><td>4663</td><td>オブジェクトアクセス（読み取り／書き込み）</td><td>AccessMask を解析してアクセス種別を判定し、監視対象パスのものを記録</td></tr>
-            <tr><td>4659</td><td>削除目的のハンドル要求</td><td>常に <code>Delete</code> として記録 — 現行 Windows での削除検知に重要</td></tr>
-            <tr><td>4624</td><td>ログオンイベント</td><td>ログオンセッション ID → (IP, マシン名) を <code>_logonCache</code> にキャッシュ</td></tr>
-            <tr><td>5140</td><td>ネットワーク共有アクセス</td><td>ユーザー名 → (IP, マシン名) を <code>_smbSessionCache</code> にキャッシュ</td></tr>
+            <tr><td>4663</td><td>オブジェクトへのアクセス</td><td>AccessMask から種別を判定。削除権限を含むものは <code>DeleteTracker</code> で保留</td></tr>
+            <tr><td>4659</td><td>削除目的のハンドル要求</td><td>常に <code>Delete</code></td></tr>
+            <tr><td>4660</td><td>オブジェクトの削除</td><td>同じ (ProcessId, HandleId) の保留中アクセスを <code>Delete</code> と確定</td></tr>
+            <tr><td>4624</td><td>ログオン</td><td>ログオン ID → (IP, 端末名) をキャッシュ</td></tr>
+            <tr><td>5140</td><td>共有へのアクセス</td><td>ログオン ID → IP をキャッシュ</td></tr>
+            <tr><td>1102</td><td>監査ログの消去</td><td>ログ消去を検知したとき、消去したユーザーを調べるためだけに参照</td></tr>
           </tbody>
         </table>
       </div>
 
-      <h3>AccessMask の解析（イベント 4663）</h3>
-      <pre><code>0x10000           → Delete（削除）
-0x2 / 0x4 / 0x40000002 → Write（書き込み）
-0x1 / 0x80000000  → Read（読み取り）
-その他             → スキップ（記録しない）</code></pre>
+      <h3>流れ</h3>
+      <pre><code>EventLogWatcher（ブックマークから再開）
+  → Channel&lt;RawEvent&gt;（XML をここで解析して EventRecord を手放す）
+  → 単一のコンシューマー: ProcessEvent → DeleteTracker / ReadMerger
+  → 最大 500 件ずつ IRecordSink.SaveAsync(records, lastRecordId)
+       LocalRecordSink : 記録と読み取り位置を 1 トランザクションで DB に保存 → AlertService.Observe
+       RemoteRecordSink: 送信待ちフォルダに書いてから読み取り位置を保存（AgentSender が送る）</code></pre>
+      <p>記録がない間も、読み取り位置は 5 秒ごとに保存します。保存に 3 回失敗したバッチは破棄してログに残します。</p>
 
-      <h3>IP / マシン名の解決</h3>
-      <p>実行時に2つのキャッシュを保持します：</p>
+      <h3>停止中の取りこぼし対策</h3>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
-        <li><strong style="color:var(--fg)">_logonCache</strong> — ログオンセッション ID → (IP, マシン名)。起動時に過去30日分のイベントから事前ロード</li>
-        <li><strong style="color:var(--fg)">_smbSessionCache</strong> — ユーザー名 → (IP, マシン名)。<code>NetSessionEnum</code> Win32 API で30秒ごとに更新</li>
-      </ul>
-      <p>いずれのキャッシュでもマシン名が取得できない場合、<code>DnsResolverService.TryResolve(ip)</code> にフォールバックします。解決できない場合は <code>ClientMachine</code> に <code>null</code> が格納されます。</p>
-
-      <h3>パスの正規化</h3>
-      <p>イベントログのパスは NT デバイスパス形式（<code>\Device\HarddiskVolume3\...</code>）で届きます。起動時に <code>BuildDeviceMap()</code> が <code>QueryDosDevice</code> を呼び出して各ボリュームとドライブレターのマッピングを構築し、記録前にパスを変換します。</p>
-
-      <h3>フィルタリング</h3>
-      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
-        <li><code>$</code> で終わるアカウント名はスキップ（<code>ExcludeSystemAccounts=true</code>）</li>
-        <li><code>ExcludeProcessNames</code> に指定されたプロセス名はスキップ（<code>System</code>, <code>svchost.exe</code>, <code>SearchIndexer.exe</code>）</li>
-        <li>ファイルパスが監視対象パスのいずれかで始まる必要がある（設定した eventTypes に含まれるアクセス種別のみ記録）</li>
+        <li>前回の読み取り位置（RecordId）のブックマークから <code>readExistingEvents</code> で読み直す</li>
+        <li>RecordId が巻き戻っていればログが消去されたと判断し、ログ全体を読み直して「記録の途切れ」（ログ消去、消去したユーザー付き）を報告</li>
+        <li>前回の位置がすでに上書きされていれば、残っている範囲を読み、欠けた範囲を「記録の途切れ」として報告</li>
+        <li>報告は <code>IRecordSink.ReportGapAsync</code> 経由。操作ログ <code>collector.gap</code> と通知（エージェントの分は監視サーバーで処理）</li>
       </ul>
 
-      <h3>起動時プリロード</h3>
-      <pre><code>XPath: *[System[(EventID=4624 or EventID=5140 or EventID=4659)
-        and TimeCreated[timediff(@SystemTime) &lt;= 2592000000]]]</code></pre>
-      <p>起動時に過去30日分のセキュリティイベントログを読み込んでキャッシュをウォームアップします。</p>
+      <h3>AccessMask の判定</h3>
+      <pre><code>0x10000 (DELETE)                         → Delete 候補（DeleteTracker で確定）
+0x2 / 0x4 / 0x40000000 (WriteData など)   → Write
+0x1 / 0x80000000 (ReadData など)          → Read
+その他（属性・EA の読み書きなど）          → 記録しない</code></pre>
+
+      <h3>フィルタの順番（ProcessEvent）</h3>
+      <ol style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>削除権限を含む 4663 は、まず同じハンドルの保留を解除（<code>DeleteTracker.Release</code>）。除外される記録でも行う</li>
+        <li>NT デバイスパスをドライブレターに変換し、代替データストリーム（<code>file:stream</code>）を除外</li>
+        <li>監視フォルダの配下か（監視フォルダが未設定なら全体）</li>
+        <li>システムアカウント（<code>xxx$</code>, SYSTEM など）と <code>ExcludeProcessNames</code>（appsettings）</li>
+        <li>記録ルールの除外（ファイル名・ユーザー・プロセス）</li>
+        <li>フォルダごとの記録種別（名前変更は「削除」の設定に従う）</li>
+        <li>フォルダへのアクセスは、削除権限のもの以外は除外</li>
+        <li>連続した読取のまとめ（<code>ReadMerger</code>）</li>
+      </ol>
+
+      <h3>接続元 IP / 端末名</h3>
+      <p>ログオン ID → (IP, 端末名) のキャッシュ（起動時に過去 30 日分の 4624/5140 を先読み）と、<code>NetSessionEnum</code> で 30 秒ごとに更新する SMB セッション一覧（ユーザー名 → IP）を使います。端末名が分からなければ、逆引き DNS サーバーが設定されている場合だけ <code>DnsResolverService</code> で PTR を引きます（成功 1 時間・失敗 5 分キャッシュ）。逆引き DNS は監視サーバーの設定だけで、エージェントの記録は監視サーバーが受け取ったときに解決します（エージェントでは引かない）。</p>
+    </section>
+
+    <!-- 削除・名前変更・フォルダ -->
+    <section id="delete">
+      <h2>削除・名前変更・フォルダの判定</h2>
+      <p>名前変更・移動でも、ファイルは削除権限（<code>0x10000</code>）で開かれます。違いは、実際に削除されたときだけ同じハンドルの 4660 が続くことです。<code>DeleteTracker</code> は削除権限のアクセスを (ProcessId, HandleId) ごとに最大 2 秒保留して判定します。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>状況</th><th>記録</th></tr></thead>
+          <tbody>
+            <tr><td>同じハンドルの 4660 が来た</td><td>Delete</td></tr>
+            <tr><td>4660 が来ず、元のパスに何もない</td><td>Rename（名前変更・移動）</td></tr>
+            <tr><td>4660 が来ず、元のパスにファイルがある</td><td>削除以外の権限の種別、なければ Write（Office の保存は、旧ファイルを別名にして新ファイルを元の名前にするため）</td></tr>
+            <tr><td>4660 が来ず、元のパスにフォルダがある</td><td>記録しない（削除権限で開いただけ）</td></tr>
+            <tr><td>同じハンドルで新しい削除権限のアクセス</td><td>前の保留は「削除ではない」として上記で確定（ハンドル番号の再利用対策）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>保留の期限は、新しいイベントの時刻（停止中の分を読み直しているとき）か実時間のどちらかで 2 秒を過ぎたときです。キューが空でも保留があれば、待機を 2 秒で切り上げて判定します。</p>
+
+      <h3>フォルダの判定</h3>
+      <p>イベントにはファイルかフォルダかの区別がないため、処理時点で <code>Directory.Exists</code> を確認し、さらに最近見たフォルダ（記録の親フォルダ、存在したフォルダ）を <code>RecentFolders</code> に覚えておきます。フォルダを削除すると中身が先に削除されるので、フォルダ自体が消えていても判定できます。空のフォルダで処理時点にすでに消えているものは判定できず、ファイルとして記録されます。</p>
+    </section>
+
+    <!-- 記録ルール -->
+    <section id="rules">
+      <h2>記録ルール</h2>
+      <p>サーバーごとの <code>settings.json</code> の <code>Recording</code> キー（<code>RecordingSettings</code>）。キーがなければ既定値を使います。エージェントのサーバーの分は監視サーバーで管理し、エージェントに配布します。</p>
+      <div class="card">
+        <div class="fields">
+          <div class="field"><span class="field-name">ExcludeFilePatterns</span><span class="field-desc">ファイル名のパターン（<code>*</code> <code>?</code>、大文字小文字を区別しない）。既定 <code>Thumbs.db</code>, <code>desktop.ini</code>, <code>~$*</code>, <code>*.tmp</code></span></div>
+          <div class="field"><span class="field-name">ExcludeUsers</span><span class="field-desc"><code>DOMAIN\user</code>、またはユーザー名のみ（全ドメインに一致）</span></div>
+          <div class="field"><span class="field-name">ExcludeProcesses</span><span class="field-desc">プロセス名。共有経由のアクセスにはプロセス名がないため、サーバー上で開いたものにだけ効く</span></div>
+          <div class="field"><span class="field-name">MergeReadMinutes</span><span class="field-desc">既定 5。同じユーザー・同じファイルの読取は、前回の読取からこの時間内なら記録しない（時間は読取のたびに数え直す。0 = すべて記録）</span></div>
+        </div>
+      </div>
+      <p>設定の変更は、<code>settings.json</code> の更新日時を 1 秒ごとに確認して反映します（監視フォルダも同じ）。記録済みのデータには影響しません。</p>
+    </section>
+
+    <!-- エージェント用ポート -->
+    <section id="agent-endpoint">
+      <h2>エージェント用ポート</h2>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>HTTPS、既定 <code>8443</code>（<code>Agents:Port</code>）。Kestrel に <code>ListenAnyIP</code> で追加</li>
+        <li>開くのは<strong style="color:var(--fg)">エージェントを使っているときだけ</strong>（<code>AgentEndpoint.InUse</code>: <code>Agents:Enabled</code> が true か、<code>Agents</code> テーブルに行がある。DB の構成前に SQLite を直接読んで判定）。初めて登録コードを発行しようとすると <code>Agents:Enabled</code> を書き込み、サービスの再起動を案内する</li>
+        <li>証明書は自己署名（<code>CN=FileAccessMonitor Agent Endpoint</code>、RSA 2048、有効期限 20 年）。初回に作成して <code>LocalMachine\My</code> に保存。エージェントは SHA-256 の指紋で固定するため認証局は不要</li>
+        <li>このポートでは <code>/api/agent/*</code> だけを受け付け、<code>/api/agent/*</code> はこのポートでしか受け付けない（ミドルウェアで 404）</li>
+      </ul>
+    </section>
+
+    <!-- 登録と送信 -->
+    <section id="agent-protocol">
+      <h2>登録と送信</h2>
+      <h3>登録</h3>
+      <ol style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>管理者が登録コードを発行（24 時間有効・1 回限り。DB には SHA-256 のハッシュだけを保存）</li>
+        <li>接続文字列 <code>FAM1.</code> + base64url(<code>{"u": URL, "f": 証明書の指紋, "c": コード}</code>) を作る。URL は GUI で書き換えて作り直せる</li>
+        <li>エージェントが <code>enroll</code> で <code>POST /api/agent/enroll</code>。成功すると <code>エージェントID.秘密</code> のキーを受け取り、<code>agent.json</code>（SYSTEM / Administrators のみ読み取り可）に保存</li>
+        <li>同じサーバー名で登録し直すと、キーを入れ替えて通し番号をリセット（記録は同じ名前のまま続く）</li>
+      </ol>
+
+      <h3>送信（AgentSender）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>収集した記録は、まず送信待ちフォルダ <code>outbox\</code> に通し番号のファイルとして書く（最大 2 GB）。読み取り位置は <code>agent-position.txt</code></li>
+        <li>古い順に <code>POST /api/agent/batch</code>。成功したら削除。失敗したら 5 秒から最大 5 分まで間隔を広げて再試行。401 のときは 5 分待つ（無効化・削除されたエージェント）</li>
+        <li>監視サーバーは通し番号を確認し、保存済みの番号なら保存せずに成功を返す（応答が失われた再送を二重に保存しない）。記録と番号は 1 トランザクション</li>
+        <li>送るものがないときは 1 分ごとに <code>heartbeat</code>（バージョン、送信待ち件数、監査ポリシーが有効か）。バッチ送信時も <code>X-Agent-Outbox</code> ヘッダーで残り件数を伝える</li>
+        <li>記録の途切れの報告も、送信待ちフォルダ経由で同じ順番で送る</li>
+        <li>接続元の端末名は、エージェントがログオンイベントから分かった場合だけ付けて送る。分からない記録は、監視サーバーが受け取ったときに自分の逆引き DNS 設定で解決する（IP ごとに 1 回、キャッシュあり）。DNS の設定と経路は監視サーバーだけで済む</li>
+      </ul>
+    </section>
+
+    <!-- 設定の配布と指示 -->
+    <section id="agent-config">
+      <h2>設定の配布と指示</h2>
+      <h3>設定の配布</h3>
+      <p>エージェントのサーバーの監視フォルダと記録ルールは、監視サーバーの <code>Agents.Config</code>（<code>settings.json</code> と同じ形の JSON）に保存し、変更のたびに <code>ConfigVersion</code> を上げます（<code>ServerConfigService</code>）。エージェントは heartbeat の応答で版の違いを知ると <code>GET /api/agent/config</code> で取得し、自分の <code>settings.json</code> の <code>MonitoredPaths</code> と <code>Recording</code> を書き換えます。収集側は既存のファイル監視でそのまま反映します。逆引き DNS は配布しません（下記のとおり監視サーバーで解決するため）。</p>
+
+      <h3>指示（ジョブ）</h3>
+      <p>GUI からエージェントのサーバーで実行する処理は、メモリ上のキュー <code>AgentJobs</code> に入れ、エージェントが long poll（<code>GET /api/agent/jobs</code>、最大 25 秒待ち）で受け取って <code>POST /api/agent/jobs/{id}</code> で結果を返します。GUI のリクエストは結果が来るまで待ちます。サービス停止時は long poll を即座に打ち切ります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>種類</th><th>内容</th><th>待ち時間</th></tr></thead>
+          <tbody>
+            <tr><td>applySacl</td><td>フォルダの存在確認、監査ポリシーの有効化、SACL の設定</td><td>15 分</td></tr>
+            <tr><td>removeSacl</td><td>SACL の削除</td><td>15 分</td></tr>
+            <tr><td>scan</td><td>未使用ファイル用のフォルダ一覧（最大 10 万件、<code>[パス, サイズ, 更新日時]</code>）。記録との照合は監視サーバーで行う</td><td>10 分</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- サービス -->
     <section id="services">
       <h2>サービス</h2>
-
-      <h3>EventLogCollectorService</h3>
-      <p><code>IHostedService</code> として登録されたコアのバックグラウンドワーカーです。詳細は上記「イベント処理パイプライン」を参照してください。</p>
-
-      <h3>DnsResolverService</h3>
-      <p>シングルトン。設定可能なプライベート DNS サーバーに対して UDP PTR 逆引きルックアップを行います。</p>
-      <div class="card">
-        <div class="fields">
-          <div class="field"><span class="field-name">SetDnsServer()</span><span class="field-desc">実行時に DNS サーバーアドレスを更新（SettingsController の保存時に呼び出し）</span></div>
-          <div class="field"><span class="field-name">GetDnsServer()</span><span class="field-desc">現在の DNS サーバーアドレスを返す</span></div>
-          <div class="field"><span class="field-name">TryResolve(ip)</span><span class="field-desc">逆引きルックアップ。正引きキャッシュ1時間、否定キャッシュ5分。サーバー未設定またはルックアップ失敗時は <code>null</code> を返す</span></div>
-        </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>クラス</th><th>役割</th></tr></thead>
+          <tbody>
+            <tr><td>EventLogCollectorService</td><td>Security ログの収集（上記）。ホステッドサービス</td></tr>
+            <tr><td>IRecordSink</td><td>保存先。<code>LocalRecordSink</code>（DB）/ <code>RemoteRecordSink</code>（送信待ちフォルダ）</td></tr>
+            <tr><td>DeleteTracker / ReadMerger / RecentFolders</td><td>削除・名前変更の判定、読取のまとめ、フォルダの判定（<code>RecordingRules.cs</code>）</td></tr>
+            <tr><td>AlertService / AlertDetector</td><td>大量の削除・書込・読取の検知と通知、記録の途切れ・エージェントの無応答の通知。検知器はスレッドセーフでないため <code>Observe</code> はロックする</td></tr>
+            <tr><td>AgentMonitorService</td><td>1 分ごとにエージェントの最終接続を確認し、無応答と復旧を通知（監視サーバーの起動直後は同じ時間だけ判定しない）</td></tr>
+            <tr><td>AgentSender / AgentJobRunner</td><td>エージェント側の送信と指示の実行</td></tr>
+            <tr><td>ServerConfigService / AgentJobs</td><td>サーバーごとの設定の読み書き、エージェントへの指示のキュー</td></tr>
+            <tr><td>UserScopeService / AccessScope</td><td>閲覧範囲の取得と、記録のクエリへの適用（LIKE で大文字小文字を区別しない。<code>%</code> <code>_</code> はエスケープ）</td></tr>
+            <tr><td>SaclManagerService</td><td>監査ポリシーの有効化（<code>auditpol</code>）、SACL の設定・削除（ReadData / WriteData / AppendData / Delete のみ監査）、監査ポリシーが有効かの確認（<code>AuditQuerySystemPolicy</code>。表示言語に依存しない）</td></tr>
+            <tr><td>DnsResolverService</td><td>逆引き DNS（UDP で PTR を直接問い合わせ）</td></tr>
+            <tr><td>RetentionService</td><td>保持期間を過ぎた記録の定期削除</td></tr>
+            <tr><td>AuditLog</td><td>操作ログの書き込み</td></tr>
+            <tr><td>TokenService</td><td>JWT の発行（セキュリティスタンプ付き）</td></tr>
+            <tr><td>SettingsStore / SecretStore / AppPaths</td><td><code>settings.json</code> のキー単位の読み書き（一時ファイル経由で置き換え）、ACL で保護した秘密ファイル、データフォルダの場所</td></tr>
+          </tbody>
+        </table>
       </div>
-      <p>PTR クエリ例: <code>192.0.2.31</code> → <code>31.2.0.192.in-addr.arpa</code>。生 UDP QTYPE=12 (PTR), QCLASS=IN, タイムアウト 1500ms。レスポンスの DNS ラベルポインタ圧縮にも対応。</p>
-
-      <h3>SaclManagerService</h3>
-      <p>シングルトン。監視対象パスの Windows SACL（監査 ACE）を管理します。</p>
-      <div class="card">
-        <div class="fields">
-          <div class="field"><span class="field-name">EnableAuditPolicy()</span><span class="field-desc"><code>auditpol /set /subcategory:"{0CCE921D-...}"</code> を実行してファイルシステムオブジェクトアクセス監査を有効化</span></div>
-          <div class="field"><span class="field-name">ApplySacl(path)</span><span class="field-desc"><code>FileSystemRights.ReadData|WriteData|AppendData|Delete</code>, <code>AuditFlags.Success</code>, <code>Everyone</code> の監査ルールをパス配下に再帰適用。既存の Everyone ルールは置き換え（属性読み取り等は監査しないことで Security ログの肥大化を防ぐ）</span></div>
-          <div class="field"><span class="field-name">RemoveSacl(path)</span><span class="field-desc"><code>Everyone</code> の監査ルールをパス配下から再帰的に削除</span></div>
-        </div>
-      </div>
-
-      <h3>RetentionService</h3>
-      <p>シングルトン兼 <code>IHostedService</code>。設定された保持ポリシーの期限を超えた <code>AccessRecord</code> 行を定期的に削除します。</p>
     </section>
 
     <!-- APIエンドポイント -->
     <section id="api">
       <h2>API エンドポイント</h2>
+      <p>統計系の API は、Viewer の閲覧範囲で自動的に絞り込みます。<code>?server=</code> を付けると、そのファイルサーバーの記録だけを対象にします。設定系の <code>server</code> は、空ならこの監視サーバー、それ以外はエージェントのサーバー名です。</p>
 
-      <h3>認証 — <code>AuthController</code></h3>
+      <h3>認証 — <code>AuthController</code> / <code>MeController</code></h3>
       <div class="card">
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/auth/login</span>
-          <span class="endpoint-desc">JWT トークンを返す（有効期限 24h）</span>
-        </div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/auth/login</span><span class="endpoint-desc">JWT を返す。5 回失敗で 15 分ロック</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/auth/me</span><span class="endpoint-desc">ユーザー情報と閲覧範囲（scopePaths）</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/me/change-password</span><span class="endpoint-desc">自分のパスワード変更。新しいトークンを返す</span></div>
       </div>
 
-      <h3>統計 — <code>StatsController</code> <span class="badge badge-tag">Viewer 以上</span></h3>
+      <h3>統計 — <code>StatsController</code> <span class="badge badge-tag">認証済み</span></h3>
       <div class="card">
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/summary?days=7</span>
-          <span class="endpoint-desc">{total, uniqueFiles, uniqueUsers, byType}</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/top-files?limit=20&amp;days=7&amp;accessType=</span>
-          <span class="endpoint-desc">読取・書込・削除件数付きファイルランキング</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/top-folders?limit=20&amp;days=7</span>
-          <span class="endpoint-desc">フォルダランキング</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/top-users?limit=20&amp;days=7</span>
-          <span class="endpoint-desc">ユーザーランキング</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/timeline?days=7</span>
-          <span class="endpoint-desc">日別時系列データ</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/file-detail?path=…&amp;days=30</span>
-          <span class="endpoint-desc">{byUser, byType, timeline, recent(50)}</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/folder-detail?path=…&amp;days=30</span>
-          <span class="endpoint-desc">{byUser, byType, timeline, topFiles(20)}</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/user-detail?username=…&amp;days=30</span>
-          <span class="endpoint-desc">{byType, timeline, topFiles, recentFiles}</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/recent?page=1&amp;pageSize=50</span>
-          <span class="endpoint-desc">{total, page, pageSize, items[]}</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/stats/search?q=&amp;days=7&amp;type=&amp;user=&amp;ip=&amp;page=1&amp;pageSize=50</span>
-          <span class="endpoint-desc">横断検索 — FileName, FilePath, FolderPath, UserName, ClientIp, ClientMachine を検索対象</span>
-        </div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/servers</span><span class="endpoint-desc">記録のあるファイルサーバー（範囲内）</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/summary?days=</span><span class="endpoint-desc">{total, uniqueFiles, uniqueUsers, byType}</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/top-files?limit=&amp;days=&amp;accessType=</span><span class="endpoint-desc">サーバー＋パス単位。フォルダは除く</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/top-folders?limit=&amp;days=</span><span class="endpoint-desc">サーバー＋フォルダ単位</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/top-users?limit=&amp;days=</span><span class="endpoint-desc">ユーザー単位</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/timeline?days=</span><span class="endpoint-desc">UTC の時間単位（ブラウザが日単位にまとめる）</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/file-detail · folder-detail · user-detail</span><span class="endpoint-desc">詳細（server を付けて 1 台に絞る）</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/recent?page=&amp;pageSize=</span><span class="endpoint-desc">{total, page, pageSize, items}</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/search?q=&amp;days=&amp;dateFrom=&amp;dateTo=&amp;type=&amp;ip=</span><span class="endpoint-desc">複数キーワードの横断検索</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/search/export?…&amp;tzOffsetMinutes=</span><span class="endpoint-desc">CSV（UTF-8 BOM、最大 20 万行、数式インジェクション対策）。操作ログに記録</span></div>
+      </div>
+
+      <h3>未使用ファイル — <code>UnusedFilesController</code> <span class="badge badge-tag">Admin / 範囲を持つ Viewer</span></h3>
+      <div class="card">
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/unused-files?server=&amp;folder=&amp;days=&amp;criterion=read|any</span><span class="endpoint-desc">一覧（最大 2000 件）とフォルダ別集計</span></div>
       </div>
 
       <h3>設定 — <code>SettingsController</code> <span class="badge badge-admin">Admin 専用</span></h3>
       <div class="card">
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/settings</span>
-          <span class="endpoint-desc">{pathConfigs[{path, eventTypes[]}], dnsServer}</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/settings/paths</span>
-          <span class="endpoint-desc">監視パス追加 + 監査ポリシー有効化 + SACL 適用</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-del">DELETE</span>
-          <span class="endpoint-path">/api/settings/paths?path=…&amp;removeSacl=</span>
-          <span class="endpoint-desc">監視パス削除（オプションで SACL も削除）</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/settings/paths/apply-sacl</span>
-          <span class="endpoint-desc">SACL の再適用のみ（パス一覧は変更なし）</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/settings/paths/event-types</span>
-          <span class="endpoint-desc">パス単位の監視イベント種別を更新 {path, eventTypes[]}</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/settings/dns</span>
-          <span class="endpoint-desc">Body: {dnsServer: "…"} — settings.json に保存して DnsResolverService に反映</span>
-        </div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/settings?server=</span><span class="endpoint-desc">{pathConfigs, dnsServer}</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/settings/servers</span><span class="endpoint-desc">{local, servers}（この監視サーバー＋エージェント）</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/settings/paths</span><span class="endpoint-desc">{path, eventTypes, server} 追加＋存在確認＋SACL</span></div>
+        <div class="endpoint"><span class="badge badge-del">DELETE</span><span class="endpoint-path">/api/settings/paths?path=&amp;removeSacl=&amp;server=</span><span class="endpoint-desc">監視解除（SACL の削除は任意）</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/settings/paths/apply-sacl · paths/event-types</span><span class="endpoint-desc">SACL の再適用、記録種別の変更</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/settings/recording?server=</span><span class="endpoint-desc">記録ルール（PUT で保存）</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/settings/dns</span><span class="endpoint-desc">逆引き DNS サーバー</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/settings/app</span><span class="endpoint-desc">{version, updateCheck}（PUT で更新確認のオン・オフ）</span></div>
       </div>
 
-      <h3>保持ポリシー — <code>RetentionController</code> <span class="badge badge-admin">Admin 専用</span></h3>
+      <h3>エージェント管理 — <code>AgentsController</code> <span class="badge badge-admin">Admin 専用</span></h3>
       <div class="card">
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/retention</span>
-          <span class="endpoint-desc">現在のポリシーとレコード統計を取得</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-put">PUT</span>
-          <span class="endpoint-path">/api/retention</span>
-          <span class="endpoint-desc">保持日数を更新（0 = 無期限保持）</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/retention/cleanup</span>
-          <span class="endpoint-desc">即時クリーンアップを実行</span>
-        </div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/agents</span><span class="endpoint-desc">一覧と状態（featureOn, restartNeeded, endpointReady, serverVersion）</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agents/enrollment</span><span class="endpoint-desc">登録コードの発行（初回は機能を有効にして 409 で再起動を案内）</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agents/connection</span><span class="endpoint-desc">別のアドレスで接続文字列を作り直す</span></div>
+        <div class="endpoint"><span class="badge badge-put">PUT</span><span class="endpoint-path">/api/agents/{id}/disabled</span><span class="endpoint-desc">無効化・有効化</span></div>
+        <div class="endpoint"><span class="badge badge-del">DELETE</span><span class="endpoint-path">/api/agents/{id}</span><span class="endpoint-desc">削除（記録は残る）</span></div>
       </div>
 
-      <h3>ユーザー管理 — <code>UsersController</code> <span class="badge badge-admin">Admin 専用</span></h3>
+      <h3>エージェント用 — <code>AgentApiController</code> <span class="badge badge-tag">エージェント用ポートのみ・エージェントのキー</span></h3>
       <div class="card">
-        <div class="endpoint">
-          <span class="badge badge-get">GET</span>
-          <span class="endpoint-path">/api/users</span>
-          <span class="endpoint-desc">ロール付きユーザー一覧</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/users</span>
-          <span class="endpoint-desc">ユーザー作成</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-del">DELETE</span>
-          <span class="endpoint-path">/api/users/{id}</span>
-          <span class="endpoint-desc">ユーザー削除（自分自身は削除不可）</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-put">PUT</span>
-          <span class="endpoint-path">/api/users/{id}/role</span>
-          <span class="endpoint-desc">ロール変更（自分自身のロールは変更不可）</span>
-        </div>
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/users/{id}/reset-password</span>
-          <span class="endpoint-desc">パスワードリセット（Admin が他ユーザーのパスワードを強制変更）</span>
-        </div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agent/enroll</span><span class="endpoint-desc">登録（キー不要、登録コード）</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agent/batch</span><span class="endpoint-desc">{seq, records?, gap?}</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agent/heartbeat</span><span class="endpoint-desc">{version, outboxCount, auditPolicyOk} → {configVersion}</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/agent/config</span><span class="endpoint-desc">監視フォルダと記録ルール</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/agent/jobs</span><span class="endpoint-desc">long poll（204 = 指示なし）。結果は POST /api/agent/jobs/{id}</span></div>
       </div>
 
-      <h3>自己管理 — <code>MeController</code> <span class="badge badge-tag">認証済み全ユーザー</span></h3>
+      <h3>その他</h3>
       <div class="card">
-        <div class="endpoint">
-          <span class="badge badge-post">POST</span>
-          <span class="endpoint-path">/api/me/change-password</span>
-          <span class="endpoint-desc">自分のパスワードを変更（現在のパスワードが必要）</span>
-        </div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/retention</span><span class="endpoint-desc">保持ポリシーと件数（範囲内）。PUT と POST cleanup は Admin</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/users</span><span class="endpoint-desc">Admin。POST 作成、DELETE、PUT {id}/role、PUT {id}/scope、POST {id}/reset-password</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/alerts</span><span class="endpoint-desc">Admin。通知設定（秘密情報は設定済みかどうかだけ返す）。PUT 保存、POST test</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/auditlog?page=&amp;pageSize=</span><span class="endpoint-desc">Admin。操作ログ</span></div>
       </div>
     </section>
 
@@ -663,145 +714,116 @@ HasIndex(r => new { r.FilePath, r.AccessTime })</code></pre>
     <section id="config">
       <h2>設定ファイル</h2>
 
-      <h3>appsettings.json（EXE 内蔵・基本設定）</h3>
+      <h3>appsettings.json（インストール先・基本設定）</h3>
       <pre><code>{
   "Kestrel": { "Endpoints": { "Http": { "Url": "http://0.0.0.0:8080" } } },
-  "Jwt": {
-    "Issuer": "FileAccessMonitor",
-    "Audience": "FileAccessMonitor",
-    "ExpiresHours": 24
-  },
+  "Jwt": { "Issuer": "FileAccessMonitor", "Audience": "FileAccessMonitor", "ExpiresHours": 24 },
   "MonitoredPaths": [],
   "ExcludeSystemAccounts": true,
   "ExcludeProcessNames": ["System", "svchost.exe", "SearchIndexer.exe"]
 }</code></pre>
-      <p><code>Jwt:Key</code> は通常指定しません。未指定（または 32 バイト未満・サンプル値）の場合、初回起動時にランダムな鍵を生成して <code>C:\ProgramData\FileAccessMonitor\jwt.key</code>（SYSTEM / Administrators のみ読み取り可）に保存します。</p>
+      <p>インストーラーは利用者の設定（ポートなど）を <code>appsettings.Production.json</code> に書き、更新時も残します。<code>Jwt:Key</code> は通常指定せず、初回に生成して <code>jwt.key</code> に保存します。リバースプロキシの背後では <code>ReverseProxy:KnownProxies</code> を指定すると、そのプロキシからの <code>X-Forwarded-For</code> を使います。</p>
 
-      <h3>ユーザー設定ファイル（実行時に書き換え可能）</h3>
-      <p>場所: <code>C:\ProgramData\FileAccessMonitor\settings.json</code></p>
-      <pre><code>{
-  "MonitoredPaths": [
-    { "path": "D:\\Share", "eventTypes": ["Read", "Write", "Delete"] },
-    { "path": "D:\\Confidential", "eventTypes": ["Write", "Delete"] }
-  ],
-  "DnsServer": "192.0.2.1"
-}</code></pre>
-      <p><code>IConfiguration</code> に <code>AddJsonFile(..., reloadOnChange: true)</code> で追加されます。旧フォーマット（文字列配列）は起動時に自動的に新フォーマットへ変換されます。</p>
+      <h3>データフォルダ（<code>C:\ProgramData\FileAccessMonitor</code>）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ファイル</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td>settings.json</td><td>GUI で変更する設定: <code>MonitoredPaths</code>, <code>Recording</code>, <code>DnsServer</code>, <code>RetentionDays</code>, <code>Alerts</code>（Webhook URL、SMTP とプロキシのパスワードは暗号化）, <code>UpdateCheck</code>, <code>Agents</code>（Enabled, Port）。キー単位で読み書き</td></tr>
+            <tr><td>fileaccess.db</td><td>SQLite</td></tr>
+            <tr><td>jwt.key · initial-admin-password.txt</td><td>SYSTEM / Administrators のみ読み取り可</td></tr>
+            <tr><td>keys\</td><td>Data Protection の鍵（マシン DPAPI で保護）</td></tr>
+            <tr><td>logs\app-YYYYMMDD.log</td><td>アプリケーションログ（14 日）</td></tr>
+            <tr><td>agent.json · outbox\ · agent-*.txt</td><td>エージェントのみ: 接続先とキー、送信待ち、読み取り位置・通し番号・適用済みの設定の版</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-      <h3>データベースの場所</h3>
-      <p><code>C:\ProgramData\FileAccessMonitor\fileaccess.db</code>（SQLite）</p>
+    <!-- 通知 -->
+    <section id="alerts">
+      <h2>通知</h2>
+      <p>Webhook（Teams Workflows / Slack / 汎用 JSON）とメール（SMTP）。通知が有効なときだけ送ります。送信結果は操作ログ <code>alert.sent</code> に残します。Webhook はプロキシ（URL・ユーザー・パスワード）を指定できます。サービスは SYSTEM で動くため Windows のユーザーのプロキシ設定は使えず、アプリ側で指定します（メールは使わない）。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>種類</th><th>条件</th></tr></thead>
+          <tbody>
+            <tr><td>大量の削除・書込・読取</td><td>1 人のユーザーが集計時間（既定 5 分）内にしきい値以上（削除の既定 100、書込・読取は 0 = オフ）。読取はまとめた後の件数。フォルダは数えない。再通知までの間隔あり。通知にはサーバー名を含める</td></tr>
+            <tr><td>記録の途切れ</td><td>Security ログの消去、または収集前の上書き</td></tr>
+            <tr><td>エージェントの無応答・復旧</td><td>既定 15 分以上接続がない（<code>AgentOfflineMinutes</code>、0 = オフ）／再び接続した</td></tr>
+            <tr><td>フォルダごとの通知先</td><td>閲覧範囲と通知先メールを持つ Viewer には、範囲内の記録だけで別途検知した大量操作をメールで送る（しきい値は共通）</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- UI タブ -->
     <section id="ui">
       <h2>UI — SPA タブ</h2>
-      <p>単一 HTML ファイル（<code>wwwroot/index.html</code>）。タブ状態は <code>localStorage</code> と URL ハッシュで保持されます。有効なタブ ID: <code>dashboard</code>, <code>files</code>, <code>folders</code>, <code>users</code>, <code>recent</code>, <code>search</code>, <code>settings</code>。</p>
-
+      <p><code>wwwroot/index.html</code> と <code>js/app.js</code>。タブ状態は URL ハッシュで保持します。上部にサーバーの絞り込みがあり（記録のあるサーバーが 2 台以上のとき表示）、統計 API に <code>server</code> を付けます。サーバーが 1 台のときは <code>body.single-server</code> で「サーバー」列を隠します。</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>タブ</th><th>主な機能</th><th>備考</th></tr></thead>
+          <thead><tr><th>タブ</th><th>主な機能</th></tr></thead>
           <tbody>
-            <tr><td>dashboard</td><td>集計カード、時系列グラフ、円グラフ、上位10ファイル／フォルダ</td><td>期間セレクタが全ウィジェットに反映</td></tr>
-            <tr><td>files</td><td>ファイルアクセスランキング、クリックでファイル詳細モーダル</td><td>クライアント側でファイル名フィルタリング</td></tr>
-            <tr><td>folders</td><td>フォルダアクセスランキング、クリックでフォルダ詳細モーダル</td><td>クライアント側でフォルダ名フィルタリング</td></tr>
-            <tr><td>users</td><td>ユーザーアクセスランキング、クリックでユーザー詳細モーダル</td><td>—</td></tr>
-            <tr><td>recent</td><td>ページネーション付きアクセスログ（PAGE_SIZE=50）</td><td>renderPagination() でページ制御</td></tr>
-            <tr><td>search</td><td>横断検索: キーワード・期間・種別・ユーザーフィルタ、ページネーション</td><td>FileName, FilePath, FolderPath, UserName, ClientIp, ClientMachine を横断検索</td></tr>
-            <tr><td>settings</td><td>監視フォルダ管理、ユーザー管理、逆引き DNS、保持ポリシー</td><td>変更操作は Admin ロール必須</td></tr>
+            <tr><td>dashboard</td><td>集計カード、推移グラフ、種別の円グラフ、上位ファイル・フォルダ</td></tr>
+            <tr><td>files / folders / users</td><td>ランキングと詳細モーダル。ファイル・フォルダの一覧とユーザー詳細（ファイル一覧・最新アクセス）にサーバー列、ユーザー詳細にサーバー別の件数</td></tr>
+            <tr><td>recent</td><td>最新アクセス（50 件ずつ）。フォルダはアイコンで表示</td></tr>
+            <tr><td>search</td><td>複数キーワード・期間・種別の横断検索と CSV 出力</td></tr>
+            <tr><td>unused</td><td>未使用ファイル（Admin、範囲を持つ Viewer）。対象サーバー、フォルダ別集計、掘り下げ</td></tr>
+            <tr><td>settings</td><td>「サーバーごとの設定」（対象サーバー、監視フォルダ、記録ルール）と「全体の設定」（ユーザー・閲覧範囲、エージェント、アプリ情報、逆引き DNS、保持、通知、操作ログ）。設定タブを開いている間は自動更新しない</td></tr>
           </tbody>
         </table>
       </div>
-
-      <h3>ページネーションヘルパー（app.js）</h3>
-      <pre><code>buildPageRange(current, total)      // 省略記号付きページ番号配列を返す
-renderPagination(el, infoEl, page, total, pageSize, gotoFn)
-// PAGE_SIZE = 50
-// API レスポンス形式: { total, page, pageSize, items }</code></pre>
-
-      <h3>接続元セルの表示（IP / マシン名）</h3>
-      <pre><code>// マシン名が IP と同一の場合は重複表示を防ぐ
-if (r.clientIp) srcParts.push(`&lt;span class="font-monospace"&gt;${esc(r.clientIp)}&lt;/span&gt;`);
-if (r.clientMachine && r.clientMachine !== r.clientIp) srcParts.push(esc(r.clientMachine));</code></pre>
+      <p>管理者のブラウザは 1 日 1 回 GitHub API で最新リリースを確認し、新しい版があれば上部に表示します（CSP の <code>connect-src</code> に <code>api.github.com</code> を許可。設定でオフにできる）。エージェントのバージョンは GitHub ではなく監視サーバーと比べ、違うエージェントがあれば上部に「更新が必要なエージェントがあります」を表示します（監視サーバーが開発版 0.0.0 のときは比べない）。</p>
     </section>
 
     <!-- 多言語対応 -->
     <section id="i18n">
       <h2>多言語対応（i18n）</h2>
-      <p>フラットな JS 辞書方式。言語ファイルは <code>wwwroot/lang/ja.js</code> と <code>wwwroot/lang/en.js</code> に配置。それぞれ <code>window.I18N_JA</code> / <code>window.I18N_EN</code> を定義します。<code>t(key)</code> 関数がアクティブな言語辞書を参照し、<code>data-i18n="key"</code> 属性を持つ要素は <code>applyI18n()</code> で言語切替時に一括更新されます。</p>
+      <p>画面は <code>wwwroot/lang/ja.js</code> と <code>en.js</code>（<code>window.I18N_JA</code> / <code>I18N_EN</code>）。HTML は <code>data-i18n</code> / <code>data-i18n-ph</code> / <code>data-i18n-title</code>、JS は <code>t(key, vars)</code>（<code>{n}</code> などを置換）。API のメッセージは <code>Services/Messages.cs</code> で、<code>Accept-Language</code> に従います。通知は通知設定の言語で送ります。</p>
+      <div class="callout warn">
+        <strong>注意：</strong>言語ファイルは単一引用符の JS 文字列です。値にアポストロフィ（<code>'</code>）や単独のバックスラッシュを入れると、ファイル全体が読み込めなくなります（バックスラッシュは <code>\\</code>）。キーの重複も後勝ちで上書きされます。
+      </div>
+    </section>
 
-      <h3>新しい i18n キーの追加方法</h3>
-      <p><code>lang/ja.js</code> と <code>lang/en.js</code> の両方に同じキー名で追加します。HTML では <code>data-i18n="key"</code>、JS では <code>t('key')</code> を使用します。テンプレート補間には <code>{n}</code>、<code>{u}</code>、<code>{p}</code> などのプレースホルダーを使い、呼び出し側で文字列置換します。</p>
+    <!-- 認証・ロール・閲覧範囲 -->
+    <section id="auth">
+      <h2>認証・ロール・閲覧範囲</h2>
+      <p>JWT Bearer（既定 24 時間）。トークンにはセキュリティスタンプを入れ、ユーザーの削除・ロール変更・パスワード変更で即時に無効になります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ロール</th><th>権限</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge badge-viewer">Viewer</span></td><td>閲覧（ダッシュボード・一覧・検索・CSV）、自分のパスワード変更。閲覧範囲があればその範囲だけ、加えて範囲内の未使用ファイル</td></tr>
+            <tr><td><span class="badge badge-admin">Admin</span></td><td>全体の閲覧と、すべての設定・ユーザー・エージェント・通知・操作ログ</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>閲覧範囲</h3>
+      <p>Viewer ごとに「サーバー＋フォルダ」（サーバー省略で全サーバー）を割り当てます。範囲がない Viewer と Admin は全体を見られます。範囲はリクエストのたびに DB から読み、統計・CSV・保持の件数・未使用ファイルに適用します。</p>
+    </section>
+
+    <!-- ビルド・リリース -->
+    <section id="build">
+      <h2>ビルド・リリース</h2>
+      <pre><code>.\build.ps1 -Version 1.5.0              # publish\（自己完結・単一ファイル）
+.\build-installer.ps1 -Version 1.5.0    # dist\FileAccessMonitor-Setup-1.5.0.exe（Inno Setup 6）
+dotnet test tests/FileAccessMonitor.Tests</code></pre>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>GitHub Actions: <code>ci.yml</code>（push / PR でビルド・テスト）、<code>release.yml</code>（<code>v*</code> タグでインストーラー・zip・SHA256SUMS を作って Release に公開。ビルド証明（artifact attestation）を付ける。SignPath の署名手順は変数設定時のみ動く）</li>
+        <li>インストーラー: 役割（1 台構成・監視サーバー / エージェント）、Web のポート、ファイアウォール（Web、エージェント用ポート）。エージェントは接続文字列を受け取って <code>enroll</code> を実行。サイレント: <code>/ROLE=agent /CONNECTION=FAM1.…</code></li>
+      </ul>
     </section>
 
     <!-- デプロイ -->
     <section id="deploy">
       <h2>デプロイ</h2>
-
-      <h3>デプロイ先</h3>
-      <div class="card">
-        <div class="fields">
-          <div class="field"><span class="field-name">サーバー</span><span class="field-desc">監視対象のファイルサーバー（以下 <code>FILESERVER</code>）</span></div>
-          <div class="field"><span class="field-name">サービス名</span><span class="field-desc">FileAccessMonitor</span></div>
-          <div class="field"><span class="field-name">インストール先</span><span class="field-desc"><code>C:\FileAccessMonitor\publish\</code></span></div>
-          <div class="field"><span class="field-name">ポート</span><span class="field-desc">8080 (http)</span></div>
-          <div class="field"><span class="field-name">データベース</span><span class="field-desc"><code>C:\ProgramData\FileAccessMonitor\fileaccess.db</code></span></div>
-          <div class="field"><span class="field-name">ユーザー設定</span><span class="field-desc"><code>C:\ProgramData\FileAccessMonitor\settings.json</code></span></div>
-        </div>
-      </div>
-
-      <h3>ビルドスクリプト（build.ps1）</h3>
-      <pre><code>dotnet publish -c Release -r win-x64 --self-contained true `
-  -p:PublishSingleFile=true -o ./publish</code></pre>
-
-      <h3>WinRM が使える場合</h3>
-      <pre><code>.\deploy-remote.ps1 -ServerIP FILESERVER</code></pre>
-
-      <h3>手動デプロイ手順（WinRM が使えない場合）</h3>
-      <pre><code># 1. ビルド（リポジトリのルートで実行）
-.\build.ps1
-
-# 2. サービス停止
-sc.exe \\FILESERVER stop FileAccessMonitor
-
-# 3. EXE のロックが解放されるまで待機（プロセスが終了したことを確認）
-
-# 4. ファイルコピー
-#    EXE は実行中はロックされるため、停止後にコピーすること
-Get-ChildItem -Path .\publish -Recurse -File | ForEach-Object {
-    $dst = $_.FullName.Replace(
-        (Resolve-Path .\publish).Path,
-        "\\FILESERVER\C$\FileAccessMonitor\publish"
-    )
-    New-Item -ItemType Directory -Path (Split-Path $dst) -Force | Out-Null
-    Copy-Item $_.FullName $dst -Force
-}
-
-# 5. サービス起動
-sc.exe \\FILESERVER start FileAccessMonitor</code></pre>
-
-      <div class="callout warn">
-        <strong>注意：</strong><code>Copy-Item -Recurse -Force</code> は既存ファイルが更新されないことがある（タイムスタンプが変わらない場合）ため、ファイル単位のコピーループを使用してください。
-      </div>
-
+      <p>通常はインストーラーで導入・更新します（設定とデータは引き継ぎ）。開発中は WinRM で反映できます。</p>
+      <pre><code>.\deploy-remote.ps1 -ServerIP FILESERVER   # ビルド → サービス停止 → サービスの登録先に上書き → 起動</code></pre>
+      <p><code>deploy-remote.ps1</code> は版番号なし（0.0.0、開発版）でビルドします。反映先はサービスの <code>ImagePath</code> から求めるため、インストーラーで入れた環境（<code>C:\Program Files\FileAccessMonitor</code>）にもそのまま使えます。</p>
       <div class="callout">
-        <strong>確認方法：</strong><code>sc.exe \\FILESERVER qc FileAccessMonitor</code> を実行するとサービスの実際のバイナリパスを確認できます。デプロイ先がずれていると思われる場合に使用してください。
+        <strong>確認方法：</strong><code>sc.exe \\FILESERVER qc FileAccessMonitor</code> でサービスのバイナリパスを確認できます。
       </div>
-    </section>
-
-    <!-- 認証・ロール -->
-    <section id="auth">
-      <h2>認証・ロール</h2>
-      <p>JWT Bearer 認証。トークンの有効期限は 24 時間（<code>Jwt:ExpiresHours</code> で変更可能）。2つのロール：</p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>ロール</th><th>権限</th></tr></thead>
-          <tbody>
-            <tr><td><span class="badge badge-viewer">Viewer</span></td><td>読み取り専用: ダッシュボード・統計・検索・最新アクセスログ・自分のパスワード変更</td></tr>
-            <tr><td><span class="badge badge-admin">Admin</span></td><td>Viewer の全機能 + 設定管理・ユーザー管理・保持ポリシー・SACL 操作・他ユーザーのパスワードリセット</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>ユーザー管理は ASP.NET Identity によってアクセスログと同じ SQLite DB に保存されます。初回起動時に管理者アカウントが自動作成されます。追加アカウントは設定タブ → ユーザー管理から作成できます。</p>
     </section>
 
   </main>

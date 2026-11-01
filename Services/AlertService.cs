@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace FileAccessMonitor.Services;
 
-// Stored under "Alerts" in settings.json. WebhookUrl and SmtpPassword are kept encrypted
+// Stored under "Alerts" in settings.json. WebhookUrl, SmtpPassword and ProxyPassword are kept encrypted
 // (ASP.NET Core Data Protection, keys protected with machine DPAPI).
 public class AlertSettings
 {
@@ -20,6 +20,8 @@ public class AlertSettings
     public int ReadThreshold { get; set; }
     public int WindowMinutes { get; set; } = 5;
     public int CooldownMinutes { get; set; } = 30;
+    // Notify when an agent has not been in touch for this long (0 = never)
+    public int AgentOfflineMinutes { get; set; } = 15;
     public string Language { get; set; } = "ja";
     public string WebhookFormat { get; set; } = "slack";   // slack | teams | generic
     public string? WebhookUrl { get; set; }
@@ -30,6 +32,10 @@ public class AlertSettings
     public string? SmtpPassword { get; set; }
     public string? MailFrom { get; set; }
     public string? MailTo { get; set; }      // comma or semicolon separated
+    // HTTP proxy for webhooks (the service runs as SYSTEM, so the Windows user proxy setting does not apply)
+    public string? ProxyUrl { get; set; }
+    public string? ProxyUser { get; set; }
+    public string? ProxyPassword { get; set; }
 
     [JsonIgnore] public AlertRules Rules => new(DeleteThreshold, WriteThreshold, WindowMinutes, CooldownMinutes, ReadThreshold);
     [JsonIgnore] public bool HasWebhook => !string.IsNullOrWhiteSpace(WebhookUrl);
@@ -47,7 +53,7 @@ public class AlertSettings
 
 // A Viewer with a folder scope and a notification address: gets the alerts about their folders,
 // detected from the records inside the scope only.
-public sealed record AlertRecipient(string UserName, IReadOnlyList<string> Paths, string Email, AlertDetector Detector);
+public sealed record AlertRecipient(string UserName, IReadOnlyList<ScopeEntry> Paths, string Email, AlertDetector Detector);
 
 public record ChannelResult(string Channel, bool Ok, string? Error);
 
@@ -82,8 +88,16 @@ public class AlertService
 
     public AlertSettings Settings => _settings;
 
-    // Called by the collector with each saved batch.
+    private readonly object _observeLock = new();
+
+    // Called with each saved batch: by the local collector and by agent uploads, on different
+    // threads, while the detectors are not thread-safe.
     public void Observe(IReadOnlyList<AccessRecord> records)
+    {
+        lock (_observeLock) ObserveLocked(records);
+    }
+
+    private void ObserveLocked(IReadOnlyList<AccessRecord> records)
     {
         var settings = _settings;
         if (!settings.Enabled) return;
@@ -104,7 +118,7 @@ public class AlertService
                 ReloadRecipients();
                 return; // rules changed: new detectors start with the next batch
             }
-            var inScope = records.Where(rec => AccessScope.Contains(r.Paths, rec.FilePath)).ToList();
+            var inScope = records.Where(rec => AccessScope.Contains(r.Paths, rec.ServerName, rec.FilePath)).ToList();
             if (inScope.Count == 0) continue;
             foreach (var alert in r.Detector.Process(inScope))
                 _ = Task.Run(() => SendAlertAsync(alert, settings.ForRecipient(r.Email), r.UserName));
@@ -123,7 +137,7 @@ public class AlertService
             var names = db.Users.ToDictionary(u => u.Id, u => u.UserName ?? u.Id);
             return db.UserScopes.Where(s => s.NotifyEmail != null).AsEnumerable()
                 .Select(s => new AlertRecipient(names.GetValueOrDefault(s.UserId, s.UserId),
-                    AccessScope.ParsePaths(s.Paths), s.NotifyEmail!, new AlertDetector(rules)))
+                    AccessScope.Parse(s.Paths), s.NotifyEmail!, new AlertDetector(rules)))
                 .Where(r => r.Paths.Count > 0)
                 .ToList();
         }
@@ -141,6 +155,7 @@ public class AlertService
         var s = node?.Deserialize<AlertSettings>(JsonOptions) ?? new AlertSettings();
         s.WebhookUrl = Unprotect(s.WebhookUrl);
         s.SmtpPassword = Unprotect(s.SmtpPassword);
+        s.ProxyPassword = Unprotect(s.ProxyPassword);
         return s;
     }
 
@@ -149,6 +164,7 @@ public class AlertService
         var stored = JsonSerializer.SerializeToNode(settings, JsonOptions)!.AsObject();
         stored["WebhookUrl"] = Protect(settings.WebhookUrl);
         stored["SmtpPassword"] = Protect(settings.SmtpPassword);
+        stored["ProxyPassword"] = Protect(settings.ProxyPassword);
         SettingsStore.Update(root => root[SettingsKey] = stored);
         _settings = settings;
     }
@@ -162,17 +178,34 @@ public class AlertService
 
     // Recording was interrupted (Security log records overwritten before they were collected, or
     // the log cleared). Sent whenever notifications are enabled, regardless of the thresholds.
-    public async Task NotifyGapAsync(string messageKey, params object[] args)
+    public async Task NotifyGapAsync(string serverName, string messageKey, params object[] args)
     {
         var s = _settings;
         if (!s.Enabled || (!s.HasWebhook && !s.HasMail)) return;
 
         var title = "[FileAccessMonitor] " + Messages.GetIn(s.Language, "gap.title");
         var body = Messages.GetIn(s.Language, messageKey, args) + "\n"
-            + Messages.GetIn(s.Language, "alert.server", Environment.MachineName);
+            + Messages.GetIn(s.Language, "alert.server", serverName);
         var results = await SendAsync(s, title, body, null);
         var channels = string.Join(", ", results.Select(r => $"{r.Channel}={(r.Ok ? "ok" : "failed")}"));
-        await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent", $"type=gap, channels=[{channels}]");
+        await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent", $"type=gap, server={serverName}, channels=[{channels}]");
+    }
+
+    // An agent stopped (or started again) contacting this server. Sent whenever notifications are enabled.
+    public async Task NotifyAgentStatusAsync(string agentName, bool offline, DateTime? lastSeenUtc)
+    {
+        var s = _settings;
+        if (!s.Enabled || (!s.HasWebhook && !s.HasMail)) return;
+
+        var lastSeen = lastSeenUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
+        var title = "[FileAccessMonitor] " + Messages.GetIn(s.Language, offline ? "agentOffline.title" : "agentOnline.title");
+        var body = offline
+            ? Messages.GetIn(s.Language, "agentOffline.body", agentName, s.AgentOfflineMinutes, lastSeen)
+            : Messages.GetIn(s.Language, "agentOnline.body", agentName);
+        var results = await SendAsync(s, title, body, null);
+        var channels = string.Join(", ", results.Select(r => $"{r.Channel}={(r.Ok ? "ok" : "failed")}"));
+        await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent",
+            $"type={(offline ? "agentOffline" : "agentOnline")}, server={agentName}, channels=[{channels}]");
     }
 
     // recipient: the folder recipient's user name, or null for the main notification channels
@@ -183,7 +216,7 @@ public class AlertService
         var results = await SendAsync(s, title, body, alert);
         var channels = string.Join(", ", results.Select(r => $"{r.Channel}={(r.Ok ? "ok" : "failed")}"));
         await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent",
-            $"type={alert.AccessType}, user={alert.UserName}, count={alert.Count}, channels=[{channels}]"
+            $"type={alert.AccessType}, server={alert.ServerName}, user={alert.UserName}, count={alert.Count}, channels=[{channels}]"
             + (recipient == null ? "" : $", folderRecipient={recipient}"));
     }
 
@@ -203,7 +236,7 @@ public class AlertService
         sb.AppendLine(Messages.GetIn(lang, "alert.count", a.Count, a.WindowMinutes));
         sb.AppendLine(Messages.GetIn(lang, "alert.period", Local(a.FromUtc), Local(a.ToUtc)));
         sb.AppendLine(Messages.GetIn(lang, "alert.client", client));
-        sb.AppendLine(Messages.GetIn(lang, "alert.server", Environment.MachineName));
+        sb.AppendLine(Messages.GetIn(lang, "alert.server", a.ServerName.Length > 0 ? a.ServerName : Environment.MachineName));
         sb.AppendLine(Messages.GetIn(lang, "alert.folders"));
         foreach (var (folder, count) in a.TopFolders) sb.AppendLine($"  {folder} ({count})");
         sb.AppendLine(Messages.GetIn(lang, "alert.samples"));
@@ -264,10 +297,18 @@ public class AlertService
             _ => new { text = $"*{title}*\n{body}" },   // Slack incoming webhook
         };
 
-        using var client = _http.CreateClient();
+        using var client = string.IsNullOrWhiteSpace(s.ProxyUrl) ? _http.CreateClient() : CreateProxyClient(s);
         client.Timeout = TimeSpan.FromSeconds(15);
         using var response = await client.PostAsJsonAsync(s.WebhookUrl, payload);
         response.EnsureSuccessStatusCode();
+    }
+
+    private static HttpClient CreateProxyClient(AlertSettings s)
+    {
+        var proxy = new WebProxy(s.ProxyUrl!.Trim());
+        if (!string.IsNullOrWhiteSpace(s.ProxyUser))
+            proxy.Credentials = new NetworkCredential(s.ProxyUser, s.ProxyPassword);
+        return new HttpClient(new SocketsHttpHandler { Proxy = proxy, UseProxy = true }, disposeHandler: true);
     }
 
     private static async Task SendMailAsync(AlertSettings s, string title, string body)

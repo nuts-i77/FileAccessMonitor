@@ -8,13 +8,16 @@
   <link rel="stylesheet" href="lib/bootstrap-icons/bootstrap-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body class="single-server">
 
 <nav class="navbar navbar-dark bg-dark px-3 py-2">
   <span class="navbar-brand mb-0 h1">
     <i class="bi bi-hdd-network me-2"></i><span data-i18n="app.title">ファイルアクセス監視</span>
   </span>
   <div class="d-flex align-items-center gap-3">
+    <select id="serverFilter" class="form-select form-select-sm d-none" style="width:auto" onchange="loadAll()" title="">
+      <option value="" data-i18n="servers.all">全サーバー</option>
+    </select>
     <label class="text-white-50 small mb-0" data-i18n="nav.period">期間:</label>
     <select id="daysFilter" class="form-select form-select-sm" style="width:120px">
       <option value="1" data-i18n="days.1">過去1日</option>
@@ -60,6 +63,7 @@
 <div class="container-fluid mt-3">
 
   <div id="updateBanner"></div>
+  <div id="agentUpdateBanner"></div>
 
   <!-- Summary Cards -->
   <div class="row g-3 mb-3" id="summaryCards">
@@ -210,13 +214,14 @@
               <tr>
                 <th onclick="sortTable('filesTable',0)" class="sortable" data-i18n="th.rank">#</th>
                 <th onclick="sortTable('filesTable',1)" class="sortable" data-i18n="th.filename">ファイル名</th>
-                <th onclick="sortTable('filesTable',2)" class="sortable" data-i18n="th.path">パス</th>
-                <th onclick="sortTable('filesTable',3)" class="sortable text-end" data-i18n="th.total">合計</th>
-                <th onclick="sortTable('filesTable',4)" class="sortable text-end" data-i18n="th.read">読取</th>
-                <th onclick="sortTable('filesTable',5)" class="sortable text-end" data-i18n="th.write">書込</th>
-                <th onclick="sortTable('filesTable',6)" class="sortable text-end" data-i18n="th.delete">削除</th>
-                <th onclick="sortTable('filesTable',7)" class="sortable text-end" data-i18n="th.rename">名前変更</th>
-                <th onclick="sortTable('filesTable',8)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
+                <th onclick="sortTable('filesTable',2)" class="sortable col-server" data-i18n="th.server">サーバー</th>
+                <th onclick="sortTable('filesTable',3)" class="sortable" data-i18n="th.path">パス</th>
+                <th onclick="sortTable('filesTable',4)" class="sortable text-end" data-i18n="th.total">合計</th>
+                <th onclick="sortTable('filesTable',5)" class="sortable text-end" data-i18n="th.read">読取</th>
+                <th onclick="sortTable('filesTable',6)" class="sortable text-end" data-i18n="th.write">書込</th>
+                <th onclick="sortTable('filesTable',7)" class="sortable text-end" data-i18n="th.delete">削除</th>
+                <th onclick="sortTable('filesTable',8)" class="sortable text-end" data-i18n="th.rename">名前変更</th>
+                <th onclick="sortTable('filesTable',9)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
                 <th data-i18n="th.topUser">主要ユーザー</th>
                 <th></th>
               </tr>
@@ -242,14 +247,15 @@
               <tr>
                 <th onclick="sortTable('foldersTable',0)" class="sortable" data-i18n="th.rank">#</th>
                 <th onclick="sortTable('foldersTable',1)" class="sortable" data-i18n="th.folderName">フォルダ名</th>
-                <th onclick="sortTable('foldersTable',2)" class="sortable" data-i18n="th.path">パス</th>
-                <th onclick="sortTable('foldersTable',3)" class="sortable text-end" data-i18n="th.total">合計</th>
-                <th onclick="sortTable('foldersTable',4)" class="sortable text-end" data-i18n="th.read">読取</th>
-                <th onclick="sortTable('foldersTable',5)" class="sortable text-end" data-i18n="th.write">書込</th>
-                <th onclick="sortTable('foldersTable',6)" class="sortable text-end" data-i18n="th.delete">削除</th>
-                <th onclick="sortTable('foldersTable',7)" class="sortable text-end" data-i18n="th.rename">名前変更</th>
-                <th onclick="sortTable('foldersTable',8)" class="sortable text-end" data-i18n="th.fileCount">ファイル数</th>
-                <th onclick="sortTable('foldersTable',9)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
+                <th onclick="sortTable('foldersTable',2)" class="sortable col-server" data-i18n="th.server">サーバー</th>
+                <th onclick="sortTable('foldersTable',3)" class="sortable" data-i18n="th.path">パス</th>
+                <th onclick="sortTable('foldersTable',4)" class="sortable text-end" data-i18n="th.total">合計</th>
+                <th onclick="sortTable('foldersTable',5)" class="sortable text-end" data-i18n="th.read">読取</th>
+                <th onclick="sortTable('foldersTable',6)" class="sortable text-end" data-i18n="th.write">書込</th>
+                <th onclick="sortTable('foldersTable',7)" class="sortable text-end" data-i18n="th.delete">削除</th>
+                <th onclick="sortTable('foldersTable',8)" class="sortable text-end" data-i18n="th.rename">名前変更</th>
+                <th onclick="sortTable('foldersTable',9)" class="sortable text-end" data-i18n="th.fileCount">ファイル数</th>
+                <th onclick="sortTable('foldersTable',10)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
                 <th></th>
               </tr>
             </thead>
@@ -301,6 +307,7 @@
               <tr>
                 <th data-i18n="th.datetime">日時</th>
                 <th data-i18n="th.filename">ファイル名</th>
+                <th class="col-server" data-i18n="th.server">サーバー</th>
                 <th data-i18n="th.path">パス</th>
                 <th data-i18n="th.user">ユーザー</th>
                 <th data-i18n="th.type">種別</th>
@@ -401,7 +408,11 @@
       <div class="card-body">
         <p class="small text-muted mb-3" data-i18n="unused.hint">監視フォルダ内のファイルのうち、指定した期間に読まれていない（またはアクセスのない）ファイルを一覧にします。実際のフォルダの中身を調べるため、ファイルが多いと時間がかかります。</p>
         <div class="row g-2 align-items-end">
-          <div class="col-12 col-md-5">
+          <div class="col-12 col-md-2 d-none" id="unusedServerCol">
+            <label class="form-label small text-muted" for="unusedServer" data-i18n="servers.target">対象サーバー</label>
+            <select id="unusedServer" class="form-select form-select-sm" onchange="loadUnusedFolders()"></select>
+          </div>
+          <div class="col-12 col-md">
             <label class="form-label small text-muted" for="unusedFolder" data-i18n="unused.folder">対象フォルダ</label>
             <input type="text" id="unusedFolder" class="form-control form-control-sm font-monospace" list="unusedFolderList"
               onkeydown="if(event.key==='Enter')searchUnused()">
@@ -438,6 +449,18 @@
   <!-- Settings Tab -->
   <div id="tab-settings" class="d-none">
     <div class="row g-3">
+      <!-- Per-server settings: monitored folders and recording rules apply to the selected server only -->
+      <div class="col-12">
+        <div class="border border-primary-subtle rounded-3 p-3 bg-body">
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+            <span class="fw-semibold"><i class="bi bi-hdd me-1"></i><span data-i18n="settings.perServer">サーバーごとの設定</span></span>
+            <span id="settingsServerBar" class="d-flex align-items-center gap-2 d-none">
+              <label class="small text-muted mb-0" for="settingsServer" data-i18n="servers.target">対象サーバー</label>
+              <select id="settingsServer" class="form-select form-select-sm" style="width:auto" onchange="loadServerSettings()"></select>
+            </span>
+            <span class="small text-muted" data-i18n="settings.perServerHint">監視対象フォルダと記録ルールは、選んだサーバーにだけ適用されます。</span>
+          </div>
+          <div class="row g-3">
       <div class="col-12 col-lg-7">
         <div class="card">
           <div class="card-header fw-semibold">
@@ -489,6 +512,63 @@
       <div class="col-12">
         <div id="settingsAlert"></div>
       </div>
+      <!-- Recording rules (Admin only) -->
+      <div class="col-12 d-none" id="recordingSettingsSection">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-funnel me-1"></i><span data-i18n="recording.title">記録ルール</span>
+          </div>
+          <div class="card-body">
+            <p class="small text-muted mb-3" data-i18n="recording.hint">記録しないアクセスと、続けて読んだときのまとめ方を指定します。変更はこれから記録するアクセスに適用されます（記録済みのデータは変わりません）。</p>
+            <div class="row g-3">
+              <div class="col-12 col-md-4">
+                <label class="form-label small text-muted" for="recExcludeFiles" data-i18n="recording.files">除外するファイル名</label>
+                <textarea id="recExcludeFiles" class="form-control form-control-sm font-monospace" rows="5"></textarea>
+                <div class="form-text" data-i18n="recording.filesHint">1 行に 1 つ。* と ? が使えます（例: *.tmp、~$*）。</div>
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small text-muted" for="recExcludeUsers" data-i18n="recording.users">除外するユーザー</label>
+                <textarea id="recExcludeUsers" class="form-control form-control-sm font-monospace" rows="5"></textarea>
+                <div class="form-text" data-i18n="recording.usersHint">1 行に 1 つ。「ドメイン\ユーザー」またはユーザー名のみ（すべてのドメインに一致）。</div>
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small text-muted" for="recExcludeProcesses" data-i18n="recording.processes">除外するプロセス</label>
+                <textarea id="recExcludeProcesses" class="form-control form-control-sm font-monospace" rows="5"></textarea>
+                <div class="form-text" data-i18n="recording.processesHint">1 行に 1 つ（例: backup.exe）。サーバー上で直接開いたアクセスにだけ効きます。共有フォルダ経由のアクセスにはプロセス名が記録されません。</div>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small text-muted" for="recMergeReadMinutes" data-i18n="recording.merge">続けて読んだときにまとめる時間</label>
+                <div class="input-group input-group-sm" style="max-width:180px">
+                  <input type="number" id="recMergeReadMinutes" class="form-control" min="0" max="1440">
+                  <span class="input-group-text" data-i18n="recording.minutes">分</span>
+                </div>
+                <div class="form-text" data-i18n="recording.mergeHint">同じユーザーが同じファイルを、前回の読取からこの時間内に再び読んだ場合は記録しません（0 = すべて記録）。書込・削除・名前変更は常に記録します。</div>
+              </div>
+              <div class="col-12 d-flex gap-2">
+                <button class="btn btn-primary btn-sm" onclick="saveRecordingSettings()">
+                  <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="addDefaultExcludePatterns()">
+                  <i class="bi bi-plus-circle me-1"></i><span data-i18n="recording.addDefaults">よくある一時ファイルを追加</span>
+                </button>
+              </div>
+            </div>
+            <div id="recordingAlert" class="mt-2"></div>
+          </div>
+        </div>
+      </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings for the whole installation -->
+      <div class="col-12">
+        <div class="mt-2">
+          <span class="fw-semibold"><i class="bi bi-gear me-1"></i><span data-i18n="settings.global">全体の設定</span></span>
+          <span class="small text-muted ms-2" data-i18n="settings.globalHint">すべてのサーバーに共通の設定です。</span>
+        </div>
+      </div>
       <!-- User Management (Admin only) -->
       <div class="col-12 d-none" id="usermgmtSettingsSection">
         <div class="card">
@@ -516,6 +596,36 @@
           </div>
         </div>
         <div id="usermgmtAlert" class="mt-2"></div>
+      </div>
+
+      <!-- Agents (Admin only) -->
+      <div class="col-12 d-none" id="agentsSection">
+        <div class="card">
+          <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-hdd-stack me-1"></i><span data-i18n="agents.title">エージェント（ファイルサーバー）</span></span>
+            <button class="btn btn-sm btn-primary" onclick="createEnrollment()">
+              <i class="bi bi-plus-circle me-1"></i><span data-i18n="agents.issueCode">登録コードを発行</span>
+            </button>
+          </div>
+          <div class="card-body p-0">
+            <p class="small text-muted px-3 pt-3 mb-2" data-i18n="agents.hint">他のファイルサーバーにエージェントとしてインストールすると、そのサーバーのアクセス記録がここに集まります。登録コードは 24 時間有効で、1 回だけ使えます。</p>
+            <div class="table-responsive">
+              <table class="table table-sm mb-0">
+                <thead class="table-dark"><tr>
+                  <th data-i18n="agents.name">サーバー名</th>
+                  <th data-i18n="agents.lastSeen">最終接続</th>
+                  <th data-i18n="agents.version">バージョン</th>
+                  <th data-i18n="agents.status">状態</th>
+                  <th class="text-end" data-i18n="agents.outbox">送信待ち</th>
+                  <th data-i18n="agents.auditPolicy">監査ポリシー</th>
+                  <th style="width:110px" data-i18n="th.actions">操作</th>
+                </tr></thead>
+                <tbody id="agentsTableBody"></tbody>
+              </table>
+            </div>
+            <div id="agentsAlert" class="px-3 pt-2"></div>
+          </div>
+        </div>
       </div>
 
       <!-- App info and update check (Admin only) -->
@@ -588,52 +698,6 @@
         </div>
       </div>
 
-      <!-- Recording rules (Admin only) -->
-      <div class="col-12 d-none" id="recordingSettingsSection">
-        <div class="card">
-          <div class="card-header fw-semibold">
-            <i class="bi bi-funnel me-1"></i><span data-i18n="recording.title">記録ルール</span>
-          </div>
-          <div class="card-body">
-            <p class="small text-muted mb-3" data-i18n="recording.hint">記録しないアクセスと、続けて読んだときのまとめ方を指定します。変更はこれから記録するアクセスに適用されます（記録済みのデータは変わりません）。</p>
-            <div class="row g-3">
-              <div class="col-12 col-md-4">
-                <label class="form-label small text-muted" for="recExcludeFiles" data-i18n="recording.files">除外するファイル名</label>
-                <textarea id="recExcludeFiles" class="form-control form-control-sm font-monospace" rows="5"></textarea>
-                <div class="form-text" data-i18n="recording.filesHint">1 行に 1 つ。* と ? が使えます（例: *.tmp、~$*）。</div>
-              </div>
-              <div class="col-12 col-md-4">
-                <label class="form-label small text-muted" for="recExcludeUsers" data-i18n="recording.users">除外するユーザー</label>
-                <textarea id="recExcludeUsers" class="form-control form-control-sm font-monospace" rows="5"></textarea>
-                <div class="form-text" data-i18n="recording.usersHint">1 行に 1 つ。「ドメイン\ユーザー」またはユーザー名のみ（すべてのドメインに一致）。</div>
-              </div>
-              <div class="col-12 col-md-4">
-                <label class="form-label small text-muted" for="recExcludeProcesses" data-i18n="recording.processes">除外するプロセス</label>
-                <textarea id="recExcludeProcesses" class="form-control form-control-sm font-monospace" rows="5"></textarea>
-                <div class="form-text" data-i18n="recording.processesHint">1 行に 1 つ（例: backup.exe）。サーバー上で直接開いたアクセスにだけ効きます。共有フォルダ経由のアクセスにはプロセス名が記録されません。</div>
-              </div>
-              <div class="col-12 col-md-6">
-                <label class="form-label small text-muted" for="recMergeReadMinutes" data-i18n="recording.merge">続けて読んだときにまとめる時間</label>
-                <div class="input-group input-group-sm" style="max-width:180px">
-                  <input type="number" id="recMergeReadMinutes" class="form-control" min="0" max="1440">
-                  <span class="input-group-text" data-i18n="recording.minutes">分</span>
-                </div>
-                <div class="form-text" data-i18n="recording.mergeHint">同じユーザーが同じファイルを、前回の読取からこの時間内に再び読んだ場合は記録しません（0 = すべて記録）。書込・削除・名前変更は常に記録します。</div>
-              </div>
-              <div class="col-12 d-flex gap-2">
-                <button class="btn btn-primary btn-sm" onclick="saveRecordingSettings()">
-                  <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
-                </button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="addDefaultExcludePatterns()">
-                  <i class="bi bi-plus-circle me-1"></i><span data-i18n="recording.addDefaults">よくある一時ファイルを追加</span>
-                </button>
-              </div>
-            </div>
-            <div id="recordingAlert" class="mt-2"></div>
-          </div>
-        </div>
-      </div>
-
       <!-- Notifications (Admin only) -->
       <div class="col-12 d-none" id="alertsSettingsSection">
         <div class="card">
@@ -667,6 +731,10 @@
                 <label class="form-label small text-muted" for="alertCooldownMinutes" data-i18n="alerts.cooldown">再通知までの間隔（分）</label>
                 <input type="number" id="alertCooldownMinutes" class="form-control form-control-sm" min="1">
               </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertAgentOfflineMinutes" data-i18n="alerts.agentOffline">エージェントの無応答（分）</label>
+                <input type="number" id="alertAgentOfflineMinutes" class="form-control form-control-sm" min="0">
+              </div>
               <div class="col-12 form-text mt-1" data-i18n="alerts.thresholdHint">0 にするとその種別は通知しません。</div>
 
               <div class="col-12"><hr class="my-1"><span class="fw-semibold small" data-i18n="alerts.webhook">Webhook（Teams / Slack など）</span></div>
@@ -682,6 +750,19 @@
                 <label class="form-label small text-muted" for="alertWebhookUrl">URL</label>
                 <input type="password" id="alertWebhookUrl" class="form-control form-control-sm font-monospace" autocomplete="off">
               </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small text-muted" for="alertProxyUrl" data-i18n="alerts.proxyUrl">プロキシ（任意）</label>
+                <input type="text" id="alertProxyUrl" class="form-control form-control-sm font-monospace" placeholder="http://proxy.example.local:8080" autocomplete="off">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertProxyUser" data-i18n="alerts.proxyUser">プロキシのユーザー</label>
+                <input type="text" id="alertProxyUser" class="form-control form-control-sm" autocomplete="off">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertProxyPassword" data-i18n="alerts.proxyPassword">プロキシのパスワード</label>
+                <input type="password" id="alertProxyPassword" class="form-control form-control-sm" autocomplete="new-password">
+              </div>
+              <div class="col-12 form-text mt-0" data-i18n="alerts.proxyHint">インターネットへの接続にプロキシが必要な場合に指定します（Webhook のみ。メールには使いません）。サービスは SYSTEM で動くため、Windows のプロキシ設定は使われません。</div>
 
               <div class="col-12"><hr class="my-1"><span class="fw-semibold small" data-i18n="alerts.email">メール（SMTP）</span></div>
               <div class="col-8 col-md-4">
@@ -811,6 +892,40 @@
   </div>
 </div>
 
+<!-- Agent Registration Code Modal -->
+<div class="modal fade" id="enrollModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-key me-1"></i><span data-i18n="agents.codeTitle">エージェントの登録コード</span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body small">
+        <div class="mb-3">
+          <label class="form-label" for="enrollUrl" data-i18n="agents.serverUrl">このサーバーのアドレス（ファイルサーバーから見たもの）</label>
+          <div class="input-group input-group-sm">
+            <input type="text" id="enrollUrl" class="form-control font-monospace">
+            <button class="btn btn-outline-secondary" onclick="rebuildConnection()" data-i18n="agents.apply">反映</button>
+          </div>
+          <div class="form-text" data-i18n="agents.urlHint">ファイルサーバーから名前解決できない場合は IP アドレスに変更して「反映」を押してください。監視サーバーのファイアウォールでこのポートを開けておく必要があります。</div>
+        </div>
+        <label class="form-label" for="enrollConnection" data-i18n="agents.connection">接続文字列</label>
+        <div class="input-group input-group-sm mb-2">
+          <textarea id="enrollConnection" class="form-control font-monospace" rows="3" readonly></textarea>
+          <button class="btn btn-outline-secondary" onclick="copyConnection(this)" title="Copy"><i class="bi bi-clipboard"></i></button>
+        </div>
+        <div class="text-muted mb-3"><span data-i18n="agents.expires">有効期限:</span> <span id="enrollExpires"></span></div>
+        <div class="fw-semibold mb-1" data-i18n="agents.howTo">エージェントにするファイルサーバーで:</div>
+        <ul class="mb-0">
+          <li data-i18n="agents.howToInstaller">インストーラーで「エージェント」を選び、この接続文字列を貼り付けます。</li>
+          <li><span data-i18n="agents.howToCli">インストール済みの場合は、管理者の PowerShell で次を実行してサービスを再起動します:</span>
+            <code class="d-block mt-1 text-break" id="enrollCommand"></code></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Viewing Scope Modal -->
 <div class="modal fade" id="scopeModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
@@ -822,9 +937,12 @@
       <div class="modal-body">
         <p class="small text-muted mb-3"><span data-i18n="modal.resetTarget">対象:</span> <strong id="scopeUsername"></strong></p>
         <div class="mb-3">
-          <label class="form-label small" for="scopePaths" data-i18n="scope.paths">閲覧できるフォルダ</label>
-          <textarea id="scopePaths" class="form-control form-control-sm font-monospace" rows="4"></textarea>
-          <div class="form-text" data-i18n="scope.pathsHint">1 行に 1 つ。このユーザーには、指定したフォルダ配下の記録だけが表示されます（CSV 出力・未使用ファイルを含む）。空にすると全体を表示します。</div>
+          <label class="form-label small" data-i18n="scope.paths">閲覧できるフォルダ</label>
+          <div id="scopeRows" class="d-flex flex-column gap-1"></div>
+          <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="addScopeRow()">
+            <i class="bi bi-plus"></i> <span data-i18n="scope.addRow">フォルダを追加</span>
+          </button>
+          <div class="form-text" data-i18n="scope.pathsHint">このユーザーには、指定したフォルダ配下の記録だけが表示されます（CSV 出力・未使用ファイルを含む）。「全サーバー」はどのサーバーの同じパスも対象にします。すべて削除すると全体を表示します。</div>
         </div>
         <div class="mb-2">
           <label class="form-label small" for="scopeNotifyEmail" data-i18n="scope.email">通知先メールアドレス（任意）</label>

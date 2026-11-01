@@ -20,8 +20,17 @@ public class StatsController : ControllerBase
         _audit = audit;
     }
 
-    // Records the signed-in user may see (limited to their folders when a scope is set)
-    private IQueryable<Models.AccessRecord> Records => _records ??= _scopes.Records(User);
+    // Records the signed-in user may see (limited to their folders when a scope is set),
+    // of one file server when ?server= is given
+    private IQueryable<Models.AccessRecord> Records => _records ??= FilterServer(_scopes.Records(User));
+
+    private IQueryable<Models.AccessRecord> FilterServer(IQueryable<Models.AccessRecord> query) =>
+        Request.Query["server"].ToString() is { Length: > 0 } server ? query.Where(r => r.ServerName == server) : query;
+
+    // GET /api/stats/servers  — file servers with records the user may see
+    [HttpGet("servers")]
+    public async Task<IActionResult> Servers() =>
+        Ok(await _scopes.Records(User).Select(r => r.ServerName).Distinct().OrderBy(s => s).ToListAsync());
 
     // GET /api/stats/summary?days=7
     [HttpGet("summary")]
@@ -31,7 +40,7 @@ public class StatsController : ControllerBase
         var q = Records.Where(r => r.AccessTime >= since);
 
         var total = await q.CountAsync();
-        var uniqueFiles = await q.Where(r => !r.IsFolder).Select(r => r.FilePath).Distinct().CountAsync();
+        var uniqueFiles = await q.Where(r => !r.IsFolder).Select(r => r.ServerName + ":" + r.FilePath).Distinct().CountAsync();
         var uniqueUsers = await q.Select(r => r.UserName).Distinct().CountAsync();
         var byType = await q.GroupBy(r => r.AccessType)
             .Select(g => new { Type = g.Key, Count = g.Count() })
@@ -53,9 +62,10 @@ public class StatsController : ControllerBase
             q = q.Where(r => r.AccessType == accessType);
 
         var result = await q
-            .GroupBy(r => new { r.FilePath, r.FileName })
+            .GroupBy(r => new { r.ServerName, r.FilePath, r.FileName })
             .Select(g => new
             {
+                g.Key.ServerName,
                 g.Key.FilePath,
                 g.Key.FileName,
                 Total = g.Count(),
@@ -89,15 +99,17 @@ public class StatsController : ControllerBase
             q = q.Where(r => r.AccessType == accessType);
 
         var result = await q
-            .GroupBy(r => r.FolderPath)
+            // The same path on two file servers is two folders
+            .GroupBy(r => new { r.ServerName, r.FolderPath })
             .Select(g => new
             {
-                FolderPath = g.Key,
-                FolderName = g.Key.Length > 0
-                    ? EF.Functions.Like(g.Key, @"%\%")
-                        ? g.Key.Substring(g.Key.LastIndexOf('\\') + 1)
-                        : g.Key
-                    : g.Key,
+                g.Key.ServerName,
+                g.Key.FolderPath,
+                FolderName = g.Key.FolderPath.Length > 0
+                    ? EF.Functions.Like(g.Key.FolderPath, @"%\%")
+                        ? g.Key.FolderPath.Substring(g.Key.FolderPath.LastIndexOf('\\') + 1)
+                        : g.Key.FolderPath
+                    : g.Key.FolderPath,
                 Total = g.Count(),
                 Read = g.Count(r => r.AccessType == "Read"),
                 Write = g.Count(r => r.AccessType == "Write"),
@@ -164,9 +176,10 @@ public class StatsController : ControllerBase
         var timeline = await HourlyTimeline(q);
 
         var topFiles = await q.Where(r => !r.IsFolder)
-            .GroupBy(r => new { r.FilePath, r.FileName })
+            .GroupBy(r => new { r.ServerName, r.FilePath, r.FileName })
             .Select(g => new
             {
+                g.Key.ServerName,
                 g.Key.FilePath,
                 g.Key.FileName,
                 Count = g.Count()
@@ -257,10 +270,17 @@ public class StatsController : ControllerBase
             .Select(g => new { Type = g.Key, Count = g.Count() })
             .ToListAsync();
 
+        // Which file servers this user worked on
+        var byServer = await q.GroupBy(r => r.ServerName)
+            .Select(g => new { Server = g.Key, Count = g.Count() })
+            .OrderByDescending(x => x.Count)
+            .ToListAsync();
+
         var topFiles = await q.Where(r => !r.IsFolder)
-            .GroupBy(r => new { r.FilePath, r.FileName })
+            .GroupBy(r => new { r.ServerName, r.FilePath, r.FileName })
             .Select(g => new
             {
+                g.Key.ServerName,
                 g.Key.FilePath,
                 g.Key.FileName,
                 Total = g.Count(),
@@ -279,10 +299,10 @@ public class StatsController : ControllerBase
         var recent = await q
             .OrderByDescending(r => r.AccessTime)
             .Take(30)
-            .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType, r.IsFolder })
+            .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType, r.IsFolder, r.ServerName })
             .ToListAsync();
 
-        return Ok(new { user, byType, topFiles, timeline, recent });
+        return Ok(new { user, byType, byServer, topFiles, timeline, recent });
     }
 
     // GET /api/stats/recent?page=1&pageSize=50

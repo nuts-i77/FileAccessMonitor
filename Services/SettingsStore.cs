@@ -7,9 +7,7 @@ namespace FileAccessMonitor.Services;
 // keys, so saving one setting (e.g. retention days) never drops another (e.g. monitored paths).
 public static class SettingsStore
 {
-    public static readonly string DefaultPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "FileAccessMonitor", "settings.json");
+    public static readonly string DefaultPath = Path.Combine(AppPaths.DataDir, "settings.json");
 
     private static readonly object Gate = new();
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
