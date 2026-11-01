@@ -134,7 +134,10 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | Files / Folders / Users | Rankings with detail dialogs |
 | Recent | Access log with client IP and machine name |
 | Search | Search by keyword, period, type, or IP; export the results as CSV (up to 200,000 rows, opens in Excel) |
+| Unused Files | Files in a monitored folder that nobody read (or accessed) in a period, found by scanning the folder, with their size totaled per subfolder (Admin only; up to 100,000 files per scan) |
 | Settings | Monitored folders, users, recording rules (exclusions and merging of repeated reads), reverse DNS, data retention, notifications, operation log |
+
+Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it).
 
 The GUI is available in English and Japanese. Switch languages at the top right; on first visit the GUI follows the browser's language. Messages returned by the API use the selected language too.
 
@@ -166,6 +169,8 @@ The screenshots use fictional sample data.
 
 Renames and moves also open the file with DELETE access, so a DELETE access is held for up to 2 seconds until event 4660 shows whether the file was actually deleted. If it was not, and a file exists again at the same path (Office saves a document by renaming the old file away and a new file into its place), the access is recorded as a write. Renames are recorded for folders where Delete is selected.
 
+Folders are recorded only when they are deleted or renamed, shown with a folder icon and marked in the CSV export. They are left out of the file ranking and of mass-deletion alerts, which already count the files inside. Opening a folder or adding files to it is not recorded.
+
 ### Recording rules
 
 On the **Settings** tab, administrators can exclude file name patterns (`*` and `?` wildcards), users, and processes, and merge repeated reads: when the same user reads the same file again within the set time of the previous read (5 minutes by default), it is not recorded again. The window restarts with each read, so watching a long video with seeks counts as one read. By default `Thumbs.db`, `desktop.ini`, `~$*` (Office lock files), and `*.tmp` are excluded. The rules apply to accesses recorded after they are saved.
@@ -181,7 +186,7 @@ FileAccessMonitor aims at one job: letting a small team see who read, changed, o
 | Scope | File access on one Windows file server | File servers, NAS, Active Directory, Microsoft 365, and more | Security monitoring (SIEM/XDR) across many hosts |
 | Who **read** a file | Yes (Security log events 4663/4659) | Yes | File integrity monitoring covers changes only; reads need Security-log collection and your own rules |
 | Multiple servers in one view | No (one instance and GUI per server) | Yes | Yes |
-| Alerts | Mass delete / mass change, to Teams, Slack, a webhook, or email | Many built-in rules | Flexible rules and automated responses |
+| Alerts | Mass delete / change / read, and gaps in recording, to Teams, Slack, a webhook, or email | Many built-in rules | Flexible rules and automated responses |
 | Reports | Search and CSV export | Built-in compliance and scheduled reports | Dashboards and compliance mappings |
 | Japanese UI | Yes | Varies by product | No |
 | Support | Community (GitHub Issues), no SLA | Vendor support | Community, or paid vendor support |
@@ -200,6 +205,7 @@ Product capabilities above are summarized from public information and may change
 - Events that occur while the service is stopped (for example during an upgrade or reboot) are collected when it starts again, as long as they are still in the Security log. If the log has already overwritten them, the gap is recorded in the operation log.
 - The service must run on the file server it monitors. It cannot monitor remote servers.
 - For renames and moves, only the old path is recorded. The Security log does not include the new path.
+- A folder that is deleted or renamed is recognized as a folder when it is still there as the event is processed, or when accesses to files inside it were seen recently. Otherwise (for example an empty folder) it is recorded as a file.
 - Times are stored in UTC. The GUI shows them, and groups them by day, in the browser's time zone.
 
 ## Development

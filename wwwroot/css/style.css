@@ -7,8 +7,10 @@ body {
   cursor: pointer;
   user-select: none;
 }
+/* Tint through Bootstrap's table state variable: replacing the background would drop
+   the dark header color and leave white text on a white card */
 .sortable:hover {
-  background: rgba(255,255,255,0.15);
+  --bs-table-bg-state: rgba(255,255,255,0.15);
 }
 .sortable::after {
   content: ' ↕';

@@ -22,7 +22,10 @@ public class AccessRecord
     public string UserName { get; set; } = "";
 
     [Required, MaxLength(20)]
-    public string AccessType { get; set; } = ""; // Read, Write, Delete
+    public string AccessType { get; set; } = ""; // Read, Write, Delete, Rename
+
+    // Folders are recorded only when deleted or renamed
+    public bool IsFolder { get; set; }
 
     public DateTime AccessTime { get; set; }
 

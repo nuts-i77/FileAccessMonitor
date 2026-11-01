@@ -138,6 +138,56 @@ public class RecordingRulesTests
     }
 
     [Fact]
+    public void Folder_that_still_exists_is_neither_deleted_nor_renamed()
+    {
+        var folder = Rec("Delete", path: @"D:\Share\docs");
+        folder.IsFolder = true;
+        var t = new DeleteTracker(_ => true);
+        t.Add("0x4", "0x10", folder, null, AllTypes, T0);
+        Assert.Empty(t.Expire(T0, T0, force: true));
+
+        var renamed = Rec("Delete", path: @"D:\Share\docs");
+        renamed.IsFolder = true;
+        var gone = new DeleteTracker(_ => false);
+        gone.Add("0x4", "0x10", renamed, null, AllTypes, T0);
+        var r = Assert.Single(gone.Expire(T0, T0, force: true));
+        Assert.True(r.IsFolder);
+        Assert.Equal("Rename", r.AccessType);
+    }
+
+    [Fact]
+    public void Recent_folders_are_case_insensitive()
+    {
+        var f = new RecentFolders();
+        f.Add(@"D:\Share\Docs");
+        f.Add(null);
+        Assert.True(f.Contains(@"d:\share\docs"));
+        Assert.False(f.Contains(@"D:\Share\Docs\a.txt"));
+    }
+
+    [Fact]
+    public void Folder_deletions_are_not_counted_for_alerts()
+    {
+        var d = new AlertDetector(new AlertRules(DeleteThreshold: 2, WriteThreshold: 0, WindowMinutes: 5, CooldownMinutes: 30));
+        var folders = Enumerable.Range(0, 3).Select(i =>
+        {
+            var r = Rec("Delete", i * 0.1, path: $@"D:\Share\f{i}");
+            r.IsFolder = true;
+            return r;
+        });
+        Assert.Empty(d.Process(folders));
+    }
+
+    [Fact]
+    public void Mass_reads_alert_only_when_a_read_threshold_is_set()
+    {
+        var reads = Enumerable.Range(0, 3).Select(i => Rec("Read", i * 0.1, path: $@"D:\Share\v{i}.mp4")).ToList();
+        Assert.Empty(new AlertDetector(new AlertRules(2, 2, 5, 30)).Process(reads));
+        var a = Assert.Single(new AlertDetector(new AlertRules(0, 0, 5, 30, ReadThreshold: 3)).Process(reads));
+        Assert.Equal(("Read", 3), (a.AccessType, a.Count));
+    }
+
+    [Fact]
     public void Delete_right_is_split_from_the_rest_of_the_mask()
     {
         var mask = EventLogCollectorService.ParseMask("0x10002");

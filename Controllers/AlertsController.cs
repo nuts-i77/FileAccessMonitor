@@ -25,7 +25,7 @@ public class AlertsController : ControllerBase
         var s = _alerts.Settings;
         return Ok(new
         {
-            s.Enabled, s.DeleteThreshold, s.WriteThreshold, s.WindowMinutes, s.CooldownMinutes, s.Language,
+            s.Enabled, s.DeleteThreshold, s.WriteThreshold, s.ReadThreshold, s.WindowMinutes, s.CooldownMinutes, s.Language,
             s.WebhookFormat, webhookUrlSet = s.HasWebhook,
             s.SmtpHost, s.SmtpPort, s.SmtpUseSsl, s.SmtpUser, smtpPasswordSet = !string.IsNullOrEmpty(s.SmtpPassword),
             s.MailFrom, s.MailTo,
@@ -42,7 +42,7 @@ public class AlertsController : ControllerBase
         _alerts.Save(updated);
 
         await _audit.WriteAsync(HttpContext, "alerts.update",
-            $"enabled={updated.Enabled}, delete={updated.DeleteThreshold}, write={updated.WriteThreshold}, " +
+            $"enabled={updated.Enabled}, delete={updated.DeleteThreshold}, write={updated.WriteThreshold}, read={updated.ReadThreshold}, " +
             $"window={updated.WindowMinutes}m, cooldown={updated.CooldownMinutes}m, webhook={updated.HasWebhook}, email={updated.HasMail}");
         return Ok(new { message = Messages.Get("alerts.saved") });
     }
@@ -70,7 +70,7 @@ public class AlertsController : ControllerBase
 
     private static string? Validate(AlertSettingsRequest req)
     {
-        if (req.DeleteThreshold < 0 || req.WriteThreshold < 0 || req.WindowMinutes < 1 || req.CooldownMinutes < 1
+        if (req.DeleteThreshold < 0 || req.WriteThreshold < 0 || req.ReadThreshold < 0 || req.WindowMinutes < 1 || req.CooldownMinutes < 1
             || req.SmtpPort is < 1 or > 65535)
             return Messages.Get("alerts.invalid");
         // Half-filled email settings would silently never send
@@ -88,6 +88,7 @@ public class AlertsController : ControllerBase
             Enabled = req.Enabled,
             DeleteThreshold = req.DeleteThreshold,
             WriteThreshold = req.WriteThreshold,
+            ReadThreshold = req.ReadThreshold,
             WindowMinutes = req.WindowMinutes,
             CooldownMinutes = req.CooldownMinutes,
             Language = req.Language == "en" ? "en" : "ja",
@@ -108,4 +109,4 @@ public record AlertSettingsRequest(
     bool Enabled, int DeleteThreshold, int WriteThreshold, int WindowMinutes, int CooldownMinutes,
     string? Language, string? WebhookFormat, string? WebhookUrl,
     string? SmtpHost, int SmtpPort, bool SmtpUseSsl, string? SmtpUser, string? SmtpPassword,
-    string? MailFrom, string? MailTo);
+    string? MailFrom, string? MailTo, int ReadThreshold = 0);

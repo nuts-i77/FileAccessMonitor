@@ -206,12 +206,19 @@ CREATE TABLE IF NOT EXISTS ""AspNetUserTokens"" (
     {
         ["ClientIp"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""ClientIp"" TEXT NULL",
         ["ClientMachine"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""ClientMachine"" TEXT NULL",
+        ["IsFolder"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""IsFolder"" INTEGER NOT NULL DEFAULT 0",
     };
     foreach (var (column, sql) in addColumnSql)
     {
         if (!accessColumns.Contains(column, StringComparer.OrdinalIgnoreCase))
             await db.Database.ExecuteSqlRawAsync(sql);
     }
+    // v4: records made before folders were told apart: a path that other records have as
+    // their folder is a folder (deleted or renamed folders used to be recorded as files)
+    if (!accessColumns.Contains("IsFolder", StringComparer.OrdinalIgnoreCase))
+        await db.Database.ExecuteSqlRawAsync(@"
+UPDATE ""AccessRecords"" SET ""IsFolder"" = 1
+WHERE ""FilePath"" IN (SELECT DISTINCT ""FolderPath"" FROM ""AccessRecords"")");
 
     // v3: operation log and collector position
     await db.Database.ExecuteSqlRawAsync(@"

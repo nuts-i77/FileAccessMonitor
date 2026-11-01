@@ -2,14 +2,14 @@ using FileAccessMonitor.Models;
 
 namespace FileAccessMonitor.Services;
 
-public record AlertRules(int DeleteThreshold, int WriteThreshold, int WindowMinutes, int CooldownMinutes);
+public record AlertRules(int DeleteThreshold, int WriteThreshold, int WindowMinutes, int CooldownMinutes, int ReadThreshold = 0);
 
 public record Alert(
     string AccessType, string UserName, int Count, int WindowMinutes,
     DateTime FromUtc, DateTime ToUtc, string? ClientIp, string? ClientMachine,
     IReadOnlyList<(string Folder, int Count)> TopFolders, IReadOnlyList<string> SamplePaths);
 
-// Detects bursts: one user deleting (or writing) at least N files within M minutes.
+// Detects bursts: one user deleting, writing, or reading at least N files within M minutes.
 // Uses the event time, so a backlog read after a restart is judged by when it happened.
 // Not thread-safe; called only from the collector's single consumer.
 public class AlertDetector(AlertRules rules)
@@ -24,10 +24,13 @@ public class AlertDetector(AlertRules rules)
         var alerts = new List<Alert>();
         foreach (var r in records)
         {
+            // a folder deletion follows the deletion of its contents, which is already counted
+            if (r.IsFolder) continue;
             var threshold = r.AccessType switch
             {
                 "Delete" => Rules.DeleteThreshold,
                 "Write" => Rules.WriteThreshold,
+                "Read" => Rules.ReadThreshold,
                 _ => 0,
             };
             if (threshold <= 0) continue;

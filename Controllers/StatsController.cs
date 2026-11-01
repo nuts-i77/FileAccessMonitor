@@ -27,7 +27,7 @@ public class StatsController : ControllerBase
         var q = _db.AccessRecords.Where(r => r.AccessTime >= since);
 
         var total = await q.CountAsync();
-        var uniqueFiles = await q.Select(r => r.FilePath).Distinct().CountAsync();
+        var uniqueFiles = await q.Where(r => !r.IsFolder).Select(r => r.FilePath).Distinct().CountAsync();
         var uniqueUsers = await q.Select(r => r.UserName).Distinct().CountAsync();
         var byType = await q.GroupBy(r => r.AccessType)
             .Select(g => new { Type = g.Key, Count = g.Count() })
@@ -44,7 +44,7 @@ public class StatsController : ControllerBase
         [FromQuery] string? accessType = null)
     {
         var since = DateTime.UtcNow.AddDays(-days);
-        var q = _db.AccessRecords.Where(r => r.AccessTime >= since);
+        var q = _db.AccessRecords.Where(r => r.AccessTime >= since && !r.IsFolder);
         if (!string.IsNullOrEmpty(accessType))
             q = q.Where(r => r.AccessType == accessType);
 
@@ -159,7 +159,7 @@ public class StatsController : ControllerBase
 
         var timeline = await HourlyTimeline(q);
 
-        var topFiles = await q
+        var topFiles = await q.Where(r => !r.IsFolder)
             .GroupBy(r => new { r.FilePath, r.FileName })
             .Select(g => new
             {
@@ -253,7 +253,7 @@ public class StatsController : ControllerBase
             .Select(g => new { Type = g.Key, Count = g.Count() })
             .ToListAsync();
 
-        var topFiles = await q
+        var topFiles = await q.Where(r => !r.IsFolder)
             .GroupBy(r => new { r.FilePath, r.FileName })
             .Select(g => new
             {
@@ -275,7 +275,7 @@ public class StatsController : ControllerBase
         var recent = await q
             .OrderByDescending(r => r.AccessTime)
             .Take(30)
-            .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType })
+            .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType, r.IsFolder })
             .ToListAsync();
 
         return Ok(new { user, byType, topFiles, timeline, recent });
@@ -296,7 +296,7 @@ public class StatsController : ControllerBase
             .Select(r => new
             {
                 r.AccessTime, r.FilePath, r.FileName, r.FolderPath,
-                r.UserName, r.AccessType, r.ClientIp, r.ClientMachine
+                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine
             })
             .ToListAsync();
 
@@ -320,7 +320,7 @@ public class StatsController : ControllerBase
             .Select(r => new
             {
                 r.AccessTime, r.FilePath, r.FileName, r.FolderPath,
-                r.UserName, r.AccessType, r.ClientIp, r.ClientMachine
+                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine
             })
             .ToListAsync();
 
@@ -347,16 +347,17 @@ public class StatsController : ControllerBase
         await using var writer = new StreamWriter(Response.Body, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         await writer.WriteLineAsync(CsvLine(
             $"{Messages.Get("csv.time")} (UTC{offsetLabel})", Messages.Get("csv.timeUtc"), Messages.Get("csv.user"),
-            Messages.Get("csv.type"), Messages.Get("csv.fileName"), Messages.Get("csv.folder"), Messages.Get("csv.path"),
+            Messages.Get("csv.type"), Messages.Get("csv.kind"), Messages.Get("csv.fileName"), Messages.Get("csv.folder"), Messages.Get("csv.path"),
             Messages.Get("csv.ip"), Messages.Get("csv.machine")));
 
+        string kindFile = Messages.Get("csv.kindFile"), kindFolder = Messages.Get("csv.kindFolder");
         var rows = 0;
         await foreach (var r in query.AsAsyncEnumerable())
         {
             var utc = DateTime.SpecifyKind(r.AccessTime, DateTimeKind.Utc);
             await writer.WriteLineAsync(CsvLine(
                 utc.Add(offset).ToString("yyyy-MM-dd HH:mm:ss"), utc.ToString("yyyy-MM-ddTHH:mm:ssZ"), r.UserName,
-                r.AccessType, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine));
+                r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine));
             rows++;
         }
         await writer.FlushAsync();

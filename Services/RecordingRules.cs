@@ -99,6 +99,23 @@ public class ReadMerger
     }
 }
 
+// Folders seen recently, as a folder or as the parent of a file. A folder can already be gone when
+// its deletion is processed; its contents are deleted before it, so it is known from them.
+public class RecentFolders
+{
+    private const int MaxCount = 50_000;
+    private readonly HashSet<string> _folders = new(StringComparer.OrdinalIgnoreCase);
+
+    public void Add(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        if (_folders.Count >= MaxCount) _folders.Clear();
+        _folders.Add(path);
+    }
+
+    public bool Contains(string path) => _folders.Contains(path);
+}
+
 // Tells deletions apart from renames and moves. Both open the file with DELETE access (event 4663),
 // but only a deletion is followed by event 4660 for the same handle. A DELETE access is therefore
 // held until either 4660 arrives (deleted) or a short time passes without it (renamed or moved).
@@ -168,6 +185,10 @@ public class DeleteTracker
         {
             type = "Rename";
             if (!p.EventTypes.Contains("Delete")) return null; // renames follow the Delete setting
+        }
+        else if (p.Record.IsFolder)
+        {
+            return null; // folder still there: neither deleted nor renamed
         }
         else
         {

@@ -85,6 +85,7 @@ public class EventLogCollectorService : BackgroundService
     // Used only by the consumer task
     private readonly ReadMerger _readMerger = new();
     private readonly DeleteTracker _deleteTracker = new(path => File.Exists(path) || Directory.Exists(path));
+    private readonly RecentFolders _recentFolders = new();
 
     public EventLogCollectorService(
         IServiceScopeFactory scopeFactory,
@@ -179,7 +180,9 @@ public class EventLogCollectorService : BackgroundService
         {
             // Record ids restarted (the log was cleared): everything in the log is new.
             _logger.LogWarning("The Security log was cleared since the last run; reading all events in it.");
-            await _audit.WriteAsync(AuditLog.SystemUser, "collector.gap", "reason=logCleared");
+            var clearedBy = FindLogClearedBy();
+            await _audit.WriteAsync(AuditLog.SystemUser, "collector.gap", $"reason=logCleared, by={clearedBy ?? "-"}");
+            _ = Task.Run(() => _alerts.NotifyGapAsync("gap.cleared", clearedBy ?? "-"));
             return (new EventLogWatcher(query, null, readExistingEvents: true), 0);
         }
 
@@ -192,8 +195,32 @@ public class EventLogCollectorService : BackgroundService
                 lastRecordId + 1, oldest - 1);
             await _audit.WriteAsync(AuditLog.SystemUser, "collector.gap",
                 $"missedRecords={lastRecordId + 1}-{oldest - 1}");
+            var missedFrom = lastRecordId + 1;
+            _ = Task.Run(() => _alerts.NotifyGapAsync("gap.overwritten", oldest - missedFrom, missedFrom, oldest - 1));
         }
         return (new EventLogWatcher(query, null, readExistingEvents: true), lastRecordId);
+    }
+
+    // Event 1102 ("The audit log was cleared") is the first record after a clear and names who did it.
+    private string? FindLogClearedBy()
+    {
+        try
+        {
+            var query = new EventLogQuery("Security", PathType.LogName, "*[System[EventID=1102]]") { ReverseDirection = true };
+            using var reader = new EventLogReader(query);
+            using var ev = reader.ReadEvent();
+            if (ev == null) return null;
+            var xml = XDocument.Parse(ev.ToXml());
+            string? Value(string name) => xml.Descendants().FirstOrDefault(e => e.Name.LocalName == name)?.Value;
+            var user = Value("SubjectUserName");
+            var domain = Value("SubjectDomainName");
+            return string.IsNullOrEmpty(user) ? null : string.IsNullOrEmpty(domain) ? user : $@"{domain}\{user}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read event 1102.");
+            return null;
+        }
     }
 
     private static EventBookmark? FindBookmark(long recordId)
@@ -384,6 +411,7 @@ public class EventLogCollectorService : BackgroundService
 
         if (pathConfigs.Length > 0 && matchedConfig == default)
             return null;
+        _recentFolders.Add(Path.GetDirectoryName(filePath));
 
         var userName = data.GetValueOrDefault("SubjectUserName", "");
         if (excludeSystem && (userName.EndsWith("$") || SystemAccounts.Contains(userName)))
@@ -416,9 +444,14 @@ public class EventLogCollectorService : BackgroundService
         if (!deleteAccess && !eventTypes.Contains(accessType))
             return null;
 
-        // Skip directory accesses (SACL fires for folders too). Checked last because it touches the disk.
-        if (Directory.Exists(filePath))
+        // Folders (the SACL applies to them too) are recorded only when deleted or renamed.
+        // A folder may already be gone when its deletion is processed, but its contents were
+        // deleted before it, so it is then known as their parent. Checked last: touches the disk.
+        var isFolder = Directory.Exists(filePath);
+        if (isFolder) _recentFolders.Add(filePath);
+        if (isFolder && !deleteAccess)
             return null;
+        isFolder |= _recentFolders.Contains(filePath);
 
         var logonSessionId = data.GetValueOrDefault("SubjectLogonId", "");
         _logonCache.TryGetValue(logonSessionId, out var clientInfo);
@@ -435,7 +468,8 @@ public class EventLogCollectorService : BackgroundService
             AccessType = accessType,
             AccessTime = ev.TimeCreated?.ToUniversalTime() ?? DateTime.UtcNow,
             ClientIp = string.IsNullOrEmpty(clientInfo.Ip) ? null : clientInfo.Ip,
-            ClientMachine = ResolveMachine(clientInfo.Ip, clientInfo.Machine)
+            ClientMachine = ResolveMachine(clientInfo.Ip, clientInfo.Machine),
+            IsFolder = isFolder,
         };
         if (!deleteAccess) return record;
 

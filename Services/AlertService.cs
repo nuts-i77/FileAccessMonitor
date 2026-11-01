@@ -17,6 +17,7 @@ public class AlertSettings
     public bool Enabled { get; set; }
     public int DeleteThreshold { get; set; } = 100;
     public int WriteThreshold { get; set; }
+    public int ReadThreshold { get; set; }
     public int WindowMinutes { get; set; } = 5;
     public int CooldownMinutes { get; set; } = 30;
     public string Language { get; set; } = "ja";
@@ -30,7 +31,7 @@ public class AlertSettings
     public string? MailFrom { get; set; }
     public string? MailTo { get; set; }      // comma or semicolon separated
 
-    [JsonIgnore] public AlertRules Rules => new(DeleteThreshold, WriteThreshold, WindowMinutes, CooldownMinutes);
+    [JsonIgnore] public AlertRules Rules => new(DeleteThreshold, WriteThreshold, WindowMinutes, CooldownMinutes, ReadThreshold);
     [JsonIgnore] public bool HasWebhook => !string.IsNullOrWhiteSpace(WebhookUrl);
     [JsonIgnore] public bool HasMail => !string.IsNullOrWhiteSpace(SmtpHost) && !string.IsNullOrWhiteSpace(MailTo);
 }
@@ -102,6 +103,21 @@ public class AlertService
         return await SendAsync(s, title, body, null);
     }
 
+    // Recording was interrupted (Security log records overwritten before they were collected, or
+    // the log cleared). Sent whenever notifications are enabled, regardless of the thresholds.
+    public async Task NotifyGapAsync(string messageKey, params object[] args)
+    {
+        var s = _settings;
+        if (!s.Enabled || (!s.HasWebhook && !s.HasMail)) return;
+
+        var title = "[FileAccessMonitor] " + Messages.GetIn(s.Language, "gap.title");
+        var body = Messages.GetIn(s.Language, messageKey, args) + "\n"
+            + Messages.GetIn(s.Language, "alert.server", Environment.MachineName);
+        var results = await SendAsync(s, title, body, null);
+        var channels = string.Join(", ", results.Select(r => $"{r.Channel}={(r.Ok ? "ok" : "failed")}"));
+        await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent", $"type=gap, channels=[{channels}]");
+    }
+
     private async Task SendAlertAsync(Alert alert, AlertSettings s)
     {
         var (title, body) = Format(alert, s.Language);
@@ -114,7 +130,12 @@ public class AlertService
 
     internal static (string Title, string Body) Format(Alert a, string lang)
     {
-        var title = Messages.GetIn(lang, a.AccessType == "Delete" ? "alert.deleteTitle" : "alert.writeTitle");
+        var title = Messages.GetIn(lang, a.AccessType switch
+        {
+            "Delete" => "alert.deleteTitle",
+            "Read" => "alert.readTitle",
+            _ => "alert.writeTitle",
+        });
         string Local(DateTime utc) => utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
         var client = a.ClientIp == null ? "-" : a.ClientMachine == null ? a.ClientIp : $"{a.ClientIp} ({a.ClientMachine})";
 

@@ -127,6 +127,11 @@
         <i class="bi bi-search me-1"></i><span data-i18n="tab.search">検索</span>
       </a>
     </li>
+    <li class="nav-item d-none" id="navUnused">
+      <a class="nav-link" href="#" data-tab="unused" onclick="switchTab('unused', this)">
+        <i class="bi bi-hourglass-split me-1"></i><span data-i18n="tab.unused">未使用ファイル</span>
+      </a>
+    </li>
     <li class="nav-item ms-auto">
       <a class="nav-link" href="#" data-tab="settings" onclick="switchTab('settings', this)">
         <i class="bi bi-gear me-1"></i><span data-i18n="tab.settings">設定</span>
@@ -388,6 +393,46 @@
     <div id="searchResults"></div>
   </div>
 
+  <!-- Unused Files Tab (Admin only) -->
+  <div id="tab-unused" class="d-none">
+    <div class="card mb-3">
+      <div class="card-body">
+        <p class="small text-muted mb-3" data-i18n="unused.hint">監視フォルダ内のファイルのうち、指定した期間に読まれていない（またはアクセスのない）ファイルを一覧にします。実際のフォルダの中身を調べるため、ファイルが多いと時間がかかります。</p>
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-md-5">
+            <label class="form-label small text-muted" for="unusedFolder" data-i18n="unused.folder">対象フォルダ</label>
+            <input type="text" id="unusedFolder" class="form-control form-control-sm font-monospace" list="unusedFolderList"
+              onkeydown="if(event.key==='Enter')searchUnused()">
+            <datalist id="unusedFolderList"></datalist>
+          </div>
+          <div class="col-6 col-md-2">
+            <label class="form-label small text-muted" for="unusedDays" data-i18n="unused.period">期間</label>
+            <select id="unusedDays" class="form-select form-select-sm">
+              <option value="30" data-i18n="unused.d30">過去 30 日</option>
+              <option value="90" selected data-i18n="unused.d90">過去 90 日</option>
+              <option value="180" data-i18n="unused.d180">過去 180 日</option>
+              <option value="365" data-i18n="unused.d365">過去 1 年</option>
+              <option value="0" data-i18n="unused.dAll">記録開始以降</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small text-muted" for="unusedCriterion" data-i18n="unused.criterion">判定</label>
+            <select id="unusedCriterion" class="form-select form-select-sm">
+              <option value="read" data-i18n="unused.notRead">読まれていない</option>
+              <option value="any" data-i18n="unused.notAccessed">一度もアクセスがない</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-2">
+            <button class="btn btn-primary btn-sm w-100" id="unusedSearchBtn" onclick="searchUnused()">
+              <i class="bi bi-search me-1"></i><span data-i18n="unused.search">一覧を表示</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="unusedResults"></div>
+  </div>
+
   <!-- Settings Tab -->
   <div id="tab-settings" class="d-none">
     <div class="row g-3">
@@ -585,6 +630,10 @@
               <div class="col-6 col-md-3">
                 <label class="form-label small text-muted" for="alertWriteThreshold" data-i18n="alerts.writeThreshold">書込のしきい値（件）</label>
                 <input type="number" id="alertWriteThreshold" class="form-control form-control-sm" min="0">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertReadThreshold" data-i18n="alerts.readThreshold">読取のしきい値（件）</label>
+                <input type="number" id="alertReadThreshold" class="form-control form-control-sm" min="0">
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small text-muted" for="alertWindowMinutes" data-i18n="alerts.window">集計時間（分）</label>

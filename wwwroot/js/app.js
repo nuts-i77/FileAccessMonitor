@@ -120,6 +120,13 @@ function localDay(s) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// Folders appear only when deleted or renamed
+function itemIcon(isFolder) {
+  return isFolder
+    ? `<i class="bi bi-folder-fill text-warning me-1" title="${t('kind.folder')}"></i>`
+    : `<i class="bi bi-file-earmark text-muted me-1"></i>`;
+}
+
 function typeBadge(type) {
   const cls = { Read: 'primary', Write: 'success', Delete: 'danger', Rename: 'warning text-dark' };
   return `<span class="badge bg-${cls[type] || 'secondary'}">${TYPE_LABELS[type] || type}</span>`;
@@ -362,7 +369,7 @@ function buildUserDetailHtml(d) {
   const recentRows = (d.recent || []).map(r =>
     `<tr>
       <td class="text-muted">${fmtDate(r.accessTime)}</td>
-      <td title="${esc(r.filePath)}">${esc(r.fileName)}</td>
+      <td title="${esc(r.filePath)}">${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
       <td>${typeBadge(r.accessType)}</td>
     </tr>`).join('');
 
@@ -461,7 +468,7 @@ async function loadRecent(page = 1) {
     return `
     <tr>
       <td class="text-muted">${fmtDate(r.accessTime)}</td>
-      <td>${esc(r.fileName)}</td>
+      <td>${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
       <td class="path-cell text-muted" title="${esc(r.folderPath)}">${esc(r.folderPath)}</td>
       <td>${esc(r.userName)}</td>
       <td>${typeBadge(r.accessType)}</td>
@@ -603,7 +610,7 @@ async function loadSearch(page = 1) {
       if (r.clientMachine && r.clientMachine !== r.clientIp) srcParts.push(esc(r.clientMachine));
       return `<tr>
         <td class="text-muted">${fmtDate(r.accessTime)}</td>
-        <td>${esc(r.fileName)}</td>
+        <td>${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
         <td class="path-cell text-muted" title="${esc(r.folderPath)}">${esc(r.folderPath)}</td>
         <td>${esc(r.userName)}</td>
         <td>${typeBadge(r.accessType)}</td>
@@ -788,6 +795,149 @@ function renderDetailCharts(d) {
   }
 }
 
+// ── Unused Files (Admin only) ─────────────────────────────────────
+function fmtSize(bytes) {
+  if (bytes == null) return '-';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, n = bytes;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n.toLocaleString(undefined, { maximumFractionDigits: i === 0 ? 0 : 1 })} ${units[i]}`;
+}
+
+async function loadUnusedTab() {
+  const list = document.getElementById('unusedFolderList');
+  if (list.dataset.loaded) return;
+  try {
+    const d = await api('/api/settings');
+    const paths = (d.pathConfigs || []).map(c => c.path);
+    list.innerHTML = paths.map(p => `<option value="${esc(p)}">`).join('');
+    list.dataset.loaded = '1';
+    const input = document.getElementById('unusedFolder');
+    if (!input.value && paths.length) input.value = paths[0];
+  } catch { /* the folder can still be typed */ }
+}
+
+let lastUnused = null;
+let unusedView = 'folders';
+
+async function searchUnused(folderOverride) {
+  const input = document.getElementById('unusedFolder');
+  if (folderOverride) input.value = folderOverride;
+  const folder = input.value.trim();
+  const days = document.getElementById('unusedDays').value;
+  const criterion = document.getElementById('unusedCriterion').value;
+  const el = document.getElementById('unusedResults');
+  const btn = document.getElementById('unusedSearchBtn');
+  if (!folder) { el.innerHTML = `<div class="alert alert-warning py-2 small">${t('msg.pathRequired')}</div>`; return; }
+
+  btn.disabled = true;
+  el.innerHTML = `<div class="text-center py-4"><div class="spinner-border"></div><div class="small text-muted mt-2">${t('unused.scanning')}</div></div>`;
+  try {
+    lastUnused = await api(`/api/unused-files?folder=${encodeURIComponent(folder)}&days=${days}&criterion=${criterion}`);
+    renderUnused();
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function setUnusedView(view) {
+  unusedView = view;
+  renderUnused();
+}
+
+function renderUnused() {
+  const d = lastUnused;
+  if (!d) return;
+  const notes = [];
+  if (d.recordingSince) notes.push(t('unused.recordingSince', { d: fmtDate(d.recordingSince) }));
+  if (d.truncated) notes.push(`<span class="text-warning">${t('unused.truncated', { n: fmtNum(d.scanned) })}</span>`);
+  if (unusedView === 'files' && d.total > d.shownCount) notes.push(t('unused.shownOnly', { n: fmtNum(d.shownCount) }));
+
+  const viewBtn = (view, icon, label) =>
+    `<button class="btn btn-sm ${unusedView === view ? 'btn-secondary' : 'btn-outline-secondary'}" onclick="setUnusedView('${view}')">
+      <i class="bi ${icon} me-1"></i>${t(label)}</button>`;
+
+  document.getElementById('unusedResults').innerHTML = `
+    <div class="card">
+      <div class="card-header py-2 small d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div>
+          <strong>${t('unused.summary', { n: fmtNum(d.total), s: fmtSize(d.totalSize), scanned: fmtNum(d.scanned) })}</strong>
+          ${notes.length ? `<div class="text-muted mt-1">${notes.join('<br>')}</div>` : ''}
+        </div>
+        <div class="btn-group">
+          ${viewBtn('folders', 'bi-folder2', 'unused.viewFolders')}
+          ${viewBtn('files', 'bi-file-earmark', 'unused.viewFiles')}
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">${unusedView === 'files' ? unusedFilesTable(d) : unusedFoldersTable(d)}</div>
+      </div>
+    </div>`;
+}
+
+function unusedFilesTable(d) {
+  const rows = d.items.map((f, i) => {
+    const folderPath = f.path.slice(0, f.path.length - f.fileName.length - 1);
+    return `<tr>
+      <td>${i + 1}</td>
+      <td><i class="bi bi-file-earmark text-muted me-1"></i>${esc(f.fileName)}</td>
+      <td class="path-cell text-muted" title="${esc(folderPath)}">${esc(folderPath)}</td>
+      <td class="text-end" data-sort="${f.size}">${fmtSize(f.size)}</td>
+      <td>${fmtDate(f.modified)}</td>
+      <td class="text-muted">${f.lastAccess ? fmtDate(f.lastAccess) : t('unused.never')}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="table table-hover table-sm mb-0" id="unusedTable">
+    <thead class="table-dark sticky-top"><tr>
+      <th>#</th>
+      <th onclick="sortTable('unusedTable',1)" class="sortable">${t('th.filename')}</th>
+      <th onclick="sortTable('unusedTable',2)" class="sortable">${t('unused.folderCol')}</th>
+      <th onclick="sortTable('unusedTable',3)" class="sortable text-end">${t('unused.size')}</th>
+      <th onclick="sortTable('unusedTable',4)" class="sortable">${t('unused.modified')}</th>
+      <th onclick="sortTable('unusedTable',5)" class="sortable">${t('unused.lastAccess')}</th>
+    </tr></thead>
+    <tbody>${rows || `<tr><td colspan="6" class="text-muted text-center py-3">${t('unused.none')}</td></tr>`}</tbody>
+  </table>`;
+}
+
+// One row per subfolder; clicking a subfolder lists inside it
+function unusedFoldersTable(d) {
+  const rows = (d.folders || []).map(f => {
+    const pct = f.size > 0 ? Math.round(f.unusedSize / f.size * 100) : 0;
+    const name = f.isSelf
+      ? `<i class="bi bi-files text-muted me-1"></i>${t('unused.directFiles')}`
+      : `<i class="bi bi-folder-fill text-warning me-1"></i><a href="#" data-path="${esc(f.path)}" onclick="searchUnused(this.dataset.path); return false;">${esc(f.path.slice(f.path.lastIndexOf('\\') + 1))}</a>`;
+    return `<tr>
+      <td title="${esc(f.path)}">${name}</td>
+      <td class="text-end">${fmtNum(f.files)}</td>
+      <td class="text-end" data-sort="${f.size}">${fmtSize(f.size)}</td>
+      <td class="text-end">${fmtNum(f.unusedFiles)}</td>
+      <td class="text-end" data-sort="${f.unusedSize}">${fmtSize(f.unusedSize)}</td>
+      <td class="text-end" data-sort="${pct}">
+        <div class="d-flex align-items-center gap-2 justify-content-end">
+          <span>${pct}%</span>
+          <div class="access-bar"><div class="access-bar-fill" style="width:${pct}%"></div></div>
+        </div>
+      </td>
+      <td class="text-muted">${f.lastAccess ? fmtDate(f.lastAccess) : t('unused.never')}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="table table-hover table-sm mb-0" id="unusedFolderTable">
+    <thead class="table-dark sticky-top"><tr>
+      <th onclick="sortTable('unusedFolderTable',0)" class="sortable">${t('unused.folderCol')}</th>
+      <th onclick="sortTable('unusedFolderTable',1)" class="sortable text-end">${t('unused.files')}</th>
+      <th onclick="sortTable('unusedFolderTable',2)" class="sortable text-end">${t('unused.totalSize')}</th>
+      <th onclick="sortTable('unusedFolderTable',3)" class="sortable text-end">${t('unused.unusedFiles')}</th>
+      <th onclick="sortTable('unusedFolderTable',4)" class="sortable text-end">${t('unused.unusedSize')}</th>
+      <th onclick="sortTable('unusedFolderTable',5)" class="sortable text-end">${t('unused.unusedPct')}</th>
+      <th onclick="sortTable('unusedFolderTable',6)" class="sortable">${t('unused.lastAccess')}</th>
+    </tr></thead>
+    <tbody>${rows || `<tr><td colspan="7" class="text-muted text-center py-3">${t('unused.none')}</td></tr>`}</tbody>
+  </table>`;
+}
+
 // ── Tab switching ─────────────────────────────────────────────────
 function switchTab(tab, el) {
   document.querySelectorAll('[id^="tab-"]').forEach(tp => tp.classList.add('d-none'));
@@ -808,6 +958,7 @@ function loadTabData(tab) {
     case 'users':     loadUsers(); break;
     case 'recent':    loadRecent(1); break;
     case 'search':    /* search is user-driven; keep last results */ break;
+    case 'unused':    loadUnusedTab(); break;
     case 'settings':  loadSettings(); break;
   }
 }
@@ -844,8 +995,10 @@ function sortTable(tableId, colIdx) {
   table.dataset.sortDir = asc ? 'asc' : 'desc';
 
   rows.sort((a, b) => {
-    const av = a.cells[colIdx]?.textContent.trim() || '';
-    const bv = b.cells[colIdx]?.textContent.trim() || '';
+    // data-sort holds a raw value where the text is formatted (e.g. sizes)
+    const cellValue = row => { const c = row.cells[colIdx]; return (c?.dataset.sort ?? c?.textContent ?? '').trim(); };
+    const av = cellValue(a);
+    const bv = cellValue(b);
     const an = parseFloat(av.replace(/,/g, ''));
     const bn = parseFloat(bv.replace(/,/g, ''));
     const cmp = isNaN(an) ? av.localeCompare(bv, 'ja') : an - bn;
@@ -1418,6 +1571,7 @@ async function loadAlertSettings() {
     document.getElementById('alertEnabled').checked = s.enabled;
     set('alertDeleteThreshold', s.deleteThreshold);
     set('alertWriteThreshold', s.writeThreshold);
+    set('alertReadThreshold', s.readThreshold);
     set('alertWindowMinutes', s.windowMinutes);
     set('alertCooldownMinutes', s.cooldownMinutes);
     set('alertLanguage', s.language);
@@ -1453,6 +1607,7 @@ function alertFormBody() {
     enabled: document.getElementById('alertEnabled').checked,
     deleteThreshold: num('alertDeleteThreshold'),
     writeThreshold: num('alertWriteThreshold'),
+    readThreshold: num('alertReadThreshold'),
     windowMinutes: num('alertWindowMinutes'),
     cooldownMinutes: num('alertCooldownMinutes'),
     language: val('alertLanguage'),
@@ -1572,6 +1727,10 @@ if (_user) {
 
 // Restore tab from URL hash on page load (survives F5)
 const VALID_TABS = ['dashboard', 'files', 'folders', 'users', 'recent', 'search', 'settings'];
+if (isAdmin()) {
+  document.getElementById('navUnused')?.classList.remove('d-none');
+  VALID_TABS.push('unused');
+}
 const hashTab = location.hash.slice(1);
 const startTab = VALID_TABS.includes(hashTab) ? hashTab : 'dashboard';
 const startLink = document.querySelector(`[data-tab="${startTab}"]`);
