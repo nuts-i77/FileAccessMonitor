@@ -36,7 +36,6 @@ public class EventLogCollectorService : BackgroundService
     // Parsed event, so the EventRecord can be disposed on the watcher thread
     private sealed record RawEvent(int Id, long RecordId, DateTime? TimeCreated, Dictionary<string, string> Data);
 
-    private const string LastRecordIdKey = "LastRecordId";
     private const int MaxBatchSize = 500;
     // Saving the position is cheap but not free; for events that produce no record
     // (logons etc.) it is enough to save it every few seconds.
@@ -49,12 +48,13 @@ public class EventLogCollectorService : BackgroundService
     // 5140: network share access (for IP/machine caching)
     private const string XPathQuery = "*[System[(EventID=4663) or (EventID=4659) or (EventID=4660) or (EventID=4624) or (EventID=5140)]]";
 
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IRecordSink _sink;
     private readonly ILogger<EventLogCollectorService> _logger;
     private readonly IConfiguration _config;
     private readonly DnsResolverService _dns;
-    private readonly AlertService _alerts;
-    private readonly AuditLog _audit;
+
+    // Stamped on every record, so records from several file servers can be told apart
+    internal static readonly string ServerName = Environment.MachineName;
 
     private readonly Channel<RawEvent> _queue = Channel.CreateUnbounded<RawEvent>(
         new UnboundedChannelOptions { SingleReader = true });
@@ -88,19 +88,15 @@ public class EventLogCollectorService : BackgroundService
     private readonly RecentFolders _recentFolders = new();
 
     public EventLogCollectorService(
-        IServiceScopeFactory scopeFactory,
+        IRecordSink sink,
         ILogger<EventLogCollectorService> logger,
         IConfiguration config,
-        DnsResolverService dns,
-        AlertService alerts,
-        AuditLog audit)
+        DnsResolverService dns)
     {
-        _scopeFactory = scopeFactory;
+        _sink = sink;
         _dns = dns;
         _logger = logger;
         _config = config;
-        _alerts = alerts;
-        _audit = audit;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -128,7 +124,7 @@ public class EventLogCollectorService : BackgroundService
             }
         }, stoppingToken);
 
-        var lastRecordId = await LoadLastRecordIdAsync();
+        var lastRecordId = await _sink.LoadPositionAsync();
         var consumer = Task.Run(() => ConsumeAsync(lastRecordId, excludeSystem, excludeProcessSet));
 
         EventLogWatcher? watcher = null;
@@ -180,9 +176,8 @@ public class EventLogCollectorService : BackgroundService
         {
             // Record ids restarted (the log was cleared): everything in the log is new.
             _logger.LogWarning("The Security log was cleared since the last run; reading all events in it.");
-            var clearedBy = FindLogClearedBy();
-            await _audit.WriteAsync(AuditLog.SystemUser, "collector.gap", $"reason=logCleared, by={clearedBy ?? "-"}");
-            _ = Task.Run(() => _alerts.NotifyGapAsync("gap.cleared", clearedBy ?? "-"));
+            var clearedBy = FindLogClearedBy() ?? "-";
+            await _sink.ReportGapAsync($"server={ServerName}, reason=logCleared, by={clearedBy}", "gap.cleared", clearedBy);
             return (new EventLogWatcher(query, null, readExistingEvents: true), 0);
         }
 
@@ -193,10 +188,9 @@ public class EventLogCollectorService : BackgroundService
             _logger.LogWarning(
                 "Security log records {From}-{To} were overwritten before they could be collected. Consider enlarging the Security log.",
                 lastRecordId + 1, oldest - 1);
-            await _audit.WriteAsync(AuditLog.SystemUser, "collector.gap",
-                $"missedRecords={lastRecordId + 1}-{oldest - 1}");
             var missedFrom = lastRecordId + 1;
-            _ = Task.Run(() => _alerts.NotifyGapAsync("gap.overwritten", oldest - missedFrom, missedFrom, oldest - 1));
+            await _sink.ReportGapAsync($"server={ServerName}, missedRecords={missedFrom}-{oldest - 1}",
+                "gap.overwritten", oldest - missedFrom, missedFrom, oldest - 1);
         }
         return (new EventLogWatcher(query, null, readExistingEvents: true), lastRecordId);
     }
@@ -299,7 +293,7 @@ public class EventLogCollectorService : BackgroundService
 
             if (batch.Count > 0 || (lastRecordId != savedRecordId && sinceSave.Elapsed >= PositionSaveInterval))
             {
-                if (await SaveBatchAsync(batch, lastRecordId))
+                if (await _sink.SaveAsync(batch, lastRecordId))
                 {
                     savedRecordId = lastRecordId;
                     sinceSave.Restart();
@@ -310,7 +304,7 @@ public class EventLogCollectorService : BackgroundService
 
         _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow, force: true).ForEach(Add);
         if (batch.Count > 0 || lastRecordId != savedRecordId)
-            await SaveBatchAsync(batch, lastRecordId);
+            await _sink.SaveAsync(batch, lastRecordId);
     }
 
     // While DELETE accesses are pending, wakes up after the confirm timeout even without new
@@ -321,59 +315,6 @@ public class EventLogCollectorService : BackgroundService
         using var timeout = new CancellationTokenSource(DeleteTracker.ConfirmTimeout);
         try { return await reader.WaitToReadAsync(timeout.Token); }
         catch (OperationCanceledException) { return true; }
-    }
-
-    private async Task<bool> SaveBatchAsync(List<AccessRecord> batch, long lastRecordId)
-    {
-        for (var attempt = 1; ; attempt++)
-        {
-            try
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-                db.AccessRecords.AddRange(batch);
-
-                var state = await db.CollectorStates.FindAsync(LastRecordIdKey);
-                if (state == null)
-                    db.CollectorStates.Add(new CollectorState { Key = LastRecordIdKey, Value = lastRecordId.ToString() });
-                else
-                    state.Value = lastRecordId.ToString();
-
-                await db.SaveChangesAsync(); // one implicit transaction
-                if (batch.Count > 0)
-                {
-                    _logger.LogDebug("Recorded {Count} accesses (up to record {RecordId}).", batch.Count, lastRecordId);
-                    _alerts.Observe(batch.ToArray());
-                }
-                return true;
-            }
-            catch (Exception ex) when (attempt < 3)
-            {
-                _logger.LogWarning(ex, "Saving {Count} access records failed (attempt {Attempt}); retrying.", batch.Count, attempt);
-                await Task.Delay(TimeSpan.FromSeconds(attempt));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Dropping {Count} access records that could not be saved.", batch.Count);
-                return false;
-            }
-        }
-    }
-
-    private async Task<long> LoadLastRecordIdAsync()
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-            var state = await db.CollectorStates.FindAsync(LastRecordIdKey);
-            return state != null && long.TryParse(state.Value, out var id) ? id : 0;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not read the collector position; starting with live events.");
-            return 0;
-        }
     }
 
     private AccessRecord? ProcessEvent(RawEvent ev, bool excludeSystem, HashSet<string> excludeProcessSet)
@@ -449,9 +390,9 @@ public class EventLogCollectorService : BackgroundService
         // deleted before it, so it is then known as their parent. Checked last: touches the disk.
         var isFolder = Directory.Exists(filePath);
         if (isFolder) _recentFolders.Add(filePath);
+        isFolder |= _recentFolders.Contains(filePath); // also when it is gone by now
         if (isFolder && !deleteAccess)
             return null;
-        isFolder |= _recentFolders.Contains(filePath);
 
         var logonSessionId = data.GetValueOrDefault("SubjectLogonId", "");
         _logonCache.TryGetValue(logonSessionId, out var clientInfo);
@@ -470,6 +411,7 @@ public class EventLogCollectorService : BackgroundService
             ClientIp = string.IsNullOrEmpty(clientInfo.Ip) ? null : clientInfo.Ip,
             ClientMachine = ResolveMachine(clientInfo.Ip, clientInfo.Machine),
             IsFolder = isFolder,
+            ServerName = ServerName,
         };
         if (!deleteAccess) return record;
 

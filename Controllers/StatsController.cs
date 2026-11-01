@@ -300,7 +300,7 @@ public class StatsController : ControllerBase
             .Select(r => new
             {
                 r.AccessTime, r.FilePath, r.FileName, r.FolderPath,
-                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine
+                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine, r.ServerName
             })
             .ToListAsync();
 
@@ -324,7 +324,7 @@ public class StatsController : ControllerBase
             .Select(r => new
             {
                 r.AccessTime, r.FilePath, r.FileName, r.FolderPath,
-                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine
+                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine, r.ServerName
             })
             .ToListAsync();
 
@@ -352,7 +352,7 @@ public class StatsController : ControllerBase
         await writer.WriteLineAsync(CsvLine(
             $"{Messages.Get("csv.time")} (UTC{offsetLabel})", Messages.Get("csv.timeUtc"), Messages.Get("csv.user"),
             Messages.Get("csv.type"), Messages.Get("csv.kind"), Messages.Get("csv.fileName"), Messages.Get("csv.folder"), Messages.Get("csv.path"),
-            Messages.Get("csv.ip"), Messages.Get("csv.machine")));
+            Messages.Get("csv.ip"), Messages.Get("csv.machine"), Messages.Get("csv.server")));
 
         string kindFile = Messages.Get("csv.kindFile"), kindFolder = Messages.Get("csv.kindFolder");
         var rows = 0;
@@ -361,7 +361,7 @@ public class StatsController : ControllerBase
             var utc = DateTime.SpecifyKind(r.AccessTime, DateTimeKind.Utc);
             await writer.WriteLineAsync(CsvLine(
                 utc.Add(offset).ToString("yyyy-MM-dd HH:mm:ss"), utc.ToString("yyyy-MM-ddTHH:mm:ssZ"), r.UserName,
-                r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine));
+                r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine, r.ServerName));
             rows++;
         }
         await writer.FlushAsync();

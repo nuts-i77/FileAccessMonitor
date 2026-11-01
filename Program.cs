@@ -135,6 +135,7 @@ builder.Services.AddSingleton<AuditLog>();
 builder.Services.AddSingleton<AlertService>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<UserScopeService>();
+builder.Services.AddSingleton<IRecordSink, LocalRecordSink>();
 builder.Services.AddHostedService<EventLogCollectorService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RetentionService>());
@@ -208,6 +209,7 @@ CREATE TABLE IF NOT EXISTS ""AspNetUserTokens"" (
         ["ClientIp"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""ClientIp"" TEXT NULL",
         ["ClientMachine"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""ClientMachine"" TEXT NULL",
         ["IsFolder"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""IsFolder"" INTEGER NOT NULL DEFAULT 0",
+        ["ServerName"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""ServerName"" TEXT NOT NULL DEFAULT ''",
     };
     foreach (var (column, sql) in addColumnSql)
     {
@@ -220,6 +222,11 @@ CREATE TABLE IF NOT EXISTS ""AspNetUserTokens"" (
         await db.Database.ExecuteSqlRawAsync(@"
 UPDATE ""AccessRecords"" SET ""IsFolder"" = 1
 WHERE ""FilePath"" IN (SELECT DISTINCT ""FolderPath"" FROM ""AccessRecords"")");
+    // v6: records made before agents existed all come from this machine
+    if (!accessColumns.Contains("ServerName", StringComparer.OrdinalIgnoreCase))
+        await db.Database.ExecuteSqlRawAsync(
+            @"UPDATE ""AccessRecords"" SET ""ServerName"" = {0} WHERE ""ServerName"" = ''", Environment.MachineName);
+    await db.Database.ExecuteSqlRawAsync(@"CREATE INDEX IF NOT EXISTS ""IX_AccessRecords_ServerName"" ON ""AccessRecords"" (""ServerName"")");
 
     // v3: operation log and collector position
     await db.Database.ExecuteSqlRawAsync(@"

@@ -27,6 +27,10 @@ public class AccessRecord
     // Folders are recorded only when deleted or renamed
     public bool IsFolder { get; set; }
 
+    // File server the access happened on
+    [Required, MaxLength(255)]
+    public string ServerName { get; set; } = "";
+
     public DateTime AccessTime { get; set; }
 
     [MaxLength(100)]

@@ -23,6 +23,7 @@ public class AccessDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(r => r.FolderPath);
             entity.HasIndex(r => r.AccessTime);
             entity.HasIndex(r => r.UserName);
+            entity.HasIndex(r => r.ServerName);
             entity.HasIndex(r => new { r.FilePath, r.AccessTime });
         });
 

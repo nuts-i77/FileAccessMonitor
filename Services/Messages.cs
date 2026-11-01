@@ -81,6 +81,7 @@ public static class Messages
         ["csv.path"] = "Full Path",
         ["csv.ip"] = "Client IP",
         ["csv.machine"] = "Client Machine",
+        ["csv.server"] = "File Server",
     };
 
     public static readonly IReadOnlyDictionary<string, string> Ja = new Dictionary<string, string>
@@ -157,6 +158,7 @@ public static class Messages
         ["csv.path"] = "フルパス",
         ["csv.ip"] = "接続元 IP",
         ["csv.machine"] = "接続元端末",
+        ["csv.server"] = "ファイルサーバー",
     };
 
     public static bool IsJapanese => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ja";
