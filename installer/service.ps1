@@ -33,6 +33,16 @@ function Stop-MonitorService {
     }
 }
 
+function Set-PortRule([string]$Name, [int]$LocalPort, [bool]$Create) {
+    $rule = Get-NetFirewallRule -DisplayName $Name -ErrorAction SilentlyContinue
+    if ($rule) {
+        $rule | Set-NetFirewallRule -LocalPort $LocalPort   # the port may have changed
+    } elseif ($Create) {
+        New-NetFirewallRule -DisplayName $Name -Direction Inbound -Protocol TCP `
+                            -LocalPort $LocalPort -Action Allow -Profile Any | Out-Null
+    }
+}
+
 switch ($Action) {
     'Stop' {
         Stop-MonitorService
@@ -50,16 +60,10 @@ switch ($Action) {
                         -BinaryPathName $binPath -StartupType Automatic | Out-Null
         }
 
-        Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        if ($Firewall) {
-            New-NetFirewallRule -DisplayName $FirewallRule -Direction Inbound -Protocol TCP `
-                                -LocalPort $Port -Action Allow -Profile Any | Out-Null
-        }
-        Get-NetFirewallRule -DisplayName $AgentRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        if ($AgentFirewall) {
-            New-NetFirewallRule -DisplayName $AgentRule -Direction Inbound -Protocol TCP `
-                                -LocalPort $AgentPort -Action Allow -Profile Any | Out-Null
-        }
+        # An upgrade keeps a rule made earlier (by an earlier install or by hand), even when the
+        # task was not ticked this time; silent upgrades only remember the tasks of the last install
+        Set-PortRule $FirewallRule $Port $Firewall
+        Set-PortRule $AgentRule $AgentPort $AgentFirewall
 
         Start-Service -Name $ServiceName
     }
