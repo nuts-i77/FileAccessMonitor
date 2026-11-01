@@ -192,6 +192,7 @@
             <option value="Read" data-i18n="type.read">読取</option>
             <option value="Write" data-i18n="type.write">書込</option>
             <option value="Delete" data-i18n="type.delete">削除</option>
+            <option value="Rename" data-i18n="type.rename">名前変更</option>
           </select>
         </div>
       </div>
@@ -207,7 +208,8 @@
                 <th onclick="sortTable('filesTable',4)" class="sortable text-end" data-i18n="th.read">読取</th>
                 <th onclick="sortTable('filesTable',5)" class="sortable text-end" data-i18n="th.write">書込</th>
                 <th onclick="sortTable('filesTable',6)" class="sortable text-end" data-i18n="th.delete">削除</th>
-                <th onclick="sortTable('filesTable',7)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
+                <th onclick="sortTable('filesTable',7)" class="sortable text-end" data-i18n="th.rename">名前変更</th>
+                <th onclick="sortTable('filesTable',8)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
                 <th data-i18n="th.topUser">主要ユーザー</th>
                 <th></th>
               </tr>
@@ -238,8 +240,9 @@
                 <th onclick="sortTable('foldersTable',4)" class="sortable text-end" data-i18n="th.read">読取</th>
                 <th onclick="sortTable('foldersTable',5)" class="sortable text-end" data-i18n="th.write">書込</th>
                 <th onclick="sortTable('foldersTable',6)" class="sortable text-end" data-i18n="th.delete">削除</th>
-                <th onclick="sortTable('foldersTable',7)" class="sortable text-end" data-i18n="th.fileCount">ファイル数</th>
-                <th onclick="sortTable('foldersTable',8)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
+                <th onclick="sortTable('foldersTable',7)" class="sortable text-end" data-i18n="th.rename">名前変更</th>
+                <th onclick="sortTable('foldersTable',8)" class="sortable text-end" data-i18n="th.fileCount">ファイル数</th>
+                <th onclick="sortTable('foldersTable',9)" class="sortable" data-i18n="th.lastAccess">最終アクセス</th>
                 <th></th>
               </tr>
             </thead>
@@ -267,6 +270,7 @@
                 <th class="text-end" data-i18n="th.read">読取</th>
                 <th class="text-end" data-i18n="th.write">書込</th>
                 <th class="text-end" data-i18n="th.delete">削除</th>
+                <th class="text-end" data-i18n="th.rename">名前変更</th>
                 <th></th>
               </tr>
             </thead>
@@ -366,6 +370,7 @@
               <option value="Read" data-i18n="type.read">読取</option>
               <option value="Write" data-i18n="type.write">書込</option>
               <option value="Delete" data-i18n="type.delete">削除</option>
+              <option value="Rename" data-i18n="type.rename">名前変更</option>
             </select>
           </div>
           <!-- Search button -->
@@ -421,7 +426,7 @@
                 </div>
                 <div class="form-check">
                   <input class="form-check-input" type="checkbox" id="newPathDelete" checked>
-                  <label class="form-check-label small" for="newPathDelete" data-i18n="type.delete">削除</label>
+                  <label class="form-check-label small" for="newPathDelete" data-i18n="type.deleteRename">削除・名前変更</label>
                 </div>
               </div>
             </div>
@@ -510,6 +515,52 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recording rules (Admin only) -->
+      <div class="col-12 d-none" id="recordingSettingsSection">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-funnel me-1"></i><span data-i18n="recording.title">記録ルール</span>
+          </div>
+          <div class="card-body">
+            <p class="small text-muted mb-3" data-i18n="recording.hint">記録しないアクセスと、続けて読んだときのまとめ方を指定します。変更はこれから記録するアクセスに適用されます（記録済みのデータは変わりません）。</p>
+            <div class="row g-3">
+              <div class="col-12 col-md-4">
+                <label class="form-label small text-muted" for="recExcludeFiles" data-i18n="recording.files">除外するファイル名</label>
+                <textarea id="recExcludeFiles" class="form-control form-control-sm font-monospace" rows="5"></textarea>
+                <div class="form-text" data-i18n="recording.filesHint">1 行に 1 つ。* と ? が使えます（例: *.tmp、~$*）。</div>
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small text-muted" for="recExcludeUsers" data-i18n="recording.users">除外するユーザー</label>
+                <textarea id="recExcludeUsers" class="form-control form-control-sm font-monospace" rows="5"></textarea>
+                <div class="form-text" data-i18n="recording.usersHint">1 行に 1 つ。「ドメイン\ユーザー」またはユーザー名のみ（すべてのドメインに一致）。</div>
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small text-muted" for="recExcludeProcesses" data-i18n="recording.processes">除外するプロセス</label>
+                <textarea id="recExcludeProcesses" class="form-control form-control-sm font-monospace" rows="5"></textarea>
+                <div class="form-text" data-i18n="recording.processesHint">1 行に 1 つ（例: backup.exe）。サーバー上で直接開いたアクセスにだけ効きます。共有フォルダ経由のアクセスにはプロセス名が記録されません。</div>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small text-muted" for="recMergeReadMinutes" data-i18n="recording.merge">続けて読んだときにまとめる時間</label>
+                <div class="input-group input-group-sm" style="max-width:180px">
+                  <input type="number" id="recMergeReadMinutes" class="form-control" min="0" max="1440">
+                  <span class="input-group-text" data-i18n="recording.minutes">分</span>
+                </div>
+                <div class="form-text" data-i18n="recording.mergeHint">同じユーザーが同じファイルを、前回の読取からこの時間内に再び読んだ場合は記録しません（0 = すべて記録）。書込・削除・名前変更は常に記録します。</div>
+              </div>
+              <div class="col-12 d-flex gap-2">
+                <button class="btn btn-primary btn-sm" onclick="saveRecordingSettings()">
+                  <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="addDefaultExcludePatterns()">
+                  <i class="bi bi-plus-circle me-1"></i><span data-i18n="recording.addDefaults">よくある一時ファイルを追加</span>
+                </button>
+              </div>
+            </div>
+            <div id="recordingAlert" class="mt-2"></div>
           </div>
         </div>
       </div>

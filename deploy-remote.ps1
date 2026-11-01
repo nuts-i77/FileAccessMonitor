@@ -39,8 +39,9 @@ if ($LASTEXITCODE -ne 0) { Write-Error "Build failed."; exit 1 }
 
 # 2. Connect (add to TrustedHosts if connecting by IP without domain)
 Write-Host "[2/4] Connecting to $ServerIP ..." -ForegroundColor Cyan
-$current = (Get-Item WSMan:\localhost\Client\TrustedHosts).Value
-if ($current -notmatch [regex]::Escape($ServerIP)) {
+# (reading TrustedHosts needs the local WinRM service; skip it when that is not available)
+$current = (Get-Item WSMan:\localhost\Client\TrustedHosts -ErrorAction SilentlyContinue).Value
+if ($null -ne $current -and $current -notmatch [regex]::Escape($ServerIP)) {
     $newValue = if ($current) { "$current,$ServerIP" } else { $ServerIP }
     Set-Item WSMan:\localhost\Client\TrustedHosts -Value $newValue -Force
     Write-Host "  -> Added $ServerIP to TrustedHosts." -ForegroundColor Gray

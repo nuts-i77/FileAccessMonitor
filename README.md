@@ -134,7 +134,7 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | Files / Folders / Users | Rankings with detail dialogs |
 | Recent | Access log with client IP and machine name |
 | Search | Search by keyword, period, type, or IP; export the results as CSV (up to 200,000 rows, opens in Excel) |
-| Settings | Monitored folders, users, reverse DNS, data retention, notifications, operation log |
+| Settings | Monitored folders, users, recording rules (exclusions and merging of repeated reads), reverse DNS, data retention, notifications, operation log |
 
 The GUI is available in English and Japanese. Switch languages at the top right; on first visit the GUI follows the browser's language. Messages returned by the API use the selected language too.
 
@@ -150,7 +150,7 @@ The screenshots use fictional sample data.
 
 ## How it works
 
-1. Subscribes to the Windows Security event log in real time (events 4663 and 4659).
+1. Subscribes to the Windows Security event log in real time (events 4663, 4659, and 4660).
 2. Finds the client IP address and machine name from logon (4624) and share access (5140) events and from the list of SMB sessions.
 3. Stores records in SQLite and aggregates them through an ASP.NET Core web API.
 4. Displays them in the browser with Bootstrap and Chart.js.
@@ -161,7 +161,14 @@ The screenshots use fictional sample data.
 |---|---|
 | Read | `0x1` (ReadData) / `0x80000000` (GENERIC_READ) |
 | Write | `0x2` (WriteData) / `0x4` (AppendData) / `0x40000000` (GENERIC_WRITE) |
-| Delete | `0x10000` (DELETE), and event 4659 |
+| Delete | `0x10000` (DELETE) followed by event 4660 (object deleted) for the same handle, and event 4659 |
+| Rename | `0x10000` (DELETE) with no event 4660: the file was renamed or moved |
+
+Renames and moves also open the file with DELETE access, so a DELETE access is held for up to 2 seconds until event 4660 shows whether the file was actually deleted. If it was not, and a file exists again at the same path (Office saves a document by renaming the old file away and a new file into its place), the access is recorded as a write. Renames are recorded for folders where Delete is selected.
+
+### Recording rules
+
+On the **Settings** tab, administrators can exclude file name patterns (`*` and `?` wildcards), users, and processes, and merge repeated reads: when the same user reads the same file again within the set time of the previous read (5 minutes by default), it is not recorded again. The window restarts with each read, so watching a long video with seeks counts as one read. By default `Thumbs.db`, `desktop.ini`, `~$*` (Office lock files), and `*.tmp` are excluded. The rules apply to accesses recorded after they are saved.
 
 ## Comparison with other tools
 
@@ -192,6 +199,7 @@ Product capabilities above are summarized from public information and may change
 - **Operations that do not open a file are not recorded.** This includes reading only attributes or timestamps (`0x80` ReadAttributes and similar) and listing folders. For example, when an incremental backup tool finds a file unchanged and skips copying it, that file is not recorded.
 - Events that occur while the service is stopped (for example during an upgrade or reboot) are collected when it starts again, as long as they are still in the Security log. If the log has already overwritten them, the gap is recorded in the operation log.
 - The service must run on the file server it monitors. It cannot monitor remote servers.
+- For renames and moves, only the old path is recorded. The Security log does not include the new path.
 - Times are stored in UTC. The GUI shows them, and groups them by day, in the browser's time zone.
 
 ## Development

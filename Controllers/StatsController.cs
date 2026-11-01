@@ -58,6 +58,7 @@ public class StatsController : ControllerBase
                 Read = g.Count(r => r.AccessType == "Read"),
                 Write = g.Count(r => r.AccessType == "Write"),
                 Delete = g.Count(r => r.AccessType == "Delete"),
+                Rename = g.Count(r => r.AccessType == "Rename"),
                 LastAccess = g.Max(r => r.AccessTime),
                 TopUser = g.GroupBy(r => r.UserName)
                            .OrderByDescending(u => u.Count())
@@ -97,6 +98,7 @@ public class StatsController : ControllerBase
                 Read = g.Count(r => r.AccessType == "Read"),
                 Write = g.Count(r => r.AccessType == "Write"),
                 Delete = g.Count(r => r.AccessType == "Delete"),
+                Rename = g.Count(r => r.AccessType == "Rename"),
                 UniqueFiles = g.Select(r => r.FilePath).Distinct().Count(),
                 LastAccess = g.Max(r => r.AccessTime)
             })
@@ -228,7 +230,8 @@ public class StatsController : ControllerBase
                 Total = g.Count(),
                 Read = g.Count(r => r.AccessType == "Read"),
                 Write = g.Count(r => r.AccessType == "Write"),
-                Delete = g.Count(r => r.AccessType == "Delete")
+                Delete = g.Count(r => r.AccessType == "Delete"),
+                Rename = g.Count(r => r.AccessType == "Rename")
             })
             .OrderByDescending(x => x.Total)
             .Take(limit)
@@ -260,6 +263,7 @@ public class StatsController : ControllerBase
                 Read = g.Count(r => r.AccessType == "Read"),
                 Write = g.Count(r => r.AccessType == "Write"),
                 Delete = g.Count(r => r.AccessType == "Delete"),
+                Rename = g.Count(r => r.AccessType == "Rename"),
                 LastAccess = g.Max(r => r.AccessTime)
             })
             .OrderByDescending(x => x.Total)

@@ -44,9 +44,10 @@ public class EventLogCollectorService : BackgroundService
 
     // 4663: object access (read/write/delete)
     // 4659: handle requested with intent to delete (fired specifically for DELETE on modern Windows)
+    // 4660: object deleted (follows the 4663 DELETE access of a deletion, but not of a rename)
     // 4624: logon (for IP/machine caching)
     // 5140: network share access (for IP/machine caching)
-    private const string XPathQuery = "*[System[(EventID=4663) or (EventID=4659) or (EventID=4624) or (EventID=5140)]]";
+    private const string XPathQuery = "*[System[(EventID=4663) or (EventID=4659) or (EventID=4660) or (EventID=4624) or (EventID=5140)]]";
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<EventLogCollectorService> _logger;
@@ -75,10 +76,15 @@ public class EventLogCollectorService : BackgroundService
         "SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE", "ANONYMOUS LOGON"
     };
 
-    // Monitored paths, re-read when settings.json changes (checked at most once a second)
+    // Monitored paths and recording rules, re-read when settings.json changes (checked at most once a second)
     private (string Path, HashSet<string> EventTypes)[] _pathConfigs = [];
     private DateTime _pathConfigsFileTime = DateTime.MinValue;
     private readonly Stopwatch _pathConfigsCheck = new();
+    private RecordingRules _rules = new(new RecordingSettings());
+
+    // Used only by the consumer task
+    private readonly ReadMerger _readMerger = new();
+    private readonly DeleteTracker _deleteTracker = new(path => File.Exists(path) || Directory.Exists(path));
 
     public EventLogCollectorService(
         IServiceScopeFactory scopeFactory,
@@ -231,29 +237,38 @@ public class EventLogCollectorService : BackgroundService
 
     // Single consumer: turns events into records and writes them in batches. Each batch is
     // saved together with the last Security log record id, in one transaction, so a crash
-    // can neither lose nor duplicate records.
+    // can neither lose nor duplicate records. The exception are DELETE accesses still waiting
+    // to be told apart from renames (at most DeleteTracker.ConfirmTimeout) when the process is killed.
     private async Task ConsumeAsync(long lastRecordId, bool excludeSystem, HashSet<string> excludeProcessSet)
     {
         var batch = new List<AccessRecord>(MaxBatchSize);
         var savedRecordId = lastRecordId;
         var sinceSave = Stopwatch.StartNew();
         var reader = _queue.Reader;
+        var newestEventUtc = DateTime.MinValue;
 
-        while (await reader.WaitToReadAsync())
+        void Add(AccessRecord record)
+        {
+            if (_readMerger.ShouldRecord(record, _rules.MergeReadWindow)) batch.Add(record);
+        }
+
+        while (await WaitForEventsAsync(reader))
         {
             while (batch.Count < MaxBatchSize && reader.TryRead(out var ev))
             {
                 lastRecordId = ev.RecordId;
+                if (ev.TimeCreated?.ToUniversalTime() is DateTime time && time > newestEventUtc)
+                    newestEventUtc = time;
                 try
                 {
-                    var record = ProcessEvent(ev, excludeSystem, excludeProcessSet);
-                    if (record != null) batch.Add(record);
+                    if (ProcessEvent(ev, excludeSystem, excludeProcessSet) is { } record) Add(record);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogDebug(ex, "Error processing event record {RecordId}.", ev.RecordId);
                 }
             }
+            _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow).ForEach(Add);
 
             if (batch.Count > 0 || (lastRecordId != savedRecordId && sinceSave.Elapsed >= PositionSaveInterval))
             {
@@ -266,8 +281,19 @@ public class EventLogCollectorService : BackgroundService
             }
         }
 
-        if (lastRecordId != savedRecordId)
+        _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow, force: true).ForEach(Add);
+        if (batch.Count > 0 || lastRecordId != savedRecordId)
             await SaveBatchAsync(batch, lastRecordId);
+    }
+
+    // While DELETE accesses are pending, wakes up after the confirm timeout even without new
+    // events, so they get resolved. Returns false once the queue is completed.
+    private async Task<bool> WaitForEventsAsync(ChannelReader<RawEvent> reader)
+    {
+        if (!_deleteTracker.HasPending) return await reader.WaitToReadAsync();
+        using var timeout = new CancellationTokenSource(DeleteTracker.ConfirmTimeout);
+        try { return await reader.WaitToReadAsync(timeout.Token); }
+        catch (OperationCanceledException) { return true; }
     }
 
     private async Task<bool> SaveBatchAsync(List<AccessRecord> batch, long lastRecordId)
@@ -331,6 +357,9 @@ public class EventLogCollectorService : BackgroundService
         if (ev.Id == 4624) { CacheLogonEvent(data); return null; }
         // Event 5140: cache SubjectLogonId -> {IP} — works for Kerberos sessions too
         if (ev.Id == 5140) { CacheShareEvent(data); return null; }
+        // Event 4660: the file of a pending DELETE access was actually deleted
+        if (ev.Id == 4660)
+            return _deleteTracker.Confirm(data.GetValueOrDefault("ProcessId", ""), data.GetValueOrDefault("HandleId", ""));
 
         var objectType = data.GetValueOrDefault("ObjectType", "");
         if (!string.Equals(objectType, "File", StringComparison.OrdinalIgnoreCase))
@@ -364,33 +393,40 @@ public class EventLogCollectorService : BackgroundService
         if (excludeProcessSet.Contains(processName))
             return null;
 
+        var rules = _rules;
+        var domainName = data.GetValueOrDefault("SubjectDomainName", "");
+        var fullUserName = string.IsNullOrEmpty(domainName) || domainName == "-"
+            ? userName
+            : $@"{domainName}\{userName}";
+        if (rules.IsExcludedFile(Path.GetFileName(filePath)) || rules.IsExcludedUser(fullUserName)
+            || rules.IsExcludedProcess(processName))
+            return null;
+
         // Event 4659 = "handle requested with intent to delete" → always Delete
-        // Event 4663 = determine type from AccessMask
-        var accessType = ev.Id == 4659
-            ? "Delete"
-            : ParseAccessType(data.GetValueOrDefault("AccessMask", "0x0"));
+        // Event 4663 = determine type from AccessMask. DELETE access is also used for renames
+        // and moves, so it is decided later by the delete tracker.
+        var mask = ParseMask(data.GetValueOrDefault("AccessMask", "0x0"));
+        var deleteAccess = ev.Id == 4663 && (mask & DeleteRight) != 0;
+        var accessType = ev.Id == 4659 ? "Delete" : deleteAccess ? "Delete" : ParseAccessType(mask);
         if (accessType == null) return null;
 
-        // Filter by per-path event types (skip if this access type is not monitored for this path)
-        if (matchedConfig != default && !matchedConfig.EventTypes.Contains(accessType))
+        // Filter by per-path event types (skip if this access type is not monitored for this path).
+        // A DELETE access can still turn out to be a write, so it is filtered when resolved.
+        var eventTypes = matchedConfig != default ? matchedConfig.EventTypes : AllEventTypes;
+        if (!deleteAccess && !eventTypes.Contains(accessType))
             return null;
 
         // Skip directory accesses (SACL fires for folders too). Checked last because it touches the disk.
         if (Directory.Exists(filePath))
             return null;
 
-        var domainName = data.GetValueOrDefault("SubjectDomainName", "");
         var logonSessionId = data.GetValueOrDefault("SubjectLogonId", "");
         _logonCache.TryGetValue(logonSessionId, out var clientInfo);
         // Fallback: use live SMB session table keyed by username
         if (string.IsNullOrEmpty(clientInfo.Ip))
             _smbSessionCache.TryGetValue(userName, out clientInfo);
 
-        var fullUserName = string.IsNullOrEmpty(domainName) || domainName == "-"
-            ? userName
-            : $@"{domainName}\{userName}";
-
-        return new AccessRecord
+        var record = new AccessRecord
         {
             FilePath = filePath,
             FileName = Path.GetFileName(filePath),
@@ -401,6 +437,11 @@ public class EventLogCollectorService : BackgroundService
             ClientIp = string.IsNullOrEmpty(clientInfo.Ip) ? null : clientInfo.Ip,
             ClientMachine = ResolveMachine(clientInfo.Ip, clientInfo.Machine)
         };
+        if (!deleteAccess) return record;
+
+        _deleteTracker.Add(data.GetValueOrDefault("ProcessId", ""), data.GetValueOrDefault("HandleId", ""),
+            record, ParseAccessType(mask & ~DeleteRight), eventTypes, DateTime.UtcNow);
+        return null;
     }
 
     private static Dictionary<string, string> ParseEventData(EventRecord record)
@@ -566,6 +607,7 @@ public class EventLogCollectorService : BackgroundService
             _pathConfigs = configs
                 .Select(c => (c.Path, new HashSet<string>(c.EventTypes, StringComparer.OrdinalIgnoreCase)))
                 .ToArray();
+            _rules = new RecordingRules(RecordingSettings.Load());
         }
         return _pathConfigs;
     }
@@ -606,22 +648,25 @@ public class EventLogCollectorService : BackgroundService
             || filePath.StartsWith(r + "\\", StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static string? ParseAccessType(string accessMaskStr)
-    {
-        long mask;
-        if (accessMaskStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-        {
-            if (!long.TryParse(accessMaskStr[2..],
-                System.Globalization.NumberStyles.HexNumber, null, out mask))
-                return null;
-        }
-        else if (!long.TryParse(accessMaskStr, out mask))
-        {
-            return null;
-        }
+    internal const long DeleteRight = 0x10000L;
 
+    // Types used when no monitored path is configured (all folders are recorded)
+    private static readonly IReadOnlySet<string> AllEventTypes =
+        new HashSet<string>(["Read", "Write", "Delete"], StringComparer.OrdinalIgnoreCase);
+
+    internal static long ParseMask(string accessMaskStr)
+    {
+        if (accessMaskStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            return long.TryParse(accessMaskStr[2..], System.Globalization.NumberStyles.HexNumber, null, out var hex) ? hex : 0;
+        return long.TryParse(accessMaskStr, out var mask) ? mask : 0;
+    }
+
+    internal static string? ParseAccessType(string accessMaskStr) => ParseAccessType(ParseMask(accessMaskStr));
+
+    internal static string? ParseAccessType(long mask)
+    {
         // DELETE
-        if ((mask & 0x10000L) != 0) return "Delete";
+        if ((mask & DeleteRight) != 0) return "Delete";
         // WriteData (0x2) or AppendData (0x4) only — exclude WriteEA(0x10) and WriteAttributes(0x100)
         if ((mask & 0x40000002L) != 0 || (mask & 0x2L) != 0 || (mask & 0x4L) != 0)
             return "Write";

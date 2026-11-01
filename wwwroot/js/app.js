@@ -72,7 +72,8 @@ let searchPeriod = { mode: 'days', days: 7, from: '', to: '' };
 const TYPE_COLORS = {
   Read:   '#0d6efd',
   Write:  '#198754',
-  Delete: '#dc3545'
+  Delete: '#dc3545',
+  Rename: '#fd7e14'
 };
 
 const TYPE_LABELS = new Proxy({}, {
@@ -80,6 +81,7 @@ const TYPE_LABELS = new Proxy({}, {
     if (k === 'Read')   return t('type.read');
     if (k === 'Write')  return t('type.write');
     if (k === 'Delete') return t('type.delete');
+    if (k === 'Rename') return t('type.rename');
     return typeof k === 'string' ? k : undefined;
   }
 });
@@ -119,7 +121,7 @@ function localDay(s) {
 }
 
 function typeBadge(type) {
-  const cls = { Read: 'primary', Write: 'success', Delete: 'danger' };
+  const cls = { Read: 'primary', Write: 'success', Delete: 'danger', Rename: 'warning text-dark' };
   return `<span class="badge bg-${cls[type] || 'secondary'}">${TYPE_LABELS[type] || type}</span>`;
 }
 
@@ -140,7 +142,7 @@ async function loadTimeline() {
   const data = await api(`/api/stats/timeline?days=${getDays()}`);
 
   const dates = [...new Set(data.map(d => localDay(d.date)))].sort();
-  const types = ['Read', 'Write', 'Delete'];
+  const types = ['Read', 'Write', 'Delete', 'Rename'];
   const byType = {};
   types.forEach(tp => byType[tp] = {});
   data.forEach(d => {
@@ -220,7 +222,8 @@ async function loadTopCharts() {
       datasets: [
         { label: t('type.read'),   data: files.map(f => f.read),   backgroundColor: TYPE_COLORS.Read },
         { label: t('type.write'),  data: files.map(f => f.write),  backgroundColor: TYPE_COLORS.Write },
-        { label: t('type.delete'), data: files.map(f => f.delete), backgroundColor: TYPE_COLORS.Delete }
+        { label: t('type.delete'), data: files.map(f => f.delete), backgroundColor: TYPE_COLORS.Delete },
+        { label: t('type.rename'), data: files.map(f => f.rename), backgroundColor: TYPE_COLORS.Rename }
       ]
     },
     options: {
@@ -240,7 +243,8 @@ async function loadTopCharts() {
       datasets: [
         { label: t('type.read'),   data: folders.map(f => f.read),   backgroundColor: TYPE_COLORS.Read },
         { label: t('type.write'),  data: folders.map(f => f.write),  backgroundColor: TYPE_COLORS.Write },
-        { label: t('type.delete'), data: folders.map(f => f.delete), backgroundColor: TYPE_COLORS.Delete }
+        { label: t('type.delete'), data: folders.map(f => f.delete), backgroundColor: TYPE_COLORS.Delete },
+        { label: t('type.rename'), data: folders.map(f => f.rename), backgroundColor: TYPE_COLORS.Rename }
       ]
     },
     options: {
@@ -274,6 +278,7 @@ async function loadFiles() {
       <td class="text-end text-primary">${fmtNum(f.read)}</td>
       <td class="text-end text-success">${fmtNum(f.write)}</td>
       <td class="text-end text-danger">${fmtNum(f.delete)}</td>
+      <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td>${fmtDate(f.lastAccess)}</td>
       <td><span class="text-truncate d-inline-block" style="max-width:120px" title="${esc(f.topUser || '')}">${esc(f.topUser || '-')}</span></td>
       <td><button class="btn btn-sm btn-outline-secondary py-0" data-path="${esc(f.filePath)}" onclick="showFileDetail(this.dataset.path)">${t('btn.detail')}</button></td>
@@ -300,6 +305,7 @@ async function loadFolders() {
       <td class="text-end text-primary">${fmtNum(f.read)}</td>
       <td class="text-end text-success">${fmtNum(f.write)}</td>
       <td class="text-end text-danger">${fmtNum(f.delete)}</td>
+      <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td class="text-end">${fmtNum(f.uniqueFiles)}</td>
       <td>${fmtDate(f.lastAccess)}</td>
       <td><button class="btn btn-sm btn-outline-secondary py-0" data-path="${esc(f.folderPath)}" onclick="showFolderDetail(this.dataset.path)">${t('btn.detail')}</button></td>
@@ -319,6 +325,7 @@ async function loadUsers() {
       <td class="text-end text-primary">${fmtNum(u.read)}</td>
       <td class="text-end text-success">${fmtNum(u.write)}</td>
       <td class="text-end text-danger">${fmtNum(u.delete)}</td>
+      <td class="text-end" style="color:#fd7e14">${fmtNum(u.rename)}</td>
       <td><button class="btn btn-sm btn-outline-secondary py-0" data-user="${esc(u.user)}" onclick="showUserDetail(this.dataset.user)">${t('btn.detail')}</button></td>
     </tr>`).join('');
 }
@@ -348,6 +355,7 @@ function buildUserDetailHtml(d) {
       <td class="text-end text-primary">${fmtNum(f.read)}</td>
       <td class="text-end text-success">${fmtNum(f.write)}</td>
       <td class="text-end text-danger">${fmtNum(f.delete)}</td>
+      <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td class="text-muted small">${fmtDate(f.lastAccess)}</td>
     </tr>`).join('');
 
@@ -378,9 +386,9 @@ function buildUserDetailHtml(d) {
         <div style="max-height:300px;overflow-y:auto">
           <table class="table table-sm table-hover">
             <thead class="table-light sticky-top">
-              <tr><th>#</th><th>${t('th.filename')}</th><th class="text-end">${t('th.total')}</th><th class="text-end">${t('th.read')}</th><th class="text-end">${t('th.write')}</th><th class="text-end">${t('th.delete')}</th><th>${t('th.lastAccess')}</th></tr>
+              <tr><th>#</th><th>${t('th.filename')}</th><th class="text-end">${t('th.total')}</th><th class="text-end">${t('th.read')}</th><th class="text-end">${t('th.write')}</th><th class="text-end">${t('th.delete')}</th><th class="text-end">${t('th.rename')}</th><th>${t('th.lastAccess')}</th></tr>
             </thead>
-            <tbody>${fileRows || `<tr><td colspan="7" class="text-muted text-center">${t('msg.noData')}</td></tr>`}</tbody>
+            <tbody>${fileRows || `<tr><td colspan="8" class="text-muted text-center">${t('msg.noData')}</td></tr>`}</tbody>
           </table>
         </div>
       </div>
@@ -862,9 +870,10 @@ async function loadSettings() {
   }
   loadRetentionPolicy();
   if (isAdmin()) {
-    ['usermgmtSettingsSection', 'alertsSettingsSection', 'auditLogSection']
+    ['usermgmtSettingsSection', 'recordingSettingsSection', 'alertsSettingsSection', 'auditLogSection']
       .forEach(id => document.getElementById(id)?.classList.remove('d-none'));
     loadUsersMgmt();
+    loadRecordingSettings();
     loadAlertSettings();
     loadAuditLog(1);
   } else {
@@ -968,7 +977,7 @@ function renderPathsList(configs) {
     const typeCheckboxes = EVENT_TYPES.map(et => {
       const checked = types.includes(et) ? 'checked' : '';
       const color = EVENT_TYPE_COLORS[et];
-      const label = t('type.' + et.toLowerCase());
+      const label = t(et === 'Delete' ? 'type.deleteRename' : 'type.' + et.toLowerCase());
       return `<div class="form-check form-check-inline mb-0">
         <input class="form-check-input" type="checkbox" id="et_${esc(p)}_${et}"
           ${checked} onchange="updatePathEventTypes(this.closest('[data-path]').dataset.path)">
@@ -1338,6 +1347,59 @@ async function changePasswordSelf() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ── Recording rules ───────────────────────────────────────────────
+const DEFAULT_EXCLUDE_PATTERNS = ['Thumbs.db', 'desktop.ini', '~$*', '*.tmp'];
+
+function showRecordingAlert(html, type = 'success') {
+  const el = document.getElementById('recordingAlert');
+  if (!el) return;
+  el.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show py-2 small">
+    ${html}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>`;
+}
+
+const linesOf = id => document.getElementById(id).value.split('\n').map(s => s.trim()).filter(Boolean);
+const setLines = (id, list) => { document.getElementById(id).value = (list || []).join('\n'); };
+
+async function loadRecordingSettings() {
+  try {
+    const s = await api('/api/settings/recording');
+    setLines('recExcludeFiles', s.excludeFilePatterns);
+    setLines('recExcludeUsers', s.excludeUsers);
+    setLines('recExcludeProcesses', s.excludeProcesses);
+    document.getElementById('recMergeReadMinutes').value = s.mergeReadMinutes;
+  } catch (e) {
+    showRecordingAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
+async function saveRecordingSettings() {
+  try {
+    const d = await api('/api/settings/recording', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        excludeFilePatterns: linesOf('recExcludeFiles'),
+        excludeUsers: linesOf('recExcludeUsers'),
+        excludeProcesses: linesOf('recExcludeProcesses'),
+        mergeReadMinutes: parseInt(document.getElementById('recMergeReadMinutes').value, 10) || 0
+      })
+    });
+    showRecordingAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`);
+    loadRecordingSettings();
+    loadAuditLog(1);
+  } catch (e) {
+    showRecordingAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
+// Adds the common temporary files to the list (not saved until "Save" is pressed)
+function addDefaultExcludePatterns() {
+  const current = linesOf('recExcludeFiles');
+  const lower = current.map(s => s.toLowerCase());
+  setLines('recExcludeFiles', [...current, ...DEFAULT_EXCLUDE_PATTERNS.filter(p => !lower.includes(p.toLowerCase()))]);
 }
 
 // ── Notifications ─────────────────────────────────────────────────

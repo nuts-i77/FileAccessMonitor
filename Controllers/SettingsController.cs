@@ -43,6 +43,38 @@ public class SettingsController : ControllerBase
         return Ok(new { dnsServer = server });
     }
 
+    // GET /api/settings/recording  — exclusions and read merging
+    [HttpGet("recording")]
+    public IActionResult GetRecording() => Ok(RecordingSettings.Load());
+
+    [HttpPut("recording")]
+    public async Task<IActionResult> PutRecording([FromBody] RecordingSettings req)
+    {
+        if (req.MergeReadMinutes < 0 || req.MergeReadMinutes > RecordingSettings.MaxMergeReadMinutes)
+            return BadRequest(new { error = Messages.Get("recording.invalidMinutes", RecordingSettings.MaxMergeReadMinutes) });
+
+        static List<string> Clean(IEnumerable<string>? items) =>
+            (items ?? []).Select(s => s.Trim()).Where(s => s.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        var settings = new RecordingSettings
+        {
+            ExcludeFilePatterns = Clean(req.ExcludeFilePatterns),
+            ExcludeUsers = Clean(req.ExcludeUsers),
+            ExcludeProcesses = Clean(req.ExcludeProcesses),
+            MergeReadMinutes = req.MergeReadMinutes,
+        };
+        if (new[] { settings.ExcludeFilePatterns, settings.ExcludeUsers, settings.ExcludeProcesses }
+            .Any(list => list.Count > 200 || list.Any(s => s.Length > 260)))
+            return BadRequest(new { error = Messages.Get("recording.tooMany") });
+
+        settings.Save();
+        await _audit.WriteAsync(HttpContext, "recording.update",
+            $"files=[{string.Join(", ", settings.ExcludeFilePatterns)}], users=[{string.Join(", ", settings.ExcludeUsers)}], " +
+            $"processes=[{string.Join(", ", settings.ExcludeProcesses)}], mergeReadMinutes={settings.MergeReadMinutes}");
+        return Ok(new { message = Messages.Get("recording.saved"), settings });
+    }
+
     [HttpPost("paths")]
     public async Task<IActionResult> AddPath([FromBody] PathRequest req)
     {
