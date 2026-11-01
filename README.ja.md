@@ -28,7 +28,7 @@ Windows ファイルサーバーの共有フォルダへのアクセス（読取
 新しいバージョンのインストーラーを実行すると、設定を引き継いだまま上書き更新します。インストール後は [3. 初回ログイン](#3-初回ログイン) に進んでください。
 
 > [!NOTE]
-> インストーラーはコード署名していないため、Windows SmartScreen の警告が表示されることがあります。**詳細情報** → **実行** で続行してください。ダウンロードしたファイルが正しいか確かめるには、`Get-FileHash <ファイル>` で求めたハッシュ値を、リリースページの `SHA256SUMS.txt` と照合してください。
+> インストーラーはコード署名していないため、Windows SmartScreen の警告が表示されることがあります。**詳細情報** → **実行** で続行してください。ダウンロードしたファイルが正しいか確かめる方法は「[ダウンロードしたファイルの検証](#ダウンロードしたファイルの検証)」を参照してください。
 
 ソースからビルドする場合は、以下の 1・2 の手順を行います。
 
@@ -209,17 +209,17 @@ GitHub Actions（`.github/workflows/ci.yml`）で push / Pull Request ごとに�
 .\restore-audit.ps1 -SharePaths "D:\Share"   # 監査設定を元に戻す場合
 ```
 
-## コード署名ポリシー
+## ダウンロードしたファイルの検証
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+リリースのファイルは、このリポジトリの[リリース用ワークフロー](.github/workflows/release.yml)が GitHub Actions 上でタグ付きのソースからビルドしています。各リリースには GitHub の[ビルド証明（artifact attestation）](https://docs.github.com/ja/actions/security-for-github-actions/using-artifact-attestations)が付いており、ファイルがこのワークフローでビルドされ、改ざんされていないことを確認できます。[GitHub CLI](https://cli.github.com/) で次のように実行してください。
 
-（[SignPath.io](https://about.signpath.io/) による無償のコード署名を利用しています。証明書は [SignPath Foundation](https://signpath.org/) が発行しています。）
+```powershell
+gh attestation verify FileAccessMonitor-Setup-<バージョン>.exe -R nuts-i77/FileAccessMonitor
+```
 
-- 署名するのは、このリポジトリの[リリース用ワークフロー](.github/workflows/release.yml)がタグ付きのソースからビルドしたファイル（`FileAccessMonitor.exe` とインストーラー `FileAccessMonitor-Setup-<バージョン>.exe`）だけです。
-- コミッター・レビュアー: [nuts-i77](https://github.com/nuts-i77)
-- 承認者: [nuts-i77](https://github.com/nuts-i77)
+GitHub CLI を使わない場合は、`Get-FileHash <ファイル>` の結果をリリースページの `SHA256SUMS.txt` と照合してください。
 
-### プライバシーポリシー
+## プライバシーポリシー
 
 本プログラムは、利用者またはインストール・運用する人が明示的に指定しない限り、他のネットワーク上のシステムに情報を送信しません。外部に送信するのは、管理者が設定した場合だけです。具体的には、設定タブで指定した Webhook URL・メールサーバーへの通知と、同じく設定タブで指定した DNS サーバーへの接続元 IP アドレスの逆引きです。
 

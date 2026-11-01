@@ -28,7 +28,7 @@ Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.
 When you run a newer installer, it upgrades the existing install and keeps your settings. Then continue with [3. First sign-in](#3-first-sign-in).
 
 > [!NOTE]
-> The installer is not code-signed, so Windows SmartScreen may show a warning. Choose **More info** → **Run anyway**. To verify the download, compare its hash with `SHA256SUMS.txt` on the release page by running `Get-FileHash <file>`.
+> The installer is not code-signed, so Windows SmartScreen may show a warning. Choose **More info** → **Run anyway**. To check that the download is genuine, see [Verifying downloads](#verifying-downloads).
 
 To build from source instead, follow steps 1 and 2.
 
@@ -216,15 +216,17 @@ If you installed from source:
 .\restore-audit.ps1 -SharePaths "D:\Share"   # to remove the audit settings as well
 ```
 
-## Code signing policy
+## Verifying downloads
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+The release files are built by this repository's [release workflow](.github/workflows/release.yml) on GitHub Actions from the tagged source. Each release includes a GitHub [build provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations), so you can check that a file was built there and has not been modified. With the [GitHub CLI](https://cli.github.com/), run:
 
-- Only files built by this repository's [release workflow](.github/workflows/release.yml) from the tagged source are signed: `FileAccessMonitor.exe` and the installer `FileAccessMonitor-Setup-<version>.exe`.
-- Committers and reviewers: [nuts-i77](https://github.com/nuts-i77)
-- Approvers: [nuts-i77](https://github.com/nuts-i77)
+```powershell
+gh attestation verify FileAccessMonitor-Setup-<version>.exe -R nuts-i77/FileAccessMonitor
+```
 
-### Privacy policy
+Without the GitHub CLI, compare the output of `Get-FileHash <file>` with `SHA256SUMS.txt` on the release page.
+
+## Privacy policy
 
 This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. It sends data to other systems only when an administrator configures it to: notifications go to the webhook URLs and mail servers set on the Settings tab, and reverse DNS lookups of client IP addresses go to the DNS servers set there.
 
