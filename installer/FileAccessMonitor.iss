@@ -44,7 +44,7 @@ en.PortCaption=Web GUI port
 en.PortDescription=Choose the TCP port for the web GUI.
 en.PortPrompt=Port (1-65535):
 en.PortInvalid=Enter a port number between 1 and 65535.
-en.FirewallTask=Allow the port through Windows Firewall (inbound TCP)
+en.FirewallTask=Allow FileAccessMonitor through Windows Firewall (inbound: the web GUI port, and port 8443 for agents)
 en.InstallingService=Registering and starting the service...
 en.ServiceFailed=Failed to register or start the service (exit code %1).%nSee the application log in C:\ProgramData\FileAccessMonitor\logs.
 en.OpenGui=Open the web GUI
@@ -59,7 +59,6 @@ en.ConnCaption=Monitoring server
 en.ConnDescription=Paste the connection string issued under Settings > Agents on the monitoring server. It is valid for 24 hours and can be used once.
 en.ConnPrompt=Connection string:
 en.ConnInvalid=Paste the connection string that starts with FAM1. from the monitoring server.
-en.AgentFirewallTask=Allow the agent port 8443 through Windows Firewall (needed when other file servers send records here)
 en.Enrolling=Registering with the monitoring server...
 en.EnrollFailed=Registration with the monitoring server failed:%n%n%1%nIssue a new connection string on the monitoring server and run the installer again.
 en.AgentFinishInfo=This server now sends its access records to the monitoring server. Set up auditing of the shared folders in an elevated PowerShell with:%npowershell -ExecutionPolicy Bypass -File "%1\scripts\setup-audit.ps1" -SharePaths "D:\Share"
@@ -67,7 +66,7 @@ ja.PortCaption=Web GUI のポート
 ja.PortDescription=Web GUI で使う TCP ポートを指定します。
 ja.PortPrompt=ポート番号 (1-65535):
 ja.PortInvalid=1 から 65535 までのポート番号を入力してください。
-ja.FirewallTask=Windows ファイアウォールでこのポートの受信を許可する (TCP)
+ja.FirewallTask=Windows ファイアウォールで FileAccessMonitor の受信を許可する（Web GUI のポートと、エージェント用ポート 8443）
 ja.InstallingService=サービスを登録・起動しています...
 ja.ServiceFailed=サービスの登録または起動に失敗しました (終了コード %1)。%nC:\ProgramData\FileAccessMonitor\logs のログを確認してください。
 ja.OpenGui=Web GUI を開く
@@ -82,14 +81,12 @@ ja.ConnCaption=監視サーバー
 ja.ConnDescription=監視サーバーの「設定 > エージェント」で発行した接続文字列を貼り付けてください。24 時間有効で、1 回だけ使えます。
 ja.ConnPrompt=接続文字列:
 ja.ConnInvalid=監視サーバーで発行した、FAM1. で始まる接続文字列を貼り付けてください。
-ja.AgentFirewallTask=Windows ファイアウォールでエージェント用ポート 8443 の受信を許可する（他のファイルサーバーから記録を受け取る場合）
 ja.Enrolling=監視サーバーに登録しています...
 ja.EnrollFailed=監視サーバーへの登録に失敗しました:%n%n%1%n監視サーバーで接続文字列を発行し直して、インストーラーをもう一度実行してください。
 ja.AgentFinishInfo=このサーバーのアクセス記録を監視サーバーに送るようになりました。共有フォルダの監査は、管理者 PowerShell で次を実行して設定してください。%npowershell -ExecutionPolicy Bypass -File "%1\scripts\setup-audit.ps1" -SharePaths "D:\Share"
 
 [Tasks]
 Name: "firewall"; Description: "{cm:FirewallTask}"; Check: IsFullRole
-Name: "agentfirewall"; Description: "{cm:AgentFirewallTask}"; Flags: unchecked; Check: IsFullRole
 
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Excludes: "*.pdb,web.config"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -333,11 +330,9 @@ begin
     DeleteFile(AgentConfigFile());
   WritePortSetting();
   WizardForm.StatusLabel.Caption := CustomMessage('InstallingService');
-  Args := '-Action Install -Port ' + GetPort('');
+  Args := '-Action Install';
   if WizardIsTaskSelected('firewall') then
     Args := Args + ' -Firewall';
-  if WizardIsTaskSelected('agentfirewall') then
-    Args := Args + ' -AgentFirewall';
   Code := RunServiceScript(Args);
   if Code <> 0 then
     MsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbError, MB_OK)

@@ -55,11 +55,11 @@ builder.Host.UseWindowsService(options =>
 var dbPath = Path.Combine(AppPaths.DataDir, "fileaccess.db");
 Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
 
-// HTTPS port for agents (only /api/agent/* is served there). Opened only once agents are in use
-// (one is registered, or an Admin turned the feature on by issuing a registration code), so a
-// standalone install listens on no port it does not need.
+// HTTPS port for agents (only /api/agent/* is served there, and only to registered agents or with
+// a registration code). Always open, so agents can be added without restarting; the firewall
+// decides whether file servers can reach it. "Agents:Enabled": false in settings.json turns it off.
 var agentPort = AgentEndpoint.Port(builder.Configuration);
-if (AgentEndpoint.InUse(builder.Configuration, dbPath) && AgentEndpoint.Initialize(Log.Logger) is { } agentCert)
+if (AgentEndpoint.Enabled(builder.Configuration) && AgentEndpoint.Initialize(Log.Logger) is { } agentCert)
     builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(agentPort, listen => listen.UseHttps(agentCert)));
 
 builder.Services.AddDbContext<AccessDbContext>(options =>

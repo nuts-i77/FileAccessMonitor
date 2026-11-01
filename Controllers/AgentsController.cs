@@ -33,9 +33,8 @@ public class AgentsController : ControllerBase
         var agents = await _db.Agents.OrderBy(a => a.Name).ToListAsync();
         return Ok(new
         {
-            // The agent port opens at startup once agents are in use; turning the feature on needs a restart
+            // The agent port opens at startup unless turned off in settings.json
             featureOn = AgentEndpoint.Active,
-            restartNeeded = !AgentEndpoint.Active && _config.GetValue("Agents:Enabled", false),
             endpointReady = AgentEndpoint.Certificate != null,
             port = AgentEndpoint.Port(_config),
             serverVersion = SettingsController.AppVersion,
@@ -47,20 +46,8 @@ public class AgentsController : ControllerBase
     [HttpPost("enrollment")]
     public async Task<IActionResult> CreateEnrollment()
     {
-        // First use: turn the feature on; the agent port opens when the service starts again
         if (!AgentEndpoint.Active)
-        {
-            if (!_config.GetValue("Agents:Enabled", false))
-            {
-                SettingsStore.Update(root => root[AgentEndpoint.EnabledKey] = new System.Text.Json.Nodes.JsonObject
-                {
-                    ["Enabled"] = true,
-                    ["Port"] = AgentEndpoint.Port(_config),
-                });
-                await _audit.WriteAsync(HttpContext, "agent.featureOn", $"port={AgentEndpoint.Port(_config)}");
-            }
-            return Conflict(new { error = Messages.Get("agents.restartNeeded", AgentEndpoint.Port(_config)), restartNeeded = true });
-        }
+            return Conflict(new { error = Messages.Get("agents.portOff") });
         if (AgentEndpoint.Certificate is not { } cert)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = Messages.Get("agents.noEndpoint") });
 

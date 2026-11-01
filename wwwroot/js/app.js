@@ -1157,9 +1157,7 @@ async function loadAgents() {
   try {
     const d = await api('/api/agents');
     showAgentUpdateBanner(d);
-    // The agent port opens only once agents are in use (turned on by the first registration code)
-    if (d.restartNeeded) showAgentsAlert(t('agents.restartPending', { p: d.port }), 'warning');
-    else if (!d.featureOn) showAgentsAlert(t('agents.featureOff', { p: d.port }), 'info');
+    if (!d.featureOn) showAgentsAlert(t('agents.featureOff', { p: d.port }), 'info');
     else if (!d.endpointReady) showAgentsAlert(t('agents.notReady'), 'warning');
     else document.getElementById('agentsAlert').innerHTML = '';
     // An agent that has not been in touch for 5 minutes is shown as offline
@@ -1205,9 +1203,6 @@ async function createEnrollment() {
     bootstrap.Modal.getOrCreateInstance(document.getElementById('enrollModal')).show();
     loadAuditLog(1);
   } catch (e) {
-    // First use turns the feature on and asks for a service restart: refresh the card's notice too
-    await loadAgents();
-    loadAuditLog(1);
     showAgentsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'warning');
   }
 }

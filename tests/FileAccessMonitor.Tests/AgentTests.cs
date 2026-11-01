@@ -47,32 +47,17 @@ public class AgentTests : IDisposable
     }
 
     [Fact]
-    public void Agent_port_opens_only_once_agents_are_in_use()
+    public void Agent_port_is_on_unless_turned_off()
     {
-        Directory.CreateDirectory(_dir);
-        var db = Path.Combine(_dir, "test.db");
-        var off = new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build();
-        var on = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Agents:Enabled"] = "true" }).Build();
+        static Microsoft.Extensions.Configuration.IConfiguration Config(params (string, string)[] values) =>
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                .AddInMemoryCollection(values.ToDictionary(v => v.Item1, v => (string?)v.Item2)).Build();
 
-        Assert.False(AgentEndpoint.InUse(off, db)); // no database yet
-        Assert.True(AgentEndpoint.InUse(on, db));   // turned on by the first registration code
-
-        void Sql(string sql)
-        {
-            using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db};Pooling=False");
-            c.Open();
-            using var cmd = c.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.ExecuteNonQuery();
-        }
-        Sql("CREATE TABLE Other (Id INTEGER)");
-        Assert.False(AgentEndpoint.InUse(off, db)); // older database without the table
-        Sql("CREATE TABLE Agents (Id TEXT)");
-        Assert.False(AgentEndpoint.InUse(off, db)); // no agent registered
-        Sql("INSERT INTO Agents VALUES ('a')");
-        Assert.True(AgentEndpoint.InUse(off, db));
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        Assert.True(AgentEndpoint.Enabled(Config()));
+        Assert.True(AgentEndpoint.Enabled(Config(("Agents:Enabled", "true")))); // written by v1.5
+        Assert.False(AgentEndpoint.Enabled(Config(("Agents:Enabled", "false"))));
+        Assert.Equal(8443, AgentEndpoint.Port(Config()));
+        Assert.Equal(9443, AgentEndpoint.Port(Config(("Agents:Port", "9443"))));
     }
 
     [Fact]

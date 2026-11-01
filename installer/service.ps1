@@ -6,19 +6,16 @@
 #>
 param(
     [Parameter(Mandatory = $true)] [ValidateSet('Install', 'Uninstall', 'Stop')] [string]$Action,
-    [int]$Port = 8080,
-    [switch]$Firewall,
-    # Monitoring server: also open the HTTPS port agents connect to
-    [int]$AgentPort = 8443,
-    [switch]$AgentFirewall
+    [switch]$Firewall
 )
 
 $ErrorActionPreference = 'Stop'
 $ServiceName    = 'FileAccessMonitor'
 $ServiceDisplay = 'File Access Monitor'
 $ServiceDesc    = 'Monitors and aggregates file access on shared directories.'
-$FirewallRule   = "$ServiceDisplay Web"   # same name as install-service.ps1
-$AgentRule      = "$ServiceDisplay Agents"
+$FirewallRule   = $ServiceDisplay   # same name as install-service.ps1
+# Port rules made by v1.5.1 and earlier (or by hand under these names); replaced by $FirewallRule
+$OldRules       = "$ServiceDisplay Web", "$ServiceDisplay Agents"
 $ExePath        = Join-Path $PSScriptRoot 'FileAccessMonitor.exe'
 
 function Stop-MonitorService {
@@ -30,16 +27,6 @@ function Stop-MonitorService {
     # The exe stays locked until the process has actually exited
     for ($i = 0; $i -lt 30 -and (Get-Process -Name $ServiceName -ErrorAction SilentlyContinue); $i++) {
         Start-Sleep -Seconds 1
-    }
-}
-
-function Set-PortRule([string]$Name, [int]$LocalPort, [bool]$Create) {
-    $rule = Get-NetFirewallRule -DisplayName $Name -ErrorAction SilentlyContinue
-    if ($rule) {
-        $rule | Set-NetFirewallRule -LocalPort $LocalPort   # the port may have changed
-    } elseif ($Create) {
-        New-NetFirewallRule -DisplayName $Name -Direction Inbound -Protocol TCP `
-                            -LocalPort $LocalPort -Action Allow -Profile Any | Out-Null
     }
 }
 
@@ -60,10 +47,18 @@ switch ($Action) {
                         -BinaryPathName $binPath -StartupType Automatic | Out-Null
         }
 
-        # An upgrade keeps a rule made earlier (by an earlier install or by hand), even when the
-        # task was not ticked this time; silent upgrades only remember the tasks of the last install
-        Set-PortRule $FirewallRule $Port $Firewall
-        Set-PortRule $AgentRule $AgentPort $AgentFirewall
+        # One rule for the program, so the web GUI port and the agent port are both covered, also
+        # after a port is changed. An upgrade keeps an earlier rule even when the task was not
+        # ticked this time (silent upgrades only remember the tasks of the last install).
+        $old = Get-NetFirewallRule -DisplayName $OldRules -ErrorAction SilentlyContinue
+        $rule = Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue
+        if ($rule) {
+            $rule | Set-NetFirewallApplicationFilter -Program $ExePath   # the install folder may have changed
+        } elseif ($Firewall -or $old) {
+            New-NetFirewallRule -DisplayName $FirewallRule -Direction Inbound -Protocol TCP `
+                                -Program $ExePath -Action Allow -Profile Any | Out-Null
+        }
+        if ($old) { $old | Remove-NetFirewallRule }
 
         Start-Service -Name $ServiceName
     }
@@ -73,7 +68,6 @@ switch ($Action) {
         if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
             sc.exe delete $ServiceName | Out-Null
         }
-        Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        Get-NetFirewallRule -DisplayName $AgentRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        Get-NetFirewallRule -DisplayName (@($FirewallRule) + $OldRules) -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     }
 }

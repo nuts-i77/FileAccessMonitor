@@ -13,35 +13,13 @@ public static class AgentEndpoint
 
     public static int Port(IConfiguration config) => config.GetValue("Agents:Port", DefaultPort);
 
-    // settings.json key turned on when an Admin first issues a registration code
-    public const string EnabledKey = "Agents";
-
-    // Agents are in use when the feature was turned on or an agent is registered (read before the
-    // database is set up, so straight from the file)
-    public static bool InUse(IConfiguration config, string dbPath)
-    {
-        if (config.GetValue("Agents:Enabled", false)) return true;
-        if (!File.Exists(dbPath)) return false;
-        try
-        {
-            using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'Agents'";
-            if ((long)command.ExecuteScalar()! == 0) return false;
-            command.CommandText = "SELECT EXISTS (SELECT 1 FROM Agents)";
-            return (long)command.ExecuteScalar()! == 1;
-        }
-        catch (Microsoft.Data.Sqlite.SqliteException)
-        {
-            return false;
-        }
-    }
+    // On unless "Agents": { "Enabled": false } is set in settings.json
+    public static bool Enabled(IConfiguration config) => config.GetValue("Agents:Enabled", true);
 
     // Set at startup; null when the certificate could not be created (e.g. not running elevated)
     public static X509Certificate2? Certificate { get; private set; }
 
-    // Whether this run set up the agent port (agents were in use when the service started)
+    // Whether this run set up the agent port
     public static bool Active { get; private set; }
 
     public static X509Certificate2? Initialize(Serilog.ILogger log)

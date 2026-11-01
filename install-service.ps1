@@ -59,12 +59,12 @@ $svc   = Get-Service -Name $ServiceName
 $color = if ($svc.Status -eq 'Running') { 'Green' } else { 'Red' }
 Write-Host "Service status: $($svc.Status)" -ForegroundColor $color
 
-# Firewall rule
-Write-Host "Adding firewall rule (TCP 8080)..."
-$fwRule = Get-NetFirewallRule -DisplayName "$ServiceDisplay Web" -ErrorAction SilentlyContinue
+# Firewall rule for the program (web GUI 8080 and agent port 8443)
+Write-Host "Adding firewall rule (FileAccessMonitor.exe)..."
+$fwRule = Get-NetFirewallRule -DisplayName $ServiceDisplay -ErrorAction SilentlyContinue
 if (-not $fwRule) {
-    New-NetFirewallRule -DisplayName "$ServiceDisplay Web" `
-        -Direction Inbound -Protocol TCP -LocalPort 8080 `
+    New-NetFirewallRule -DisplayName $ServiceDisplay `
+        -Direction Inbound -Protocol TCP -Program $ExePath `
         -Action Allow -Profile Any | Out-Null
     Write-Host "  -> Firewall rule added." -ForegroundColor Green
 } else {

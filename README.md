@@ -23,7 +23,7 @@ Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.
 
 - Installs to `C:\Program Files\FileAccessMonitor`
 - Registers and starts the `FileAccessMonitor` Windows service
-- Lets you choose the web GUI port (default 8080) and, optionally, adds a firewall rule for it
+- Lets you choose the web GUI port (default 8080) and, optionally, adds a firewall rule that allows FileAccessMonitor.exe (the web GUI port and the agent port 8443)
 
 When you run a newer installer, it upgrades the existing install and keeps your settings. Then continue with [3. First sign-in](#3-first-sign-in).
 
@@ -51,7 +51,7 @@ Copy `publish\` and `install-service.ps1` to the server, then run:
 This does two things:
 
 - Registers and starts a Windows service named `FileAccessMonitor`, with automatic startup
-- Adds a Windows Firewall inbound rule for TCP 8080
+- Adds a Windows Firewall inbound rule for FileAccessMonitor.exe (TCP 8080, and 8443 for agents)
 
 If WinRM is available, you can build and deploy from your development PC in one step:
 
@@ -95,8 +95,8 @@ wevtutil sl Security /ms:1073741824   # 1 GB
 
 One install can show the records of several file servers. Install FileAccessMonitor normally on the server that will show the web GUI (the monitoring server); on each other file server, install it as an **agent**, which only collects and sends.
 
-1. On the monitoring server, open TCP port **8443** (the agent port) in Windows Firewall. The installer can add the rule.
-2. Under **Settings → Agents**, choose **Issue registration code**. The first time, this turns the agent feature on: restart the service (`Restart-Service FileAccessMonitor`) so the agent port opens, and choose **Issue registration code** again. Until then, a standalone install does not listen on the agent port at all. If the file servers reach the monitoring server by another name or by IP address, change the address there and choose **Apply**. Copy the connection string; it is valid for 24 hours and can be used once.
+1. Make sure the file servers can reach the monitoring server on TCP port **8443** (the agent port). The monitoring server always listens on it, and the installer's firewall option allows it: the rule allows FileAccessMonitor.exe, so it covers both the web GUI port and the agent port.
+2. Under **Settings → Agents**, choose **Issue registration code**. If the file servers reach the monitoring server by another name or by IP address, change the address there and choose **Apply**. Copy the connection string; it is valid for 24 hours and can be used once.
 3. On the file server, run the installer, choose **Agent**, and paste the connection string. To turn an existing install into an agent, run in an elevated PowerShell:
 
    ```powershell
@@ -120,6 +120,18 @@ How it works and limits:
 - Alerts and notifications name the file server the accesses happened on.
 - Record times come from each file server's clock; keep the servers' clocks synchronized (NTP; domain members do this by default).
 - `FileAccessMonitor.exe unenroll` turns an agent back into a standalone install.
+
+To change the agent port:
+
+1. Add the following to `C:\ProgramData\FileAccessMonitor\settings.json` on the monitoring server. Keep the other settings in the file.
+
+   ```json
+   "Agents": { "Port": 9443 }
+   ```
+2. Restart the service with `Restart-Service FileAccessMonitor`. The firewall rule made by the installer allows the program, not a port, so it needs no change.
+3. Registered agents keep the old address. Issue a new connection string and, on each file server, run `FileAccessMonitor.exe enroll <connection string>` and restart the service.
+
+If you do not use agents and do not want the port open, set `"Agents": { "Enabled": false }` instead.
 
 ## Security
 

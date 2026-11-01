@@ -382,7 +382,7 @@ tbody tr:hover td { background: var(--surface2); }
         <table>
           <thead><tr><th>役割</th><th>判定</th><th>動くもの</th></tr></thead>
           <tbody>
-            <tr><td>1 台構成 / 監視サーバー</td><td><code>agent.json</code> がない</td><td>ローカル収集（<code>LocalRecordSink</code>）、Web GUI と API、DB、通知、エージェント用ポート（エージェント利用時のみ）、エージェント監視</td></tr>
+            <tr><td>1 台構成 / 監視サーバー</td><td><code>agent.json</code> がない</td><td>ローカル収集（<code>LocalRecordSink</code>）、Web GUI と API、DB、通知、エージェント用ポート、エージェント監視</td></tr>
             <tr><td>エージェント</td><td><code>%ProgramData%\FileAccessMonitor\agent.json</code> がある</td><td>収集（<code>RemoteRecordSink</code>）、送信（<code>AgentSender</code>）、指示の実行（<code>AgentJobRunner</code>）。Web GUI と DB はない（<code>AgentHost.RunAsync</code>）</td></tr>
           </tbody>
         </table>
@@ -566,7 +566,7 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
       <h2>エージェント用ポート</h2>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li>HTTPS、既定 <code>8443</code>（<code>Agents:Port</code>）。Kestrel に <code>ListenAnyIP</code> で追加</li>
-        <li>開くのは<strong style="color:var(--fg)">エージェントを使っているときだけ</strong>（<code>AgentEndpoint.InUse</code>: <code>Agents:Enabled</code> が true か、<code>Agents</code> テーブルに行がある。DB の構成前に SQLite を直接読んで判定）。初めて登録コードを発行しようとすると <code>Agents:Enabled</code> を書き込み、サービスの再起動を案内する</li>
+        <li>1 台構成 / 監視サーバーでは<strong style="color:var(--fg)">常に待ち受ける</strong>（エージェントを登録するときに再起動が要らないように）。ファイルサーバーから届くかはファイアウォールで決まる。<code>settings.json</code> の <code>"Agents": { "Enabled": false }</code> で開かない（<code>AgentEndpoint.Enabled</code>）。ポートの変更は <code>"Agents": { "Port": n }</code> と再起動。登録済みのエージェントは再登録が必要</li>
         <li>証明書は自己署名（<code>CN=FileAccessMonitor Agent Endpoint</code>、RSA 2048、有効期限 20 年）。初回に作成して <code>LocalMachine\My</code> に保存。エージェントは SHA-256 の指紋で固定するため認証局は不要</li>
         <li>このポートでは <code>/api/agent/*</code> だけを受け付け、<code>/api/agent/*</code> はこのポートでしか受け付けない（ミドルウェアで 404）</li>
       </ul>
@@ -685,7 +685,7 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
 
       <h3>エージェント管理 — <code>AgentsController</code> <span class="badge badge-admin">Admin 専用</span></h3>
       <div class="card">
-        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/agents</span><span class="endpoint-desc">一覧と状態（featureOn, restartNeeded, endpointReady, serverVersion）</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/agents</span><span class="endpoint-desc">一覧と状態（featureOn, endpointReady, port, serverVersion）</span></div>
         <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agents/enrollment</span><span class="endpoint-desc">登録コードの発行（初回は機能を有効にして 409 で再起動を案内）</span></div>
         <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agents/connection</span><span class="endpoint-desc">別のアドレスで接続文字列を作り直す</span></div>
         <div class="endpoint"><span class="badge badge-put">PUT</span><span class="endpoint-path">/api/agents/{id}/disabled</span><span class="endpoint-desc">無効化・有効化</span></div>
@@ -811,7 +811,7 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
 dotnet test tests/FileAccessMonitor.Tests</code></pre>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li>GitHub Actions: <code>ci.yml</code>（push / PR でビルド・テスト）、<code>release.yml</code>（<code>v*</code> タグでインストーラー・zip・SHA256SUMS を作って Release に公開。ビルド証明（artifact attestation）を付ける。SignPath の署名手順は変数設定時のみ動く）</li>
-        <li>インストーラー: 役割（1 台構成・監視サーバー / エージェント）、Web のポート、ファイアウォール（Web、エージェント用ポート）。エージェントは接続文字列を受け取って <code>enroll</code> を実行。サイレント: <code>/ROLE=agent /CONNECTION=FAM1.…</code></li>
+        <li>インストーラー: 役割（1 台構成・監視サーバー / エージェント）、Web のポート、ファイアウォール（FileAccessMonitor.exe を許可するプログラム単位の規則 1 つ。Web とエージェント用ポートの両方が対象。旧版のポート単位の規則「File Access Monitor Web / Agents」は更新時に置き換え。既存の規則は更新時に残し、削除はアンインストール時のみ）。エージェントは接続文字列を受け取って <code>enroll</code> を実行。サイレント: <code>/ROLE=agent /CONNECTION=FAM1.…</code></li>
       </ul>
     </section>
 
