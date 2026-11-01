@@ -7,19 +7,24 @@ using Microsoft.EntityFrameworkCore;
 namespace FileAccessMonitor.Controllers;
 
 // Files in a monitored folder that nobody read (or accessed at all) in a period. The folder is
-// scanned on disk, because files that were never accessed have no records. Admin only, since it
-// lists file names that the access records do not contain.
+// scanned on disk, because files that were never accessed have no records. As it lists file names
+// that the access records do not contain, only Admins and Viewers with a folder scope (inside it) may use it.
 [ApiController]
 [Route("api/unused-files")]
-[Authorize(Roles = "Admin")]
+[Authorize]
 public class UnusedFilesController : ControllerBase
 {
     internal const int MaxScannedFiles = 100_000;
     private const int MaxResults = 2_000;
 
     private readonly AccessDbContext _db;
+    private readonly UserScopeService _scopes;
 
-    public UnusedFilesController(AccessDbContext db) => _db = db;
+    public UnusedFilesController(AccessDbContext db, UserScopeService scopes)
+    {
+        _db = db;
+        _scopes = scopes;
+    }
 
     // GET /api/unused-files?folder=D:\Share\Video&days=90&criterion=read
     // days = 0: since the first record; criterion = read (not read) | any (not accessed at all)
@@ -35,6 +40,8 @@ public class UnusedFilesController : ControllerBase
         var (configs, _) = SettingsController.ReadSettingsDoc();
         if (!configs.Any(c => EventLogCollectorService.IsUnderPath(folder, c.Path)))
             return BadRequest(new { error = Messages.Get("path.notMonitored") });
+        if (!User.IsInRole("Admin") && !(_scopes.Get(User) is { } scope && AccessScope.Contains(scope, folder)))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = Messages.Get("scope.outside") });
         if (!Directory.Exists(folder))
             return BadRequest(new { error = Messages.Get("path.notFound", folder) });
 

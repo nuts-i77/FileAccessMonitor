@@ -69,7 +69,9 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByNameAsync(User.Identity!.Name!);
         if (user == null) return Unauthorized();
         var roles = await _userManager.GetRolesAsync(user);
-        return Ok(new { username = user.UserName, displayName = user.DisplayName, roles });
+        // Folders this user is limited to (empty = everything)
+        var scope = HttpContext.RequestServices.GetRequiredService<UserScopeService>().Get(User) ?? [];
+        return Ok(new { username = user.UserName, displayName = user.DisplayName, roles, scopePaths = scope });
     }
 
     // POST /api/auth/change-password

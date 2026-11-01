@@ -34,7 +34,7 @@
     <span id="reloadCountdown" class="text-white-50 small" style="min-width:40px"></span>
     <div class="dropdown d-none d-sm-inline-block">
       <button class="btn btn-sm btn-outline-light dropdown-toggle" data-bs-toggle="dropdown" id="navUserBtn">
-        <i class="bi bi-person me-1"></i><span id="navUserName"></span>
+        <i class="bi bi-person me-1"></i><span id="navUserName"></span><span id="navScopeBadge" class="badge bg-warning text-dark ms-1 d-none" data-i18n="scope.limited">範囲限定</span>
       </button>
       <ul class="dropdown-menu dropdown-menu-end">
         <li>
@@ -58,6 +58,8 @@
 </nav>
 
 <div class="container-fluid mt-3">
+
+  <div id="updateBanner"></div>
 
   <!-- Summary Cards -->
   <div class="row g-3 mb-3" id="summaryCards">
@@ -504,6 +506,7 @@
                     <th data-i18n="th.username">ユーザー名</th>
                     <th data-i18n="th.displayName">表示名</th>
                     <th style="width:150px" data-i18n="th.role">ロール</th>
+                    <th data-i18n="th.scope">閲覧範囲</th>
                     <th style="width:110px" data-i18n="th.actions">操作</th>
                   </tr>
                 </thead>
@@ -513,6 +516,27 @@
           </div>
         </div>
         <div id="usermgmtAlert" class="mt-2"></div>
+      </div>
+
+      <!-- App info and update check (Admin only) -->
+      <div class="col-12 d-none" id="appInfoSection">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-info-circle me-1"></i><span data-i18n="appinfo.title">アプリ情報</span>
+          </div>
+          <div class="card-body small">
+            <div class="mb-2"><span class="text-muted" data-i18n="app.version">バージョン:</span> <strong id="appVersion">-</strong></div>
+            <div class="mb-2"><span class="text-muted" data-i18n="app.latest">最新版:</span> <span id="appLatest">-</span></div>
+            <div class="form-check form-switch mb-1">
+              <input class="form-check-input" type="checkbox" id="appUpdateCheck" onchange="saveUpdateCheck(this.checked)">
+              <label class="form-check-label" for="appUpdateCheck" data-i18n="app.updateCheck">更新を確認する</label>
+            </div>
+            <div class="form-text mb-2" data-i18n="app.updateCheckHint">管理者が画面を開いたとき、1 日 1 回、ブラウザから GitHub に最新版を問い合わせます。ファイルサーバー自体は外部と通信しません。</div>
+            <button class="btn btn-outline-secondary btn-sm" onclick="checkForUpdate(true)">
+              <i class="bi bi-arrow-repeat me-1"></i><span data-i18n="app.checkNow">今すぐ確認</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Reverse DNS -->
@@ -781,6 +805,38 @@
         <button class="btn btn-link text-muted py-1" data-bs-dismiss="modal" data-i18n="btn.cancel">キャンセル</button>
         <button class="btn btn-primary btn-sm" id="createUserBtn" onclick="createUser()">
           <i class="bi bi-check-lg me-1"></i><span data-i18n="btn.create">作成</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Viewing Scope Modal -->
+<div class="modal fade" id="scopeModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-diagram-3 me-1"></i><span data-i18n="scope.title">閲覧範囲</span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-3"><span data-i18n="modal.resetTarget">対象:</span> <strong id="scopeUsername"></strong></p>
+        <div class="mb-3">
+          <label class="form-label small" for="scopePaths" data-i18n="scope.paths">閲覧できるフォルダ</label>
+          <textarea id="scopePaths" class="form-control form-control-sm font-monospace" rows="4"></textarea>
+          <div class="form-text" data-i18n="scope.pathsHint">1 行に 1 つ。このユーザーには、指定したフォルダ配下の記録だけが表示されます（CSV 出力・未使用ファイルを含む）。空にすると全体を表示します。</div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small" for="scopeNotifyEmail" data-i18n="scope.email">通知先メールアドレス（任意）</label>
+          <input type="email" id="scopeNotifyEmail" class="form-control form-control-sm">
+          <div class="form-text" data-i18n="scope.emailHint">指定すると、範囲内のフォルダで大量削除などを検知したときにこのアドレスにもメールします（通知が有効で、SMTP が設定されている場合）。しきい値は通知設定と同じです。</div>
+        </div>
+        <div id="scopeError" class="d-none text-danger small mt-2"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-link text-muted py-1" data-bs-dismiss="modal" data-i18n="btn.cancel">キャンセル</button>
+        <button class="btn btn-primary btn-sm" id="scopeSaveBtn" onclick="saveScope()">
+          <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
         </button>
       </div>
     </div>

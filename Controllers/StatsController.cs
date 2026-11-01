@@ -10,21 +10,25 @@ namespace FileAccessMonitor.Controllers;
 [Microsoft.AspNetCore.Authorization.Authorize]
 public class StatsController : ControllerBase
 {
-    private readonly AccessDbContext _db;
+    private readonly UserScopeService _scopes;
     private readonly AuditLog _audit;
+    private IQueryable<Models.AccessRecord>? _records;
 
-    public StatsController(AccessDbContext db, AuditLog audit)
+    public StatsController(UserScopeService scopes, AuditLog audit)
     {
-        _db = db;
+        _scopes = scopes;
         _audit = audit;
     }
+
+    // Records the signed-in user may see (limited to their folders when a scope is set)
+    private IQueryable<Models.AccessRecord> Records => _records ??= _scopes.Records(User);
 
     // GET /api/stats/summary?days=7
     [HttpGet("summary")]
     public async Task<IActionResult> Summary([FromQuery] int days = 7)
     {
         var since = DateTime.UtcNow.AddDays(-days);
-        var q = _db.AccessRecords.Where(r => r.AccessTime >= since);
+        var q = Records.Where(r => r.AccessTime >= since);
 
         var total = await q.CountAsync();
         var uniqueFiles = await q.Where(r => !r.IsFolder).Select(r => r.FilePath).Distinct().CountAsync();
@@ -44,7 +48,7 @@ public class StatsController : ControllerBase
         [FromQuery] string? accessType = null)
     {
         var since = DateTime.UtcNow.AddDays(-days);
-        var q = _db.AccessRecords.Where(r => r.AccessTime >= since && !r.IsFolder);
+        var q = Records.Where(r => r.AccessTime >= since && !r.IsFolder);
         if (!string.IsNullOrEmpty(accessType))
             q = q.Where(r => r.AccessType == accessType);
 
@@ -80,7 +84,7 @@ public class StatsController : ControllerBase
         [FromQuery] string? accessType = null)
     {
         var since = DateTime.UtcNow.AddDays(-days);
-        var q = _db.AccessRecords.Where(r => r.AccessTime >= since);
+        var q = Records.Where(r => r.AccessTime >= since);
         if (!string.IsNullOrEmpty(accessType))
             q = q.Where(r => r.AccessType == accessType);
 
@@ -116,7 +120,7 @@ public class StatsController : ControllerBase
         [FromQuery] int days = 30)
     {
         var since = DateTime.UtcNow.AddDays(-days);
-        var q = _db.AccessRecords.Where(r => r.FilePath == path && r.AccessTime >= since);
+        var q = Records.Where(r => r.FilePath == path && r.AccessTime >= since);
 
         var byUser = await q.GroupBy(r => r.UserName)
             .Select(g => new { User = g.Key, Count = g.Count() })
@@ -145,7 +149,7 @@ public class StatsController : ControllerBase
         [FromQuery] int days = 30)
     {
         var since = DateTime.UtcNow.AddDays(-days);
-        var q = _db.AccessRecords.Where(r =>
+        var q = Records.Where(r =>
             r.FolderPath == path && r.AccessTime >= since);
 
         var byUser = await q.GroupBy(r => r.UserName)
@@ -180,7 +184,7 @@ public class StatsController : ControllerBase
     {
         var since = DateTime.UtcNow.AddDays(-days);
 
-        var rows = await _db.AccessRecords
+        var rows = await Records
             .Where(r => r.AccessTime >= since)
             .GroupBy(r => new { r.AccessTime.Date, r.AccessTime.Hour, r.AccessType })
             .Select(g => new { g.Key.Date, g.Key.Hour, g.Key.AccessType, Count = g.Count() })
@@ -221,7 +225,7 @@ public class StatsController : ControllerBase
     {
         var since = DateTime.UtcNow.AddDays(-days);
 
-        var result = await _db.AccessRecords
+        var result = await Records
             .Where(r => r.AccessTime >= since)
             .GroupBy(r => r.UserName)
             .Select(g => new
@@ -247,7 +251,7 @@ public class StatsController : ControllerBase
         [FromQuery] int days = 30)
     {
         var since = DateTime.UtcNow.AddDays(-days);
-        var q = _db.AccessRecords.Where(r => r.UserName == user && r.AccessTime >= since);
+        var q = Records.Where(r => r.UserName == user && r.AccessTime >= since);
 
         var byType = await q.GroupBy(r => r.AccessType)
             .Select(g => new { Type = g.Key, Count = g.Count() })
@@ -288,8 +292,8 @@ public class StatsController : ControllerBase
         if (pageSize < 1 || pageSize > 500) pageSize = 50;
         if (page < 1) page = 1;
 
-        var total = await _db.AccessRecords.CountAsync();
-        var items = await _db.AccessRecords
+        var total = await Records.CountAsync();
+        var items = await Records
             .OrderByDescending(r => r.AccessTime)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -310,7 +314,7 @@ public class StatsController : ControllerBase
         if (pageSize < 1 || pageSize > 500) pageSize = 50;
         if (page < 1) page = 1;
 
-        var query = ApplyFilter(_db.AccessRecords.AsQueryable(), filter);
+        var query = ApplyFilter(Records.AsQueryable(), filter);
 
         var total = await query.CountAsync();
         var items = await query
@@ -333,7 +337,7 @@ public class StatsController : ControllerBase
     [HttpGet("search/export")]
     public async Task Export([FromQuery] SearchFilter filter, [FromQuery] int tzOffsetMinutes = 0)
     {
-        var query = ApplyFilter(_db.AccessRecords.AsNoTracking(), filter)
+        var query = ApplyFilter(Records.AsNoTracking(), filter)
             .OrderByDescending(r => r.AccessTime)
             .Take(MaxExportRows);
 

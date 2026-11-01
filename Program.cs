@@ -134,6 +134,7 @@ builder.Services.AddSingleton<DnsResolverService>();
 builder.Services.AddSingleton<AuditLog>();
 builder.Services.AddSingleton<AlertService>();
 builder.Services.AddScoped<TokenService>();
+builder.Services.AddScoped<UserScopeService>();
 builder.Services.AddHostedService<EventLogCollectorService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RetentionService>());
@@ -232,6 +233,12 @@ CREATE TABLE IF NOT EXISTS ""CollectorStates"" (
     ""Key"" TEXT NOT NULL CONSTRAINT ""PK_CollectorStates"" PRIMARY KEY,
     ""Value"" TEXT NOT NULL)");
 
+    // v5: per-user folder scopes
+    await db.Database.ExecuteSqlRawAsync(@"
+CREATE TABLE IF NOT EXISTS ""UserScopes"" (
+    ""UserId"" TEXT NOT NULL CONSTRAINT ""PK_UserScopes"" PRIMARY KEY,
+    ""Paths"" TEXT NOT NULL, ""NotifyEmail"" TEXT NULL)");
+
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     foreach (var role in new[] { "Admin", "Viewer" })
     {
@@ -270,14 +277,15 @@ CREATE TABLE IF NOT EXISTS ""CollectorStates"" (
 var dnsResolver = app.Services.GetRequiredService<DnsResolverService>();
 dnsResolver.SetDnsServer(app.Configuration["DnsServer"]);
 
-// Security headers. All assets are served locally, so the CSP only allows 'self'.
+// Security headers. All assets are served locally, so the CSP only allows 'self', plus the GitHub
+// API, which an Admin's browser asks for the latest release (update check, can be turned off).
 // 'unsafe-inline' is still needed for the inline onclick handlers / style attributes in the UI.
 app.Use(async (context, next) =>
 {
     var headers = context.Response.Headers;
     headers["Content-Security-Policy"] =
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; " +
+        "img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.github.com; object-src 'none'; " +
         "base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
     headers["X-Content-Type-Options"] = "nosniff";
     headers["X-Frame-Options"] = "DENY";

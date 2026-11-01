@@ -34,7 +34,20 @@ public class AlertSettings
     [JsonIgnore] public AlertRules Rules => new(DeleteThreshold, WriteThreshold, WindowMinutes, CooldownMinutes, ReadThreshold);
     [JsonIgnore] public bool HasWebhook => !string.IsNullOrWhiteSpace(WebhookUrl);
     [JsonIgnore] public bool HasMail => !string.IsNullOrWhiteSpace(SmtpHost) && !string.IsNullOrWhiteSpace(MailTo);
+
+    // The same SMTP settings, mailing only the given address (for a folder's own recipient)
+    public AlertSettings ForRecipient(string mailTo)
+    {
+        var copy = (AlertSettings)MemberwiseClone();
+        copy.WebhookUrl = null;
+        copy.MailTo = mailTo;
+        return copy;
+    }
 }
+
+// A Viewer with a folder scope and a notification address: gets the alerts about their folders,
+// detected from the records inside the scope only.
+public sealed record AlertRecipient(string UserName, IReadOnlyList<string> Paths, string Email, AlertDetector Detector);
 
 public record ChannelResult(string Channel, bool Ok, string? Error);
 
@@ -48,15 +61,20 @@ public class AlertService
     private readonly AuditLog _audit;
     private readonly ILogger<AlertService> _logger;
 
+    private readonly IServiceScopeFactory _scopeFactory;
+
     private volatile AlertSettings _settings;
     private AlertDetector _detector;
+    // Rebuilt when scopes change (ReloadRecipients); null until first needed
+    private volatile IReadOnlyList<AlertRecipient>? _recipients;
 
     public AlertService(IDataProtectionProvider dataProtection, IHttpClientFactory http,
-        AuditLog audit, ILogger<AlertService> logger)
+        AuditLog audit, IServiceScopeFactory scopeFactory, ILogger<AlertService> logger)
     {
         _protector = dataProtection.CreateProtector("FileAccessMonitor.Alerts");
         _http = http;
         _audit = audit;
+        _scopeFactory = scopeFactory;
         _logger = logger;
         _settings = Load();
         _detector = new AlertDetector(_settings.Rules);
@@ -75,6 +93,45 @@ public class AlertService
 
         foreach (var alert in _detector.Process(records))
             _ = Task.Run(() => SendAlertAsync(alert, settings));
+
+        // Folder recipients: mail only, so SMTP must be set up
+        if (string.IsNullOrWhiteSpace(settings.SmtpHost)) return;
+        var recipients = _recipients ??= LoadRecipients(settings.Rules);
+        foreach (var r in recipients)
+        {
+            if (r.Detector.Rules != settings.Rules)
+            {
+                ReloadRecipients();
+                return; // rules changed: new detectors start with the next batch
+            }
+            var inScope = records.Where(rec => AccessScope.Contains(r.Paths, rec.FilePath)).ToList();
+            if (inScope.Count == 0) continue;
+            foreach (var alert in r.Detector.Process(inScope))
+                _ = Task.Run(() => SendAlertAsync(alert, settings.ForRecipient(r.Email), r.UserName));
+        }
+    }
+
+    // Called after a user's scope changes
+    public void ReloadRecipients() => _recipients = null;
+
+    private IReadOnlyList<AlertRecipient> LoadRecipients(AlertRules rules)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<Data.AccessDbContext>();
+            var names = db.Users.ToDictionary(u => u.Id, u => u.UserName ?? u.Id);
+            return db.UserScopes.Where(s => s.NotifyEmail != null).AsEnumerable()
+                .Select(s => new AlertRecipient(names.GetValueOrDefault(s.UserId, s.UserId),
+                    AccessScope.ParsePaths(s.Paths), s.NotifyEmail!, new AlertDetector(rules)))
+                .Where(r => r.Paths.Count > 0)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not load folder alert recipients.");
+            return [];
+        }
     }
 
     // Settings with decrypted secrets. The controller masks them before returning to the browser.
@@ -118,14 +175,16 @@ public class AlertService
         await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent", $"type=gap, channels=[{channels}]");
     }
 
-    private async Task SendAlertAsync(Alert alert, AlertSettings s)
+    // recipient: the folder recipient's user name, or null for the main notification channels
+    private async Task SendAlertAsync(Alert alert, AlertSettings s, string? recipient = null)
     {
         var (title, body) = Format(alert, s.Language);
-        _logger.LogWarning("Alert: {Title} {User} {Count}", title, alert.UserName, alert.Count);
+        _logger.LogWarning("Alert: {Title} {User} {Count} {Recipient}", title, alert.UserName, alert.Count, recipient);
         var results = await SendAsync(s, title, body, alert);
         var channels = string.Join(", ", results.Select(r => $"{r.Channel}={(r.Ok ? "ok" : "failed")}"));
         await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent",
-            $"type={alert.AccessType}, user={alert.UserName}, count={alert.Count}, channels=[{channels}]");
+            $"type={alert.AccessType}, user={alert.UserName}, count={alert.Count}, channels=[{channels}]"
+            + (recipient == null ? "" : $", folderRecipient={recipient}"));
     }
 
     internal static (string Title, string Body) Format(Alert a, string lang)

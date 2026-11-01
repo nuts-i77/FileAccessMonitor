@@ -43,6 +43,29 @@ public class SettingsController : ControllerBase
         return Ok(new { dnsServer = server });
     }
 
+    // GET /api/settings/app  — running version, and whether Admins' browsers check GitHub for updates
+    [HttpGet("app")]
+    public IActionResult GetApp() => Ok(new { version = AppVersion, updateCheck = UpdateCheckEnabled() });
+
+    [HttpPut("app")]
+    public async Task<IActionResult> PutApp([FromBody] AppSettingsRequest req)
+    {
+        SettingsStore.Update(root => root["UpdateCheck"] = req.UpdateCheck);
+        await _audit.WriteAsync(HttpContext, "app.updateCheck", $"enabled={req.UpdateCheck}");
+        return Ok(new { version = AppVersion, updateCheck = req.UpdateCheck });
+    }
+
+    // "1.3.0" from the informational version ("1.3.0+<commit>"); "0.0.0" for local builds
+    internal static readonly string AppVersion =
+        (typeof(SettingsController).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute)?.InformationalVersion
+            .Split('+')[0] ?? "0.0.0";
+
+    // On by default
+    private static bool UpdateCheckEnabled() =>
+        SettingsStore.Load()["UpdateCheck"] is not JsonValue v || !v.TryGetValue<bool>(out var b) || b;
+
     // GET /api/settings/recording  — exclusions and read merging
     [HttpGet("recording")]
     public IActionResult GetRecording() => Ok(RecordingSettings.Load());
@@ -229,3 +252,4 @@ public record PathConfig(string Path, string[] EventTypes);
 public record PathRequest(string Path, string[]? EventTypes = null);
 public record EventTypesRequest(string Path, string[] EventTypes);
 public record DnsRequest(string? DnsServer);
+public record AppSettingsRequest(bool UpdateCheck);

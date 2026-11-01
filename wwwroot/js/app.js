@@ -808,8 +808,8 @@ async function loadUnusedTab() {
   const list = document.getElementById('unusedFolderList');
   if (list.dataset.loaded) return;
   try {
-    const d = await api('/api/settings');
-    const paths = (d.pathConfigs || []).map(c => c.path);
+    // A Viewer with a scope may only look inside it (and cannot read the settings)
+    const paths = isAdmin() ? ((await api('/api/settings')).pathConfigs || []).map(c => c.path) : myScope;
     list.innerHTML = paths.map(p => `<option value="${esc(p)}">`).join('');
     list.dataset.loaded = '1';
     const input = document.getElementById('unusedFolder');
@@ -938,6 +938,103 @@ function unusedFoldersTable(d) {
   </table>`;
 }
 
+// ── Update check (Admin only) ─────────────────────────────────────
+// The Admin's browser asks GitHub for the latest release at most once a day; the file server
+// itself never connects out. Turned off under Settings → App info.
+const RELEASES_API = 'https://api.github.com/repos/nuts-i77/FileAccessMonitor/releases/latest';
+const UPDATE_CACHE_KEY = 'fam_update';
+const UPDATE_DISMISSED_KEY = 'fam_update_dismissed';
+let appInfo = null;
+
+// Browser storage may be unavailable (private mode etc.); the check then simply runs again
+function readStore(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
+function writeStore(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ } }
+
+// "v1.10.0" > "1.9.2"; non-numeric parts count as 0
+function isNewerVersion(latest, current) {
+  const parse = v => String(v).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const a = parse(latest), b = parse(current);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return false;
+}
+
+async function loadAppInfo() {
+  try {
+    appInfo = await api('/api/settings/app');
+  } catch { return; }
+  document.getElementById('appVersion').textContent =
+    appInfo.version === '0.0.0' ? t('app.devBuild') : `v${appInfo.version}`;
+  document.getElementById('appUpdateCheck').checked = appInfo.updateCheck;
+  showLatest(readStore(UPDATE_CACHE_KEY));
+}
+
+function showLatest(cache) {
+  const el = document.getElementById('appLatest');
+  if (!el) return;
+  if (!cache?.latest) { el.textContent = '-'; return; }
+  el.innerHTML = `<a href="${esc(cache.url)}" target="_blank" rel="noopener">${esc(cache.latest)}</a>
+    <span class="text-muted">(${t('app.checkedAt', { d: fmtDate(new Date(cache.checkedAt).toISOString()) })})</span>`;
+}
+
+async function checkForUpdate(force = false) {
+  if (!appInfo) await loadAppInfo();
+  if (!appInfo || (!appInfo.updateCheck && !force)) return;
+
+  let cache = readStore(UPDATE_CACHE_KEY);
+  if (force || !cache || Date.now() - cache.checkedAt > 24 * 3600 * 1000) {
+    try {
+      const res = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const r = await res.json();
+      cache = { latest: r.tag_name, url: r.html_url, checkedAt: Date.now() };
+      writeStore(UPDATE_CACHE_KEY, cache);
+    } catch (e) {
+      if (force) showSettingsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${t('app.checkFailed', { e: esc(e.message) })}`, 'warning');
+      return;
+    }
+  }
+  showLatest(cache);
+  showUpdateBanner(cache);
+}
+
+function showUpdateBanner(cache) {
+  const el = document.getElementById('updateBanner');
+  const current = appInfo?.version;
+  // Local builds (0.0.0) have no version to compare
+  if (!el || !cache?.latest || !current || current === '0.0.0'
+      || !isNewerVersion(cache.latest, current) || readStore(UPDATE_DISMISSED_KEY) === cache.latest) {
+    if (el) el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `<div class="alert alert-info py-2 small d-flex align-items-center gap-2 flex-wrap">
+    <i class="bi bi-arrow-up-circle"></i>
+    <span>${t('app.updateAvailable', { latest: esc(cache.latest), current: esc('v' + current) })}</span>
+    <a href="${esc(cache.url)}" target="_blank" rel="noopener" class="alert-link">${t('app.releaseNotes')}</a>
+    <button class="btn btn-sm btn-link ms-auto py-0" onclick="dismissUpdate('${esc(cache.latest)}')">${t('app.dismiss')}</button>
+  </div>`;
+}
+
+function dismissUpdate(version) {
+  writeStore(UPDATE_DISMISSED_KEY, version);
+  document.getElementById('updateBanner').innerHTML = '';
+}
+
+async function saveUpdateCheck(enabled) {
+  try {
+    appInfo = await api('/api/settings/app', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updateCheck: enabled })
+    });
+    if (enabled) checkForUpdate(); else document.getElementById('updateBanner').innerHTML = '';
+    loadAuditLog(1);
+  } catch (e) {
+    showSettingsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
 // ── Tab switching ─────────────────────────────────────────────────
 function switchTab(tab, el) {
   document.querySelectorAll('[id^="tab-"]').forEach(tp => tp.classList.add('d-none'));
@@ -1023,9 +1120,10 @@ async function loadSettings() {
   }
   loadRetentionPolicy();
   if (isAdmin()) {
-    ['usermgmtSettingsSection', 'recordingSettingsSection', 'alertsSettingsSection', 'auditLogSection']
+    ['usermgmtSettingsSection', 'appInfoSection', 'recordingSettingsSection', 'alertsSettingsSection', 'auditLogSection']
       .forEach(id => document.getElementById(id)?.classList.remove('d-none'));
     loadUsersMgmt();
+    loadAppInfo();
     loadRecordingSettings();
     loadAlertSettings();
     loadAuditLog(1);
@@ -1302,11 +1400,63 @@ function isAdmin() {
   return getUser()?.roles?.includes('Admin') === true;
 }
 
+let usersCache = [];
+
+// Admins always see everything; a Viewer sees everything unless folders are assigned
+function scopeCell(u, role) {
+  if (role === 'Admin') return `<td class="text-muted small">${t('scope.all')}</td>`;
+  const paths = u.scopePaths || [];
+  const summary = paths.length
+    ? paths.map(p => `<div class="font-monospace text-break">${esc(p)}</div>`).join('')
+    : `<span class="text-muted">${t('scope.all')}</span>`;
+  const mail = u.notifyEmail ? `<div class="text-muted"><i class="bi bi-envelope me-1"></i>${esc(u.notifyEmail)}</div>` : '';
+  return `<td class="small">
+    <div class="d-flex align-items-start gap-2">
+      <div class="flex-grow-1">${summary}${mail}</div>
+      <button class="btn btn-sm btn-outline-secondary py-0" title="${t('scope.edit')}" onclick="showScopeEditor('${esc(u.id)}')"><i class="bi bi-pencil"></i></button>
+    </div>
+  </td>`;
+}
+
+function showScopeEditor(id) {
+  const u = usersCache.find(x => x.id === id);
+  if (!u) return;
+  document.getElementById('scopeModal').dataset.userId = id;
+  document.getElementById('scopeUsername').textContent = u.username;
+  document.getElementById('scopePaths').value = (u.scopePaths || []).join('\n');
+  document.getElementById('scopeNotifyEmail').value = u.notifyEmail || '';
+  document.getElementById('scopeError').classList.add('d-none');
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('scopeModal')).show();
+}
+
+async function saveScope() {
+  const modal = document.getElementById('scopeModal');
+  const err = document.getElementById('scopeError');
+  try {
+    const d = await api(`/api/users/${encodeURIComponent(modal.dataset.userId)}/scope`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paths: document.getElementById('scopePaths').value.split('\n').map(s => s.trim()).filter(Boolean),
+        notifyEmail: document.getElementById('scopeNotifyEmail').value.trim()
+      })
+    });
+    bootstrap.Modal.getInstance(modal)?.hide();
+    showUsermgmtAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`);
+    loadUsersMgmt();
+    loadAuditLog(1);
+  } catch (e) {
+    err.textContent = e.message;
+    err.classList.remove('d-none');
+  }
+}
+
 async function loadUsersMgmt() {
   const tbody = document.getElementById('usermgmtTableBody');
-  tbody.innerHTML = '<tr><td colspan="4" class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></td></tr>';
   try {
     const users = await api('/api/users');
+    usersCache = users;
     const me = getUser();
     tbody.innerHTML = users.map(u => {
       const role = u.roles?.[0] || '';
@@ -1320,6 +1470,7 @@ async function loadUsersMgmt() {
             <option value="Viewer" ${role === 'Viewer' ? 'selected' : ''}>Viewer</option>
           </select>
         </td>
+        ${scopeCell(u, role)}
         <td>
           <div class="d-flex gap-1">
             <button class="btn btn-sm btn-outline-secondary py-0" onclick="showResetPassword('${esc(u.id)}', '${esc(u.username)}')">
@@ -1329,9 +1480,9 @@ async function loadUsersMgmt() {
           </div>
         </td>
       </tr>`;
-    }).join('') || `<tr><td colspan="4" class="text-muted text-center py-3">${t('msg.noUsers')}</td></tr>`;
+    }).join('') || `<tr><td colspan="5" class="text-muted text-center py-3">${t('msg.noUsers')}</td></tr>`;
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="4" class="text-danger small p-3"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-danger small p-3"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -1726,17 +1877,31 @@ if (_user) {
 }
 
 // Restore tab from URL hash on page load (survives F5)
-const VALID_TABS = ['dashboard', 'files', 'folders', 'users', 'recent', 'search', 'settings'];
-if (isAdmin()) {
-  document.getElementById('navUnused')?.classList.remove('d-none');
-  VALID_TABS.push('unused');
-}
-const hashTab = location.hash.slice(1);
-const startTab = VALID_TABS.includes(hashTab) ? hashTab : 'dashboard';
-const startLink = document.querySelector(`[data-tab="${startTab}"]`);
-if (startLink) {
-  switchTab(startTab, startLink);
-  loadSummary();
-} else {
-  loadAll();
-}
+// Folders the signed-in Viewer is limited to (empty = everything); read from the server each
+// time, so a scope changed by an Admin applies without signing in again
+let myScope = [];
+
+(async () => {
+  try { myScope = (await api('/api/auth/me')).scopePaths || []; } catch { /* keep defaults */ }
+  if (myScope.length) {
+    const badge = document.getElementById('navScopeBadge');
+    badge.classList.remove('d-none');
+    badge.title = myScope.join('\n');
+  }
+
+  const VALID_TABS = ['dashboard', 'files', 'folders', 'users', 'recent', 'search', 'settings'];
+  if (isAdmin() || myScope.length) {
+    document.getElementById('navUnused')?.classList.remove('d-none');
+    VALID_TABS.push('unused');
+  }
+  if (isAdmin()) checkForUpdate();
+  const hashTab = location.hash.slice(1);
+  const startTab = VALID_TABS.includes(hashTab) ? hashTab : 'dashboard';
+  const startLink = document.querySelector(`[data-tab="${startTab}"]`);
+  if (startLink) {
+    switchTab(startTab, startLink);
+    loadSummary();
+  } else {
+    loadAll();
+  }
+})();
