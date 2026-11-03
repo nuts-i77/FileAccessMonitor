@@ -204,7 +204,9 @@ public class AgentOutbox
 
     public void Remove(string path)
     {
-        var length = new FileInfo(path).Length;
+        var file = new FileInfo(path);
+        if (!file.Exists) return; // already removed (for example by a second agent process)
+        var length = file.Length;
         File.Delete(path);
         lock (_lock) _bytes -= length;
     }

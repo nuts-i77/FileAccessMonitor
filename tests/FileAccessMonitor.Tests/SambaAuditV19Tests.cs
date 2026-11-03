@@ -66,14 +66,34 @@ public class SambaAuditV19Tests : IDisposable
     }
 
     [Theory]
-    [InlineData("create_file|fail (No such file or directory)|0x120089|file|open|/srv/share/docs/desktop.ini")] // probe of a missing file
     [InlineData("create_file|fail (Device or resource busy)|0x12019f|file|open|/srv/share/docs/a.txt")]
     [InlineData("create_file|fail|0x120089|file|open|/srv/share/docs/a.txt")]                                    // no reason given
+    [InlineData("create_file|fail (Success)|0x120089|file|open|/srv/share/docs/a.txt")]                          // stale errno
     [InlineData("create_file|fail (Permission denied)|0x100080|file|open|/srv/share/docs/a.txt")]                // attributes only
-    [InlineData("unlinkat|fail (No such file or directory)|/srv/share/docs/a.txt")]
     [InlineData("renameat|fail (File exists)|/srv/share/docs/a.txt|/srv/share/docs/b.txt")]
     public void Other_failures_are_ignored(string rest) =>
         Assert.Null(AuditInterpreter.Interpret(AuditLine.Parse(Prefix + rest)!));
+
+    // Samba 4.19 / 4.23 refuse most accesses with their own NT access check and log the stale
+    // errno: "No such file or directory" for a file that is there. That is a refusal when the
+    // path exists; a probe of a really missing file (desktop.ini) is not.
+    [Theory]
+    [InlineData("create_file|fail (No such file or directory)|0x120089|file|open|/srv/share/docs/a.txt", "Read")]
+    [InlineData("create_file|fail (No such file or directory)|0x12019f|file|open|/srv/share/docs/a.txt", "Write")]
+    [InlineData("unlinkat|fail (No such file or directory)|/srv/share/docs/a.txt", "Delete")]
+    [InlineData("renameat|fail (No such file or directory)|/srv/share/docs/a.txt|/srv/share/docs/b.txt", "Rename")]
+    public void No_such_file_is_a_refusal_only_when_the_file_exists(string rest, string type)
+    {
+        var access = AuditInterpreter.Interpret(AuditLine.Parse(Prefix + rest)!)!;
+        Assert.Equal((type, true, true), (access.Type, access.Denied, access.OnlyIfExists));
+
+        var collector = Collector(["Read", "Write", "Delete"]);
+        collector.PathExists = _ => false;
+        Assert.Null(collector.ToRecord(Prefix + rest, Time));
+        collector.PathExists = path => path == "/srv/share/docs/a.txt";
+        var record = collector.ToRecord(Prefix + rest, Time)!;
+        Assert.Equal((type, true), (record.AccessType, record.Denied));
+    }
 
     [Theory]
     [InlineData("create_file|ok|0x12019f|file|create|/srv/share/docs/new.txt", "Create")]

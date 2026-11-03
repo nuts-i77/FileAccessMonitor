@@ -56,7 +56,9 @@ public record AuditLine(string User, string ClientIp, string ClientMachine, stri
 }
 
 // The error texts (strerror, in the language smbd runs in) of a refused access: EACCES and EPERM.
-// Every other failure (no such file, busy, ...) is not a refusal.
+// Samba refuses most accesses with its own NT access check, which leaves a stale errno behind: such
+// lines say "No such file or directory" (ENOENT) although the file is there. They count as refused
+// when the path exists (the collector checks); other failures (busy, ...) are not refusals.
 public static class SambaErrno
 {
     private static readonly string[] DeniedTexts =
@@ -65,17 +67,28 @@ public static class SambaErrno
         "許可がありません", "許可されていない操作です", // Japanese glibc
     ];
 
+    private static readonly string[] NoEntryTexts =
+    [
+        "No such file or directory",
+        "そのようなファイルやディレクトリはありません", // Japanese glibc
+    ];
+
     // status: "fail (Permission denied)"
     public static bool IsDenied(string status) =>
         status.StartsWith("fail", StringComparison.Ordinal) && DeniedTexts.Any(t => status.Contains(t, StringComparison.OrdinalIgnoreCase));
+
+    // status: "fail (No such file or directory)": refused if the path exists
+    public static bool IsDeniedIfExists(string status) =>
+        status.StartsWith("fail", StringComparison.Ordinal) && NoEntryTexts.Any(t => status.Contains(t, StringComparison.OrdinalIgnoreCase));
 }
 
 // What an audit line means for the access records. Type is empty when the line only shows that
 // the path is a folder (opened as one without reading or writing data), which is remembered so
 // that its later deletion is recorded as a folder's. Denied: the access was refused. NewPath: where
 // a renamed or moved file went. Detail: what a permission change was (null when not known).
+// OnlyIfExists: a refusal reported as "no such file" (see SambaErrno), recorded only when the path exists.
 public record AuditAccess(string Path, string Type, bool IsFolder, string? NewPath = null, bool Denied = false,
-    string? Detail = null);
+    string? Detail = null, bool OnlyIfExists = false);
 
 public static class AuditInterpreter
 {
@@ -85,9 +98,14 @@ public static class AuditInterpreter
     public static AuditAccess? Interpret(AuditLine line)
     {
         // A failed operation matters only when the access was refused
-        var denied = !line.Ok;
-        if (denied && !SambaErrno.IsDenied(line.Status)) return null;
+        if (line.Ok || SambaErrno.IsDenied(line.Status)) return Interpret(line, denied: !line.Ok);
+        return SambaErrno.IsDeniedIfExists(line.Status) && Interpret(line, denied: true) is { } access
+            ? access with { OnlyIfExists = true }
+            : null;
+    }
 
+    private static AuditAccess? Interpret(AuditLine line, bool denied)
+    {
         switch (line.Operation)
         {
             case "create_file":
@@ -181,6 +199,9 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
     private (string Path, HashSet<string> EventTypes)[] _paths = [];
     private RecordingRules _rules = new(new RecordingSettings());
     private DateTime _settingsTime = DateTime.MinValue;
+
+    // Tests replace it: their paths are Linux paths that do not exist where the tests run
+    internal Func<string, bool> PathExists { get; set; } = path => File.Exists(path) || Directory.Exists(path);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -318,6 +339,8 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
 
         if (_rules.IsExcludedFile(NameOf(path)) || _rules.IsExcludedUser(line.User)) return null;
         if (access.Denied && !_rules.Settings.RecordDenied) return null;
+        // Reported as "no such file": a refusal only if it is there (otherwise it really was missing)
+        if (access.OnlyIfExists && !PathExists(path)) return null;
         var eventTypes = matched != default ? matched.EventTypes : null;
         // As on Windows: creating goes with writing, renaming with deleting
         if (eventTypes != null && !eventTypes.Contains(AccessTypes.EventTypeOf(access.Type))) return null;
