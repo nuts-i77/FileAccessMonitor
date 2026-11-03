@@ -84,13 +84,20 @@ public class SambaPlatform(ILogger<SambaPlatform> logger) : IAgentPlatform
                 targets = targets.Where(s => !others.Any(o => SharesFor(shares, o).Contains(s))).ToList();
             }
 
-            var changed = targets.Where(s => config.IsAudited(s) != on).ToList();
-            foreach (var share in changed)
+            var before = config.ToString();
+            if (on)
             {
-                if (on) config.EnableAudit(share, Samba.Is414OrLater());
-                else config.DisableAudit(share);
+                // Also for shares that are audited already: a block written by an earlier version is
+                // replaced by one with the current operations (refused accesses, permission changes)
+                var options = new AuditOptions(RecordingSettings.Load().RecordDenied, SambaOps.Available());
+                var samba414 = Samba.Is414OrLater();
+                foreach (var share in targets) config.EnableAudit(share, samba414, options);
             }
-            if (changed.Count > 0) Samba.Save(config, logger);
+            else
+            {
+                foreach (var share in targets.Where(config.IsAudited)) config.DisableAudit(share);
+            }
+            if (config.ToString() != before) Samba.Save(config, logger);
             logger.LogInformation("Samba auditing {State} for shares: {Shares}.", on ? "on" : "off", string.Join(", ", targets));
             var result = AgentJobRunner.AuditResult(targets.Count, []);
             result["kind"] = "samba"; // the monitoring server words its message for shares, not SACLs

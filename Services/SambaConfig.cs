@@ -41,7 +41,7 @@ public class SambaConfigText
         && Enumerable.Range(s.Start, s.End - s.Start).Any(i => _lines[i].Trim() == Begin);
 
     // Adds the audit settings to a share. samba414: Samba 4.14 or later names the operations *at.
-    public void EnableAudit(string share, bool samba414)
+    public void EnableAudit(string share, bool samba414, AuditOptions? options = null)
     {
         DisableAudit(share); // start from the share as configured by its owner
         var (_, start, end) = Find(share);
@@ -58,19 +58,41 @@ public class SambaConfigText
                 && (IsKey(m, "vfs objects") || IsKey(m, "vfs object") || Key(m).StartsWith("full_audit:")))
                 _lines[i] = DisabledPrefix + _lines[i];
         }
-        var ops = samba414 ? "create_file renameat unlinkat" : "create_file rename unlink rmdir";
+        var (successOps, failureOps) = AuditOps(samba414, options ?? AuditOptions.Default);
         _lines.InsertRange(start + 1,
         [
             Begin,
             $"\tvfs objects = {string.Join(' ', modules)}",
             $"\tfull_audit:prefix = {Prefix}",
-            $"\tfull_audit:success = {ops}",
-            "\tfull_audit:failure = none",
+            $"\tfull_audit:success = {successOps}",
+            $"\tfull_audit:failure = {failureOps}",
             "\tfull_audit:facility = local5",
             "\tfull_audit:priority = notice",
             "\tfull_audit:syslog = true",
             End,
         ]);
+    }
+
+    // The operations to log. Success: what happened (create_file also tells how a file was opened,
+    // and fset_nt_acl is a permission change). Failure: refused accesses, when asked for; the
+    // parser keeps only EACCES / EPERM. An operation the installed full_audit module does not know
+    // makes smbd log everything ("Could not find opname"), so with the module's op names known,
+    // others are left out.
+    internal static (string Success, string Failure) AuditOps(bool samba414, AuditOptions options)
+    {
+        var success = samba414 ? new List<string> { "create_file", "renameat", "unlinkat" } : ["create_file", "rename", "unlink", "rmdir"];
+        success.Add("fset_nt_acl");
+        var failure = options.RecordDenied
+            ? (samba414 ? new List<string> { "create_file", "unlinkat", "renameat" } : ["create_file", "unlink", "rename", "rmdir"])
+            : [];
+        // Without the module's op list only the operations Samba has always had are used
+        if (options.AvailableOps == null) success.Remove("fset_nt_acl");
+        else
+        {
+            success.RemoveAll(o => !options.AvailableOps.Contains(o));
+            failure.RemoveAll(o => !options.AvailableOps.Contains(o));
+        }
+        return (string.Join(' ', success), failure.Count == 0 ? "none" : string.Join(' ', failure));
     }
 
     public void DisableAudit(string share)
@@ -136,4 +158,58 @@ public class SambaConfigText
     private static bool IsSpecial(string name) =>
         name.Equals("global", StringComparison.OrdinalIgnoreCase) || name.Equals("homes", StringComparison.OrdinalIgnoreCase)
         || name.Equals("printers", StringComparison.OrdinalIgnoreCase) || name.Equals("print$", StringComparison.OrdinalIgnoreCase);
+}
+
+// What to log besides the basics. RecordDenied: refused accesses (the failure list).
+// AvailableOps: the operation names the installed full_audit module knows (null = not known).
+public record AuditOptions(bool RecordDenied, IReadOnlySet<string>? AvailableOps)
+{
+    public static readonly AuditOptions Default = new(false, null);
+}
+
+// The operation names of the installed full_audit module, read from the module file: its table of
+// names is plain NUL-delimited text.
+public static class SambaOps
+{
+    private static readonly Regex OpName = new(@"^[a-z][a-z0-9_]{2,40}$");
+
+    // Where the module usually is, when smbd does not say ("smbd -b": MODULESDIR)
+    private static readonly string[] Fallbacks =
+    [
+        "/usr/lib64/samba/vfs/full_audit.so",                  // Rocky, RHEL, Alma, Fedora
+        "/usr/lib/x86_64-linux-gnu/samba/vfs/full_audit.so",   // Debian, Ubuntu
+        "/usr/lib/aarch64-linux-gnu/samba/vfs/full_audit.so",
+        "/usr/lib/samba/vfs/full_audit.so",
+    ];
+
+    public static IReadOnlySet<string>? Available()
+    {
+        try
+        {
+            var modules = Regex.Match(Samba.Run("smbd", "-b").Output, @"MODULESDIR:\s*(\S+)") is { Success: true } m
+                ? Path.Combine(m.Groups[1].Value, "vfs", "full_audit.so") : null;
+            var file = new[] { modules }.Concat(Fallbacks).FirstOrDefault(f => f != null && File.Exists(f));
+            return file == null ? null : Available(File.ReadAllBytes(file));
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    // Every NUL-delimited lower-case identifier in the module; null when there are none (not a module)
+    public static IReadOnlySet<string>? Available(byte[] module)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var start = 0;
+        for (var i = 0; i <= module.Length; i++)
+        {
+            if (i < module.Length && module[i] != 0) continue;
+            if (i - start is >= 3 and <= 41)
+            {
+                var text = System.Text.Encoding.ASCII.GetString(module, start, i - start);
+                if (OpName.IsMatch(text)) names.Add(text);
+            }
+            start = i + 1;
+        }
+        return names.Count == 0 ? null : names;
+    }
 }

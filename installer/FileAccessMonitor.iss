@@ -2,6 +2,8 @@
 ;   ISCC.exe /DAppVersion=1.2.3 installer\FileAccessMonitor.iss
 ; Silent install:
 ;   FileAccessMonitor-Setup-x.y.z.exe /VERYSILENT /SUPPRESSMSGBOXES /TASKS=firewall /PORT=8080
+; HTTPS for the web GUI (self-signed certificate): a new install uses it, an upgrade keeps its setting;
+; silent installs can force either with /HTTPS=1 or /HTTPS=0
 ; Silent install of a monitoring server that does not collect on itself: add /ROLE=monitor
 ; Silent install as an agent (connection string from Settings > Agents on the monitoring server):
 ;   FileAccessMonitor-Setup-x.y.z.exe /VERYSILENT /SUPPRESSMSGBOXES /ROLE=agent /CONNECTION=FAM1.xxxx
@@ -45,6 +47,10 @@ en.PortCaption=Web GUI port
 en.PortDescription=Choose the TCP port for the web GUI.
 en.PortPrompt=Port (1-65535):
 en.PortInvalid=Enter a port number between 1 and 65535.
+en.HttpsCaption=Secure connection
+en.HttpsDescription=Choose how the web GUI is served.
+en.HttpsCheck=Use HTTPS for the web GUI (self-signed certificate). Browsers show a warning once; your own certificate can be set later with: FileAccessMonitor.exe web-https on --pfx file.pfx --pfx-password password
+en.HttpsFinishNote=The web GUI uses HTTPS with a self-signed certificate:%n%1%nThe browser warns about the certificate the first time; choose to continue to the site.
 en.FirewallTask=Allow FileAccessMonitor through Windows Firewall (inbound: the web GUI port, and port 8443 for agents)
 en.InstallingService=Registering and starting the service...
 en.ServiceFailed=Failed to register or start the service (exit code %1).%nSee the application log in C:\ProgramData\FileAccessMonitor\logs.
@@ -68,6 +74,10 @@ ja.PortCaption=Web GUI のポート
 ja.PortDescription=Web GUI で使う TCP ポートを指定します。
 ja.PortPrompt=ポート番号 (1-65535):
 ja.PortInvalid=1 から 65535 までのポート番号を入力してください。
+ja.HttpsCaption=安全な接続
+ja.HttpsDescription=Web GUI の配信方法を選んでください。
+ja.HttpsCheck=Web GUI に HTTPS を使う（自己署名証明書）。ブラウザーには初回のみ警告が表示されます。お持ちの証明書は後から次のコマンドで設定できます: FileAccessMonitor.exe web-https on --pfx file.pfx --pfx-password password
+ja.HttpsFinishNote=Web GUI は自己署名証明書の HTTPS で提供されます:%n%1%n初回はブラウザーが証明書について警告するので、サイトへの接続を続行してください。
 ja.FirewallTask=Windows ファイアウォールで FileAccessMonitor の受信を許可する（Web GUI のポートと、エージェント用ポート 8443）
 ja.InstallingService=サービスを登録・起動しています...
 ja.ServiceFailed=サービスの登録または起動に失敗しました (終了コード %1)。%nC:\ProgramData\FileAccessMonitor\logs のログを確認してください。
@@ -104,7 +114,7 @@ Source: "..\README.ja.md"; DestDir: "{app}"; Flags: ignoreversion
 Type: files; Name: "{app}\appsettings.Production.json"
 
 [Run]
-Filename: "http://localhost:{code:GetPort}/"; Description: "{cm:OpenGui}"; Flags: postinstall shellexec nowait skipifsilent; Check: IsFullRole
+Filename: "{code:GetGuiUrl}"; Description: "{cm:OpenGui}"; Flags: postinstall shellexec nowait skipifsilent; Check: IsFullRole
 Filename: "{sys}\notepad.exe"; Parameters: """{code:GetPasswordFile}"""; Description: "{cm:ShowPassword}"; Flags: postinstall nowait skipifsilent unchecked; Check: ShowPasswordOption
 
 [UninstallRun]
@@ -115,6 +125,7 @@ var
   RolePage: TInputOptionWizardPage;
   ConnPage: TInputQueryWizardPage;
   PortPage: TInputQueryWizardPage;
+  HttpsPage: TInputOptionWizardPage;
   PreviousPort: String;
   PreviousRole: String;
 
@@ -179,6 +190,60 @@ end;
 function GetPort(Param: String): String;
 begin
   Result := Trim(PortPage.Values[0]);
+end;
+
+// The web GUI setting in settings.json ("Web": { "Https": { "Enabled": ... } }, written by
+// "FileAccessMonitor.exe web-https"): 1 = on, 0 = off, -1 = not set (a version before 1.9)
+function HttpsInSettings(): Integer;
+var
+  Content: AnsiString;
+  Text: String;
+  P: Integer;
+begin
+  Result := -1;
+  if LoadStringFromFile(DataDir() + '\settings.json', Content) then
+  begin
+    Text := Lowercase(String(Content));
+    P := Pos('"https"', Text);
+    if P > 0 then
+    begin
+      if Pos('"enabled": true', Copy(Text, P, 120)) > 0 then
+        Result := 1
+      else
+        Result := 0;
+    end;
+  end;
+end;
+
+// What the box offers: the current setting; a new install uses HTTPS, an upgrade of an install made
+// before the option existed keeps HTTP (bookmarks and reverse proxies keep working)
+function DefaultHttps(): Boolean;
+var
+  Setting: Integer;
+begin
+  Setting := HttpsInSettings();
+  if Setting >= 0 then
+    Result := Setting = 1
+  else if GetPreviousData('Https', '') <> '' then
+    Result := GetPreviousData('Https', '') = '1'
+  else
+    Result := GetPreviousData('Port', '') = '';
+end;
+
+function UseHttps(): Boolean;
+begin
+  if HttpsPage <> nil then
+    Result := HttpsPage.Values[0]
+  else
+    Result := DefaultHttps();
+end;
+
+function GetGuiUrl(Param: String): String;
+begin
+  if UseHttps() then
+    Result := 'https://localhost:' + GetPort('') + '/'
+  else
+    Result := 'http://localhost:' + GetPort('') + '/';
 end;
 
 function GetConnection(): String;
@@ -251,6 +316,16 @@ begin
   PortPage.Add(CustomMessage('PortPrompt'), False);
   // Silent installs can pass /PORT=nnnn
   PortPage.Values[0] := ExpandConstant('{param:PORT|' + PreviousPort + '}');
+
+  HttpsPage := CreateInputOptionPage(PortPage.ID, CustomMessage('HttpsCaption'), CustomMessage('HttpsDescription'), '', False, False);
+  HttpsPage.Add(CustomMessage('HttpsCheck'));
+  // Silent installs can pass /HTTPS=1 or /HTTPS=0
+  if ExpandConstant('{param:HTTPS|}') = '1' then
+    HttpsPage.Values[0] := True
+  else if ExpandConstant('{param:HTTPS|}') = '0' then
+    HttpsPage.Values[0] := False
+  else
+    HttpsPage.Values[0] := DefaultHttps();
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -258,13 +333,17 @@ begin
   Result := False;
   if PageID = ConnPage.ID then
     Result := not IsAgentRole()
-  else if PageID = PortPage.ID then
+  else if (PageID = PortPage.ID) or (PageID = HttpsPage.ID) then
     Result := IsAgentRole();
 end;
 
 procedure RegisterPreviousData(PreviousDataKey: Integer);
 begin
   SetPreviousData(PreviousDataKey, 'Port', GetPort(''));
+  if UseHttps() then
+    SetPreviousData(PreviousDataKey, 'Https', '1')
+  else
+    SetPreviousData(PreviousDataKey, 'Https', '0');
   if IsAgentRole() then
     SetPreviousData(PreviousDataKey, 'Role', 'agent')
   else if IsMonitorOnlyRole() then
@@ -363,6 +442,12 @@ begin
     Exec(ExpandConstant('{app}\{#AppExe}'), 'local-collection off', '', SW_HIDE, ewWaitUntilTerminated, Code)
   else
     Exec(ExpandConstant('{app}\{#AppExe}'), 'local-collection on', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  // HTTPS for the web GUI (read when the service starts). When it is on already it is left alone,
+  // so a certificate of the administrator's own (web-https on --pfx) is not replaced.
+  if UseHttps() and (HttpsInSettings() <> 1) then
+    Exec(ExpandConstant('{app}\{#AppExe}'), 'web-https on', '', SW_HIDE, ewWaitUntilTerminated, Code)
+  else if (not UseHttps()) and (HttpsInSettings() = 1) then
+    Exec(ExpandConstant('{app}\{#AppExe}'), 'web-https off', '', SW_HIDE, ewWaitUntilTerminated, Code);
   WizardForm.StatusLabel.Caption := CustomMessage('InstallingService');
   Args := '-Action Install';
   if WizardIsTaskSelected('firewall') then
@@ -392,7 +477,12 @@ begin
     if IsAgentRole() then
       WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('AgentFinishInfo'), [ExpandConstant('{app}')])
     else
+    begin
       WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('FinishInfo'), [GetPasswordFile('')]);
+      if UseHttps() then
+        WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
+          FmtMessage(CustomMessage('HttpsFinishNote'), [GetGuiUrl('')]);
+    end;
   end;
 end;
 

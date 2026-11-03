@@ -121,5 +121,11 @@ if ($TailLog) {
     }
 }
 
+# The web GUI is served over HTTPS when "web-https" is on (new installs; an upgrade keeps its setting)
+$scheme = Invoke-Command -Session $session -ScriptBlock {
+    param($Dir)
+    if ((& "$Dir\FileAccessMonitor.exe" web-https status 2>$null | Select-Object -First 1) -eq 'on') { 'https' } else { 'http' }
+} -ArgumentList $targetDir
+
 Remove-PSSession $session
-Write-Host "`nDeploy complete. Web GUI: http://${ServerIP}:8080" -ForegroundColor Green
+Write-Host "`nDeploy complete. Web GUI: ${scheme}://${ServerIP}:8080" -ForegroundColor Green

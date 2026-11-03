@@ -15,6 +15,8 @@ if [ -f "$DATA_DIR/agent.json" ]; then
 fi
 if [ ! -f "$DATA_DIR/settings.json" ]; then
     /opt/fileaccessmonitor/FileAccessMonitor local-collection off >/dev/null
+    # A new install serves the web GUI over HTTPS (self-signed certificate); upgrades keep their setting
+    /opt/fileaccessmonitor/FileAccessMonitor web-https on >/dev/null
 elif ! grep -q '"LocalCollection": false' "$DATA_DIR/settings.json" && [ ! -f "$DROPIN_DIR/collect.conf" ]; then
     # Records and settings from a tar.gz install that collected on this machine: keep doing so (as root)
     mkdir -p "$DROPIN_DIR"
@@ -36,4 +38,8 @@ else
     fileaccessmonitor-server || true
     echo "Open TCP 8080 and 8443 in the firewall if it is on. To also record this machine's Samba accesses:"
     echo "  sudo fileaccessmonitor-server --collect"
+    if [ -f "$DATA_DIR/settings.json" ] && grep -q '"Https"' "$DATA_DIR/settings.json"; then
+        echo "The web GUI is at https://<this machine>:8080 (self-signed certificate: the browser warns once)."
+        echo "To use HTTP instead: sudo fileaccessmonitor-server --https off"
+    fi
 fi

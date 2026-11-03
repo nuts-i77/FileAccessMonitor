@@ -54,6 +54,13 @@ if (args.Length > 0 && args[0] == "local-collection")
     Console.WriteLine($"Collection on this server: {args[1]}. Restart the service to apply.");
     return;
 }
+// "web-https on|off|status [--pfx file --pfx-password pw] [--redirect-port n]": HTTPS for the web GUI
+// (also run by the installers); takes effect when the service starts
+if (args.Length > 0 && args[0] == "web-https")
+{
+    Environment.ExitCode = WebTls.RunCommand(args, Console.Out, Console.Error);
+    return;
+}
 // Registered as an agent: collect and send only, no web GUI or database
 if (AgentConfig.Exists)
 {
@@ -85,6 +92,30 @@ ServerConfigService.LocalCollects = builder.Configuration.GetValue(ServerConfigS
 
 var dbPath = Path.Combine(AppPaths.DataDir, "fileaccess.db");
 Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+
+// HTTPS for the web GUI (settings.json Web:Https): the web port serves TLS instead of HTTP. When the
+// certificate cannot be loaded the GUI stays on HTTP, so it is never unreachable. The stored URL
+// keeps "http://" (the installers and fileaccessmonitor-server --port write it); the scheme is
+// replaced here.
+var webPort = 0;
+var webRedirectPort = 0;
+var webHttps = WebTlsSettings.Load();
+if (webHttps.Enabled && WebTls.Initialize(webHttps, Log.Logger) is { } webCert)
+{
+    var webUrl = builder.Configuration["Kestrel:Endpoints:Http:Url"] ?? "http://0.0.0.0:8080";
+    webPort = WebTls.PortOf(webUrl) ?? 0;
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Kestrel:Endpoints:Http:Url"] = WebTls.ToHttps(webUrl),
+    });
+    builder.WebHost.ConfigureKestrel(options => options.ConfigureHttpsDefaults(https => https.ServerCertificate = webCert));
+    // An optional plain HTTP port that sends browsers to the HTTPS one (old http:// bookmarks)
+    if (webHttps.RedirectPort > 0 && webHttps.RedirectPort != webPort)
+    {
+        webRedirectPort = webHttps.RedirectPort;
+        builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(webRedirectPort));
+    }
+}
 
 // HTTPS port for agents (only /api/agent/* is served there, and only to registered agents or with
 // a registration code). Always open, so agents can be added without restarting; the firewall
@@ -158,11 +189,7 @@ builder.Services.AddAuthentication(options =>
 // Encrypts alert secrets (webhook URL, SMTP password) stored in settings.json. On Windows the keys
 // are themselves encrypted with the machine's DPAPI; on Linux they are protected by the data
 // folder being readable by the service account only.
-var dataProtection = builder.Services.AddDataProtection()
-    .SetApplicationName("FileAccessMonitor")
-    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(AppPaths.DataDir, "keys")));
-if (OperatingSystem.IsWindows())
-    dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
+DataProtectionSetup.Configure(builder.Services.AddDataProtection());
 
 // Behind a reverse proxy, take the client IP (for the operation log) from X-Forwarded-For,
 // but only from the proxies listed in ReverseProxy:KnownProxies.
@@ -389,6 +416,19 @@ app.Use(async (context, next) =>
     headers["Referrer-Policy"] = "no-referrer";
     await next();
 });
+
+// The plain HTTP redirect port (Web:Https:RedirectPort) only sends browsers to the HTTPS web port
+if (webRedirectPort > 0)
+{
+    app.Use(async (context, next) =>
+    {
+        if (context.Connection.LocalPort != webRedirectPort) { await next(); return; }
+        var host = context.Request.Host.Host;
+        context.Response.StatusCode = StatusCodes.Status308PermanentRedirect;
+        context.Response.Headers.Location =
+            $"https://{(host.Contains(':') ? $"[{host}]" : host)}:{webPort}{context.Request.Path}{context.Request.QueryString}";
+    });
+}
 
 // The agent port serves the agent API only, and the agent API is served on that port only
 app.Use(async (context, next) =>

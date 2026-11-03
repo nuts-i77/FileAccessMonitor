@@ -157,6 +157,84 @@ public class SambaTests : IDisposable
         Assert.False(config.IsAudited("share"));
     }
 
+    private static readonly IReadOnlySet<string> Ops414 = new HashSet<string>
+        { "create_file", "renameat", "unlinkat", "fset_nt_acl", "fchmod", "fchown", "sys_acl_set_fd", "mkdirat" };
+
+    [Fact]
+    public void Audit_options_add_refused_accesses_and_permission_changes()
+    {
+        var config = new SambaConfigText(Conf);
+        config.EnableAudit("share", samba414: true, new AuditOptions(RecordDenied: true, Ops414));
+        var text = config.ToString();
+        Assert.Contains("\tfull_audit:success = create_file renameat unlinkat fset_nt_acl\n", text);
+        Assert.Contains("\tfull_audit:failure = create_file unlinkat renameat\n", text);
+
+        // Before Samba 4.14 the operations have their old names
+        var old = new SambaConfigText(Conf);
+        old.EnableAudit("share", samba414: false, new AuditOptions(true, new HashSet<string> { "create_file", "rename", "unlink", "rmdir", "fset_nt_acl" }));
+        Assert.Contains("\tfull_audit:success = create_file rename unlink rmdir fset_nt_acl\n", old.ToString());
+        Assert.Contains("\tfull_audit:failure = create_file unlink rename rmdir\n", old.ToString());
+    }
+
+    [Fact]
+    public void Audit_without_denied_records_logs_no_failures()
+    {
+        var config = new SambaConfigText(Conf);
+        config.EnableAudit("share", samba414: true, new AuditOptions(RecordDenied: false, Ops414));
+        Assert.Contains("\tfull_audit:failure = none\n", config.ToString());
+    }
+
+    [Fact]
+    public void Operations_the_module_does_not_know_are_left_out()
+    {
+        // An unknown name makes smbd log everything, so a module without fset_nt_acl gets no permission auditing
+        var config = new SambaConfigText(Conf);
+        config.EnableAudit("share", samba414: true, new AuditOptions(true, new HashSet<string> { "create_file", "renameat", "unlinkat" }));
+        Assert.Contains("\tfull_audit:success = create_file renameat unlinkat\n", config.ToString());
+
+        // Module not readable: the basic operations only
+        var unknown = new SambaConfigText(Conf);
+        unknown.EnableAudit("share", samba414: true, new AuditOptions(true, null));
+        Assert.Contains("\tfull_audit:success = create_file renameat unlinkat\n", unknown.ToString());
+        Assert.Contains("\tfull_audit:failure = create_file unlinkat renameat\n", unknown.ToString());
+    }
+
+    [Fact]
+    public void An_audit_block_of_the_previous_version_is_replaced_when_auditing_is_applied_again()
+    {
+        var config = new SambaConfigText(Conf);
+        config.EnableAudit("share", samba414: true); // as 1.8 wrote it: no failure operations, no permission changes
+        Assert.Contains("\tfull_audit:failure = none\n", config.ToString());
+
+        config.EnableAudit("share", samba414: true, new AuditOptions(true, Ops414));
+        var text = config.ToString();
+        Assert.Contains("\tfull_audit:failure = create_file unlinkat renameat\n", text);
+        Assert.DoesNotContain("failure = none", text);
+        Assert.Single(text.Split('\n'), l => l.Contains("full_audit:prefix = %u"));
+        Assert.Single(text.Split('\n'), l => l.Trim() == SambaConfigText.Begin);
+
+        config.DisableAudit("share");
+        Assert.Equal(Conf.Replace("\r\n", "\n"), config.ToString());
+    }
+
+    [Fact]
+    public void Operation_names_are_read_from_the_module_file()
+    {
+        // full_audit.so keeps its op names as NUL-delimited strings among other text
+        byte[] Bytes(params string[] strings) => System.Text.Encoding.ASCII.GetBytes(string.Join('\0', strings) + "\0");
+        var module = Bytes("\u007fELF", "GLIBC_2.2.5", "create_file", "fset_nt_acl", "smb_vfs_call_fset_nt_acl", "fail (%s)",
+            "Could not find opname %s", "sys_acl_set_fd", "ok");
+        var ops = SambaOps.Available(module)!;
+        Assert.Contains("fset_nt_acl", ops);
+        Assert.Contains("create_file", ops);
+        Assert.Contains("sys_acl_set_fd", ops);
+        Assert.DoesNotContain("fchmod", ops);
+        Assert.DoesNotContain("fail (%s)", ops);
+
+        Assert.Null(SambaOps.Available([]));
+        Assert.Null(SambaOps.Available(Bytes("Hello world", "12345")));
+    }
+
     [Fact]
     public void Unknown_shares_are_reported() =>
         Assert.Throws<InvalidOperationException>(() => new SambaConfigText(Conf).EnableAudit("nope", true));
