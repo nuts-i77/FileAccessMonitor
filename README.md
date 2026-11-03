@@ -2,7 +2,7 @@
 
 English | [日本語](README.ja.md)
 
-FileAccessMonitor collects file access events (read, write, delete) on a Windows file server's shared folders from the Windows Security audit log. It stores them in SQLite and shows them in a web GUI. Linux file servers that share folders with Samba can send their records too, through an agent.
+FileAccessMonitor records file access (read, write, delete) on file servers' shared folders and shows it in a web GUI: from the Windows Security audit log on Windows file servers, and from Samba's audit log on Linux file servers that share folders with Samba. Agents bring the records of several file servers to one monitoring server, which runs on Windows or Linux and stores them in SQLite.
 
 ![Dashboard](docs/images/dashboard-en.png)
 
@@ -20,7 +20,7 @@ FileAccessMonitor collects file access events (read, write, delete) on a Windows
 
 ### Install with the installer (recommended)
 
-Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.com/nuts-i77/FileAccessMonitor/releases) and run it on the file server. The installer does the following:
+Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.com/nuts-i77/FileAccessMonitor/releases) and run it on the Windows file server (or on the machine that will be the monitoring server, if that is a separate one). The installer does the following:
 
 - Installs to `C:\Program Files\FileAccessMonitor`
 - Registers and starts the `FileAccessMonitor` Windows service
@@ -298,10 +298,10 @@ Product capabilities above are summarized from public information and may change
 ## Limitations
 
 - **Operations that do not open a file are not recorded.** This includes reading only attributes or timestamps (`0x80` ReadAttributes and similar) and listing folders. For example, when an incremental backup tool finds a file unchanged and skips copying it, that file is not recorded.
-- Events that occur while the service is stopped (for example during an upgrade or reboot) are collected when it starts again, as long as they are still in the Security log. If the log has already overwritten them, the gap is recorded in the operation log.
+- Events that occur while the service is stopped (for example during an upgrade or reboot) are collected when it starts again, as long as they are still in the Security log (the journal on Linux). If they are already gone, the gap is recorded in the operation log and notified.
 - Each file server needs FileAccessMonitor installed (standalone, or as an agent). Servers without it, and NAS appliances, cannot be monitored.
 - On Linux, only accesses through Samba (SMB) shares are recorded; NFS and changes made on the server itself are not.
-- For renames and moves, only the old path is recorded. The Security log does not include the new path.
+- For renames and moves, only the old path is recorded. The Windows Security log does not include the new path; Linux records the same way.
 - A folder that is deleted or renamed is recognized as a folder when it is still there as the event is processed, or when accesses to files inside it were seen recently. Otherwise (for example an empty folder) it is recorded as a file.
 - Times are stored in UTC. The GUI shows them, and groups them by day, in the browser's time zone.
 
