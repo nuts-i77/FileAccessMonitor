@@ -7,22 +7,37 @@ using FileAccessMonitor.Models;
 namespace FileAccessMonitor.Services;
 
 // One line of Samba's full_audit module, as set up by SambaConfig:
-//   <user>|<client IP>|<client machine>|<share>|<share path>|<operation>|ok|<arguments...>
+//   <user>|<client IP>|<client machine>|<share>|<share path>|<operation>|<status>|<arguments...>
+// status: "ok", or "fail (<strerror>)" for the operations in the failure list, e.g.
+//   ...|create_file|fail (Permission denied)|0x120089|file|open|/srv/share/docs/a.txt
 // create_file: <access mask>|<file|dir>|<disposition>|<path>
 // renameat / rename: <old path>|<new path>
 // unlinkat / unlink / rmdir: <path>
+// fset_nt_acl / sys_acl_set_fd: <path>; fchmod: <path>|<mode in octal>; fchown: <path>|<uid>|<gid>
 // Paths are absolute (Samba prefixes the share path); a relative one is taken as inside the share.
+// Status is appended last so that code building a line without it still compiles.
 public record AuditLine(string User, string ClientIp, string ClientMachine, string Share, string SharePath,
-    string Operation, string[] Args)
+    string Operation, string[] Args, string Status = "ok")
 {
     public const int PrefixFields = 5;
 
+    // The operations Samba is asked to log when they fail (full_audit:failure)
+    private static readonly HashSet<string> FailureOperations =
+        ["create_file", "unlinkat", "unlink", "rmdir", "renameat", "rename"];
+
+    public bool Ok => Status == "ok";
+
+    // Lines of successful operations, and of failed ones that are logged for refused accesses
+    // (whether a failure was a refusal is for AuditInterpreter to decide)
     public static AuditLine? Parse(string message)
     {
         var parts = message.Split('|');
-        if (parts.Length < PrefixFields + 3 || parts[PrefixFields + 1] != "ok") return null;
-        return new AuditLine(parts[0], parts[1], parts[2], parts[3], parts[4], parts[PrefixFields],
-            parts[(PrefixFields + 2)..]);
+        if (parts.Length < PrefixFields + 3) return null;
+        var status = parts[PrefixFields + 1];
+        var line = new AuditLine(parts[0], parts[1], parts[2], parts[3], parts[4], parts[PrefixFields],
+            parts[(PrefixFields + 2)..], status);
+        if (line.Ok) return line;
+        return status.StartsWith("fail", StringComparison.Ordinal) && FailureOperations.Contains(line.Operation) ? line : null;
     }
 
     public string FullPath(string path)
@@ -40,10 +55,27 @@ public record AuditLine(string User, string ClientIp, string ClientMachine, stri
     }
 }
 
+// The error texts (strerror, in the language smbd runs in) of a refused access: EACCES and EPERM.
+// Every other failure (no such file, busy, ...) is not a refusal.
+public static class SambaErrno
+{
+    private static readonly string[] DeniedTexts =
+    [
+        "Permission denied", "Operation not permitted",
+        "許可がありません", "許可されていない操作です", // Japanese glibc
+    ];
+
+    // status: "fail (Permission denied)"
+    public static bool IsDenied(string status) =>
+        status.StartsWith("fail", StringComparison.Ordinal) && DeniedTexts.Any(t => status.Contains(t, StringComparison.OrdinalIgnoreCase));
+}
+
 // What an audit line means for the access records. Type is empty when the line only shows that
 // the path is a folder (opened as one without reading or writing data), which is remembered so
-// that its later deletion is recorded as a folder's.
-public record AuditAccess(string Path, string Type, bool IsFolder);
+// that its later deletion is recorded as a folder's. Denied: the access was refused. NewPath: where
+// a renamed or moved file went. Detail: what a permission change was (null when not known).
+public record AuditAccess(string Path, string Type, bool IsFolder, string? NewPath = null, bool Denied = false,
+    string? Detail = null);
 
 public static class AuditInterpreter
 {
@@ -51,6 +83,10 @@ public static class AuditInterpreter
 
     public static AuditAccess? Interpret(AuditLine line)
     {
+        // A failed operation matters only when the access was refused
+        var denied = !line.Ok;
+        if (denied && !SambaErrno.IsDenied(line.Status)) return null;
+
         switch (line.Operation)
         {
             case "create_file":
@@ -59,8 +95,19 @@ public static class AuditInterpreter
                 // are recorded when they happen (unlinkat / renameat)
                 var mask = line.Args.Select(ParseMask).FirstOrDefault(m => m.HasValue);
                 if (mask is not long m) return null;
-                var type = AccessTypeOf(m & ~DeleteRight);
                 var isFolder = line.Args.Contains("dir");
+                if (denied)
+                {
+                    // What was refused: delete, write or read access (anything else, such as
+                    // attributes, is not auditing material)
+                    var refused = (m & DeleteRight) != 0 ? "Delete" : AccessTypeOf(m);
+                    return refused == null ? null : new AuditAccess(line.FullPath(line.Args[^1]), refused, isFolder, Denied: true);
+                }
+                // A file made by this call. The other dispositions that can create one (open_if,
+                // overwrite_if, supersede) cannot be told from opening an existing file.
+                if (!isFolder && line.Args.Length >= 4 && line.Args[2] == "create")
+                    return new AuditAccess(line.FullPath(line.Args[^1]), AccessTypes.Create, false);
+                var type = AccessTypeOf(m & ~DeleteRight);
                 return type == null && !isFolder ? null : new AuditAccess(line.FullPath(line.Args[^1]), type ?? "", isFolder);
             }
             case "renameat":
@@ -70,19 +117,36 @@ public static class AuditInterpreter
                 // Samba 4.20 and later create a folder under a temporary name (".::TMPNAME:D:...")
                 // and rename it into place: that is the folder being made, not a rename
                 var from = line.Args[0];
-                if (from[(from.LastIndexOf('/') + 1)..].StartsWith(".::TMPNAME:", StringComparison.Ordinal))
+                if (!denied && from[(from.LastIndexOf('/') + 1)..].StartsWith(".::TMPNAME:", StringComparison.Ordinal))
                     return new AuditAccess(line.FullPath(line.Args[1]), "", true);
-                return new AuditAccess(line.FullPath(from), "Rename", false);
+                return new AuditAccess(line.FullPath(from), AccessTypes.Rename, false, NewPath: line.FullPath(line.Args[1]), Denied: denied);
             }
             case "unlinkat":
             case "unlink":
-                return new AuditAccess(line.FullPath(line.Args[^1]), "Delete", false);
+                return new AuditAccess(line.FullPath(line.Args[^1]), AccessTypes.Delete, false, Denied: denied);
             case "rmdir":
-                return new AuditAccess(line.FullPath(line.Args[^1]), "Delete", true);
+                return new AuditAccess(line.FullPath(line.Args[^1]), AccessTypes.Delete, true, Denied: denied);
+
+            // Permission changes. No before / after is available on Linux. fset_nt_acl is what SMB
+            // clients use for ACLs and owners; fchmod, fchown and sys_acl_set_fd are understood but
+            // not logged by default (Samba itself calls them when it creates files).
+            case "fset_nt_acl":
+            case "sys_acl_set_fd":
+                return line.Args.Length == 0 ? null : new AuditAccess(line.FullPath(line.Args[0]), AccessTypes.Permission, false);
+            case "fchmod":
+                return line.Args.Length < 2 ? null
+                    : new AuditAccess(line.FullPath(line.Args[0]), AccessTypes.Permission, false, Detail: "mode " + ModeText(line.Args[1]));
+            case "fchown":
+                return line.Args.Length < 3 ? null
+                    : new AuditAccess(line.FullPath(line.Args[0]), AccessTypes.Permission, false,
+                        Detail: $"owner uid={line.Args[1]} gid={line.Args[2]}");
             default:
                 return null;
         }
     }
+
+    // Samba prints the mode in octal ("644"); shown as 0644
+    private static string ModeText(string mode) => mode.Length is > 0 and < 4 ? mode.PadLeft(4, '0') : mode;
 
     // Same rights as the Windows collector: data read/write (or generic read/write), not attributes
     internal static string? AccessTypeOf(long mask)
@@ -109,6 +173,8 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
     private static readonly Regex Suppressed = new(@"Suppressed (\d+) messages from (smbd|smb|samba)", RegexOptions.IgnoreCase);
 
     private readonly ReadMerger _readMerger = new();
+    private readonly DeniedMerger _deniedMerger = new(DeniedMerger.DeniedWindow);
+    private readonly DeniedMerger _permissionMerger = new(DeniedMerger.PermissionWindow);
     private readonly RecentFolders _recentFolders = new();
     private (string Path, HashSet<string> EventTypes)[] _paths = [];
     private RecordingRules _rules = new(new RecordingSettings());
@@ -211,10 +277,17 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
                    && long.TryParse(t.GetString(), out var micros)
             ? DateTime.UnixEpoch.AddTicks(micros * 10)
             : DateTime.UtcNow;
-        if (ToRecord(message, time) is { } record && _readMerger.ShouldRecord(record, _rules.MergeReadWindow))
+        if (ToRecord(message, time) is { } record && ShouldKeep(record))
             batch.Add(record);
         return cursor;
     }
+
+    // Repeats are merged: reads (not the denied ones, which have their own merger), refused
+    // accesses and permission changes
+    private bool ShouldKeep(AccessRecord record) =>
+        record.Denied ? _deniedMerger.ShouldRecord(record)
+        : record.AccessType == AccessTypes.Permission ? _permissionMerger.ShouldRecord(record)
+        : _readMerger.ShouldRecord(record, _rules.MergeReadWindow);
 
     // MESSAGE is a string, or an array of bytes when it is not valid UTF-8
     private static string? MessageOf(JsonElement root)
@@ -242,15 +315,17 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
         _recentFolders.Add(parent);
 
         if (_rules.IsExcludedFile(NameOf(path)) || _rules.IsExcludedUser(line.User)) return null;
+        if (access.Denied && !_rules.Settings.RecordDenied) return null;
         var eventTypes = matched != default ? matched.EventTypes : null;
-        var typeForFilter = access.Type == "Rename" ? "Delete" : access.Type; // as on Windows: renames go with deletions
-        if (eventTypes != null && !eventTypes.Contains(typeForFilter)) return null;
+        // As on Windows: creating goes with writing, renaming with deleting
+        if (eventTypes != null && !eventTypes.Contains(AccessTypes.EventTypeOf(access.Type))) return null;
 
-        // Folders are recorded only when deleted or renamed (as on Windows)
+        // Folders are recorded only when deleted or renamed, or when their permissions change or
+        // an access to them is refused (as on Windows)
         var isFolder = access.IsFolder || Directory.Exists(path);
         if (isFolder) _recentFolders.Add(path);
         isFolder |= _recentFolders.Contains(path);
-        if (isFolder && access.Type is "Read" or "Write") return null;
+        if (isFolder && !access.Denied && access.Type is "Read" or "Write" or "Create") return null;
 
         return new AccessRecord
         {
@@ -259,6 +334,9 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
             ClientIp = NormalizeIp(line.ClientIp),
             ClientMachine = string.IsNullOrEmpty(line.ClientMachine) ? null : line.ClientMachine,
             IsFolder = isFolder,
+            Denied = access.Denied,
+            NewPath = access.NewPath is { Length: > 2000 } np ? np[..2000] : access.NewPath,
+            Detail = access.Detail,
             ServerName = Environment.MachineName, // used when collecting on the monitoring server itself
         };
     }

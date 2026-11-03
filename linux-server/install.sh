@@ -6,8 +6,11 @@
 #   sudo sh install.sh --collect          also record Samba accesses on this server (runs as root)
 #   sudo sh install.sh --monitor-only     only show what agents send (runs as user fileaccessmonitor)
 #   sudo sh install.sh --port 8080        web GUI port
+#   sudo sh install.sh --https on|off     HTTPS for the web GUI (a new install uses HTTPS with a self-signed
+#                                         certificate; an upgrade keeps its setting)
 #   sudo sh install.sh --uninstall [--purge]   remove it (--purge also deletes records and settings)
-# After installing, fileaccessmonitor-server shows or changes the mode and port.
+# After installing, fileaccessmonitor-server shows or changes the mode, port and HTTPS (it also takes
+# --pfx FILE for your own certificate, and --redirect-port).
 set -eu
 
 APP_DIR=/opt/fileaccessmonitor
@@ -60,13 +63,23 @@ systemctl daemon-reload
 
 # A new install is monitoring only unless --collect is given; an upgrade keeps the mode in settings.json
 # (and the service account and drop-ins that go with it)
-if [ $# -eq 0 ]; then
+HAS_MODE=false
+HAS_HTTPS=false
+for arg in "$@"; do
+    case "$arg" in
+        --collect|--monitor-only) HAS_MODE=true ;;
+        --https) HAS_HTTPS=true ;;
+    esac
+done
+if ! $HAS_MODE; then
     if $FIRST_INSTALL || grep -q '"LocalCollection": false' "$DATA_DIR/settings.json"; then
-        set -- --monitor-only
+        set -- "$@" --monitor-only
     else
-        set -- --collect
+        set -- "$@" --collect
     fi
 fi
+# A new install serves the web GUI over HTTPS (self-signed certificate); an upgrade keeps its setting
+if $FIRST_INSTALL && ! $HAS_HTTPS; then set -- "$@" --https on; fi
 "$APP_DIR/fileaccessmonitor-server" "$@" >/dev/null
 systemctl enable --now "$UNIT" >/dev/null 2>&1
 
@@ -76,7 +89,7 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
 done
 echo
 "$APP_DIR/fileaccessmonitor-server"
-PORT=$("$APP_DIR/fileaccessmonitor-server" | sed -n 's/^Web GUI: port \([0-9]*\).*/\1/p')
+PORT=$("$APP_DIR/fileaccessmonitor-server" | sed -n -e 's/^Web GUI: port \([0-9][0-9]*\).*/\1/p' -e 's/^Web GUI: https*:\/\/.*:\([0-9][0-9]*\)[ ;].*/\1/p' | head -n 1)
 echo "Open TCP $PORT and 8443 in the firewall if it is on, for example:"
 echo "  firewall-cmd --permanent --add-port=$PORT/tcp --add-port=8443/tcp && firewall-cmd --reload   (RHEL, Rocky, Alma)"
 echo "  ufw allow $PORT/tcp && ufw allow 8443/tcp   (Ubuntu, Debian)"

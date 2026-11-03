@@ -5,6 +5,9 @@
 #   fileaccessmonitor-server --collect        also record this machine's Samba accesses (runs as root)
 #   fileaccessmonitor-server --monitor-only   only show what agents send (runs as user fileaccessmonitor)
 #   fileaccessmonitor-server --port 8080      web GUI port
+#   fileaccessmonitor-server --https on|off   HTTPS for the web GUI, on the same port (self-signed certificate)
+#       --pfx FILE [--pfx-password-file FILE]   use your own certificate (PFX) instead of the self-signed one
+#       --redirect-port 8081                    also listen on this port and send browsers to the HTTPS port (0 = none)
 # Changes are kept in systemd drop-ins (/etc/systemd/system/fileaccessmonitor.service.d) and
 # settings.json, so they survive upgrades.
 set -eu
@@ -26,13 +29,25 @@ port() {
     sed -n 's/.*Kestrel__Endpoints__Http__Url=http:\/\/0\.0\.0\.0:\([0-9]*\).*/\1/p' "$DROPIN_DIR/port.conf" 2>/dev/null | head -n 1 | grep . || echo 8080
 }
 
+# "on" or "off" (the setting in settings.json, as the service reads it at its next start); only root
+# can read the data folder
+https_state() {
+    if [ "$(id -u)" -eq 0 ] && [ -x "$APP_DIR/FileAccessMonitor" ]; then
+        "$APP_DIR/FileAccessMonitor" web-https status 2>/dev/null | head -n 1
+    fi
+}
+
 show() {
     if [ "$(mode)" = collect ]; then
         echo "Mode:    also records this machine's Samba accesses (runs as root)"
     else
         echo "Mode:    monitoring only (runs as user $SERVICE_USER)"
     fi
-    echo "Web GUI: port $(port); agents connect to port 8443"
+    case "$(https_state)" in
+        on) echo "Web GUI: https://$(hostname -f 2>/dev/null || hostname):$(port) (self-signed certificates show a browser warning); agents connect to port 8443" ;;
+        off) echo "Web GUI: http://$(hostname -f 2>/dev/null || hostname):$(port); agents connect to port 8443" ;;
+        *) echo "Web GUI: port $(port); agents connect to port 8443" ;;
+    esac
     echo "Service: $(systemctl is-active fileaccessmonitor 2>/dev/null || true) (systemctl status fileaccessmonitor, journalctl -u fileaccessmonitor)"
     if [ -f "$DATA_DIR/initial-admin-password.txt" ]; then
         echo "Sign in as admin; the initial password is shown by: sudo cat $DATA_DIR/initial-admin-password.txt"
@@ -47,6 +62,10 @@ fi
 
 MODE=""
 PORT=""
+HTTPS=""
+PFX=""
+PFX_PASSWORD_FILE=""
+REDIRECT=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --collect) MODE=collect ;;
@@ -54,10 +73,24 @@ while [ $# -gt 0 ]; do
         --port)
             PORT="${2:-}"; shift
             case "$PORT" in ''|*[!0-9]*) echo "--port needs a number." >&2; exit 2 ;; esac ;;
-        *) echo "Unknown option: $1 (use --collect, --monitor-only or --port <number>)" >&2; exit 2 ;;
+        --https)
+            HTTPS="${2:-}"; shift
+            case "$HTTPS" in on|off) ;; *) echo "--https needs on or off." >&2; exit 2 ;; esac ;;
+        --pfx)
+            PFX="${2:-}"; shift
+            [ -f "$PFX" ] || { echo "--pfx needs a certificate file (PFX / PKCS#12)." >&2; exit 2; } ;;
+        --pfx-password-file)
+            PFX_PASSWORD_FILE="${2:-}"; shift
+            [ -f "$PFX_PASSWORD_FILE" ] || { echo "--pfx-password-file needs a file with the password on its first line." >&2; exit 2; } ;;
+        --redirect-port)
+            REDIRECT="${2:-}"; shift
+            case "$REDIRECT" in ''|*[!0-9]*) echo "--redirect-port needs a number (0 = none)." >&2; exit 2 ;; esac ;;
+        *) echo "Unknown option: $1 (use --collect, --monitor-only, --port <number>, --https on|off, --pfx <file>, --pfx-password-file <file> or --redirect-port <number>)" >&2; exit 2 ;;
     esac
     shift
 done
+if [ -n "$PFX" ] && [ "${HTTPS:-on}" != on ]; then echo "--pfx needs --https on." >&2; exit 2; fi
+if { [ -n "$PFX" ] || [ -n "$PFX_PASSWORD_FILE" ]; } && [ -z "$HTTPS" ]; then HTTPS=on; fi
 
 mkdir -p "$DROPIN_DIR" "$DATA_DIR"
 if [ "$MODE" = collect ]; then
@@ -85,6 +118,18 @@ fi
 if [ -n "$PORT" ]; then
     printf '# Set by fileaccessmonitor-server --port\n[Service]\nEnvironment=Kestrel__Endpoints__Http__Url=http://0.0.0.0:%s\n' "$PORT" \
         > "$DROPIN_DIR/port.conf"
+fi
+
+# HTTPS for the web GUI: takes effect when the service restarts (below). Without --pfx, "on" uses the
+# self-signed certificate; --redirect-port alone keeps the current setting.
+if [ -n "$HTTPS" ] || [ -n "$REDIRECT" ]; then
+    if [ -n "$HTTPS" ]; then ARG_STATE=$HTTPS; KEEP=""; else ARG_STATE=$(https_state); KEEP=--keep; fi
+    set -- web-https "${ARG_STATE:-off}"
+    if [ -n "$KEEP" ]; then set -- "$@" "$KEEP"; fi
+    if [ -n "$PFX" ]; then set -- "$@" --pfx "$PFX"; fi
+    if [ -n "$PFX_PASSWORD_FILE" ]; then set -- "$@" --pfx-password-file "$PFX_PASSWORD_FILE"; fi
+    if [ -n "$REDIRECT" ]; then set -- "$@" --redirect-port "$REDIRECT"; fi
+    "$APP_DIR/FileAccessMonitor" "$@" >/dev/null
 fi
 
 # The data folder belongs to the account the service runs as, and only to it

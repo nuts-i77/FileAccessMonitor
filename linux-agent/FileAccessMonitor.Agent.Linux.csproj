@@ -23,6 +23,7 @@
     <Compile Include="..\Services\AgentCore.cs" Link="Shared\AgentCore.cs" />
     <Compile Include="..\Services\AgentProtocol.cs" Link="Shared\AgentProtocol.cs" />
     <Compile Include="..\Services\AppPaths.cs" Link="Shared\AppPaths.cs" />
+    <Compile Include="..\Services\DeniedMerger.cs" Link="Shared\DeniedMerger.cs" />
     <Compile Include="..\Services\RecordingRules.cs" Link="Shared\RecordingRules.cs" />
     <Compile Include="..\Services\SettingsStore.cs" Link="Shared\SettingsStore.cs" />
     <Compile Include="..\Services\SambaAudit.cs" Link="Shared\SambaAudit.cs" />
