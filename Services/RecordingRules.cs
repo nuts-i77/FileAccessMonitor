@@ -20,6 +20,8 @@ public class RecordingSettings
     // Reads of the same file by the same user within this many minutes of the previous one
     // are recorded once (0 = record every read).
     public int MergeReadMinutes { get; set; } = DefaultMergeReadMinutes;
+    // Record accesses that were refused (access denied)
+    public bool RecordDenied { get; set; } = true;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 

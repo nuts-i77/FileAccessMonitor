@@ -333,6 +333,8 @@ CREATE TABLE IF NOT EXISTS ""AgentEnrollments"" (
     // v10: the agent's operating system (Windows or Linux)
     if (!agentColumns.Contains("Os", StringComparer.OrdinalIgnoreCase))
         await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""Os"" TEXT NULL");
+    // v11: denied accesses, rename destinations, permission change details
+    await SchemaV19.ApplyAsync(db);
 
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     foreach (var role in new[] { "Admin", "Viewer" })

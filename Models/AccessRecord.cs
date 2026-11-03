@@ -38,4 +38,15 @@ public class AccessRecord
 
     [MaxLength(200)]
     public string? ClientMachine { get; set; }
+
+    // The access was refused (not a successful access); AccessType is what was refused
+    public bool Denied { get; set; }
+
+    // Rename: where the file went (null = unknown)
+    [MaxLength(2000)]
+    public string? NewPath { get; set; }
+
+    // Permission: the change, before and after; null otherwise
+    [MaxLength(2000)]
+    public string? Detail { get; set; }
 }

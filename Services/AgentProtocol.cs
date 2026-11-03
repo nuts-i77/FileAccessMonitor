@@ -25,12 +25,17 @@ public class AgentRecord
     public string? ClientIp { get; set; }
     public string? ClientMachine { get; set; }
     public bool IsFolder { get; set; }
+    // From 1.9 (protocol 2); older agents leave them out and older servers ignore them
+    public bool Denied { get; set; }
+    public string? NewPath { get; set; }
+    public string? Detail { get; set; }
 
     public static AgentRecord From(AccessRecord r) => new()
     {
         FilePath = r.FilePath, FileName = r.FileName, FolderPath = r.FolderPath, UserName = r.UserName,
         AccessType = r.AccessType, AccessTime = r.AccessTime, ClientIp = r.ClientIp,
         ClientMachine = r.ClientMachine, IsFolder = r.IsFolder,
+        Denied = r.Denied, NewPath = r.NewPath, Detail = r.Detail,
     };
 
     // The server name comes from the agent's registration, not from what the agent says
@@ -42,6 +47,9 @@ public class AgentRecord
         ClientIp = ClientIp == null ? null : Limit(ClientIp, 100),
         ClientMachine = ClientMachine == null ? null : Limit(ClientMachine, 200),
         IsFolder = IsFolder, ServerName = serverName,
+        Denied = Denied,
+        NewPath = NewPath == null ? null : Limit(NewPath, 2000),
+        Detail = Detail == null ? null : Limit(Detail, 2000),
     };
 
     private static string Limit(string s, int max) => s.Length <= max ? s : s[..max];
@@ -53,6 +61,14 @@ public class AgentGap
     public string AuditDetail { get; set; } = "";
     public string MessageKey { get; set; } = "";
     public List<string> Args { get; set; } = [];
+}
+
+// 2 (1.9): records may carry Denied, NewPath, Detail and the types Create and Permission. The
+// server announces it in the heartbeat reply ("protocol"); an agent sends those only to a server
+// that announced 2.
+public static class AgentProtocol
+{
+    public const int Version = 2;
 }
 
 // Something an agent does on its own server for the GUI: check a folder, set up or remove its

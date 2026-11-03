@@ -19,6 +19,7 @@
     <Content Remove="tests/**" />
     <None Remove="tests/**" />
     <Compile Include="..\Models\AccessRecord.cs" Link="Shared\AccessRecord.cs" />
+    <Compile Include="..\Models\AccessTypes.cs" Link="Shared\AccessTypes.cs" />
     <Compile Include="..\Services\AgentCore.cs" Link="Shared\AgentCore.cs" />
     <Compile Include="..\Services\AgentProtocol.cs" Link="Shared\AgentProtocol.cs" />
     <Compile Include="..\Services\AppPaths.cs" Link="Shared\AppPaths.cs" />
