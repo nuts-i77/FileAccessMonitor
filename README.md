@@ -11,9 +11,10 @@ FileAccessMonitor collects file access events (read, write, delete) on a Windows
 
 ## Requirements
 
-- Windows Server 2016 or later (or Windows 10/11), running on the server that hosts the shared folders
-- .NET 10 SDK, needed to build only. The app is published self-contained, so the server does not need the .NET runtime.
-- Administrator rights, needed to read the Security log and to set SACLs
+- Windows Server 2016 or later (or Windows 10/11) for the monitoring server and for Windows file servers. A standalone install runs on the file server that hosts the shared folders; with [agents](#6-collect-from-several-file-servers-agents), the monitoring server can be a separate machine.
+- For Linux file servers (optional): x86-64 Linux with systemd and Samba 4.x; see [7. Linux file servers](#7-linux-file-servers-samba-agent)
+- .NET 10 SDK, needed to build only. The app is published self-contained, so the servers do not need the .NET runtime.
+- Administrator rights (root on Linux), needed to read the audit logs and to set up auditing
 
 ## Setup
 
@@ -113,10 +114,10 @@ How it works and limits:
 
 - Agents connect to the monitoring server; the monitoring server never connects to them. The connection uses HTTPS with a certificate the monitoring server creates itself; agents trust exactly that certificate (its fingerprint is in the connection string), so no certificate authority is needed.
 - Records are kept in a local outbox on the agent (`C:\ProgramData\FileAccessMonitor\outbox`, up to 2 GB) until the monitoring server has saved them, so nothing is lost while it is unreachable.
-- When records come from more than one server, a server filter appears at the top of the web GUI, and lists show the server name with the path.
+- When records come from more than one server, a server filter appears at the top of the web GUI, and lists get a **Server** column.
 - Monitored folders and recording rules are set per server: pick the server at the top of the **Settings** tab. An agent picks up changes within a minute. When a folder is added on an agent's server, the agent checks it exists and sets its audit entries (SACL); the **Unused Files** tab lists files on the chosen server through its agent. These need the agent to be online. Until folders are set for an agent's server, the agent records every audited access on it.
 - Viewing scopes can name a server for each folder (or apply to the path on every server).
-- The **Agents** list shows each agent's last contact, version (flagged when it differs from the monitoring server's), batches waiting to be sent, and whether file access auditing is on. When notifications are on, an agent that has not been in touch for 15 minutes (configurable; 0 turns it off) is reported, and again when it is back.
+- The **Agents** list shows each agent's OS (Windows or Linux), last contact, version (flagged when it differs from the monitoring server's), batches waiting to be sent, and whether file access auditing is on. When notifications are on, an agent that has not been in touch for 15 minutes (configurable; 0 turns it off) is reported, and again when it is back.
 - Alerts and notifications name the file server the accesses happened on.
 - Record times come from each file server's clock; keep the servers' clocks synchronized (NTP; domain members do this by default).
 - `FileAccessMonitor.exe unenroll` turns an agent back into a standalone install.
@@ -206,7 +207,7 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | Unused Files | Files in a monitored folder that nobody read (or accessed) in a period, found by scanning the folder, with their size totaled per subfolder (Admin only; up to 100,000 files per scan) |
 | Settings | Monitored folders, users, recording rules (exclusions and merging of repeated reads), reverse DNS, data retention, notifications, operation log |
 
-Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it). If the internet is reached through a proxy, set it in the notification settings (webhooks only; the service runs as SYSTEM, so the Windows proxy setting does not apply).
+Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it); on Linux servers, journald dropped audit lines or the journal no longer had them. Agents that stop reporting are notified too. If the internet is reached through a proxy, set it in the notification settings (webhooks only; the service runs as SYSTEM, so the Windows proxy setting does not apply).
 
 The GUI is available in English and Japanese. Switch languages at the top right; on first visit the GUI follows the browser's language. Messages returned by the API use the selected language too.
 
@@ -227,6 +228,8 @@ The screenshots use fictional sample data.
 3. Stores records in SQLite and aggregates them through an ASP.NET Core web API.
 4. Displays them in the browser with Bootstrap and Chart.js.
 
+Agents on other Windows file servers do steps 1 and 2 and send the records to the monitoring server over HTTPS. Linux agents read Samba's audit lines from the systemd journal instead (see [7. Linux file servers](#7-linux-file-servers-samba-agent)).
+
 ### Access type classification (AccessMask)
 
 | Type | Mask |
@@ -246,15 +249,15 @@ On the **Settings** tab, administrators can exclude file name patterns (`*` and 
 
 ## Comparison with other tools
 
-FileAccessMonitor aims at one job: letting a small team see who read, changed, or deleted files on a Windows file server, without building a log platform. If you need more than that, another tool is likely a better fit.
+FileAccessMonitor aims at one job: letting a small team see who read, changed, or deleted files on their file servers, without building a log platform. If you need more than that, another tool is likely a better fit.
 
 | | FileAccessMonitor | Commercial auditing products<br>(e.g. Netwrix Auditor, ManageEngine ADAudit Plus) | Wazuh |
 |---|---|---|---|
 | Cost | Free (MIT) | Paid licenses | Free (open source); paid cloud and support available |
-| Setup | One installer on the file server | Installer; often needs a separate server and database | Wazuh server, indexer, and dashboard, plus an agent on each host |
-| Scope | File access on one Windows file server | File servers, NAS, Active Directory, Microsoft 365, and more | Security monitoring (SIEM/XDR) across many hosts |
-| Who **read** a file | Yes (Security log events 4663/4659) | Yes | File integrity monitoring covers changes only; reads need Security-log collection and your own rules |
-| Multiple servers in one view | No (one instance and GUI per server) | Yes | Yes |
+| Setup | One installer on the file server; an agent on each further file server | Installer; often needs a separate server and database | Wazuh server, indexer, and dashboard, plus an agent on each host |
+| Scope | File access on Windows file servers and Linux Samba file servers | File servers, NAS, Active Directory, Microsoft 365, and more | Security monitoring (SIEM/XDR) across many hosts |
+| Who **read** a file | Yes (Security log events 4663/4659; Samba's audit module on Linux) | Yes | File integrity monitoring covers changes only; reads need Security-log collection and your own rules |
+| Multiple servers in one view | Yes (agents send to one monitoring server) | Yes | Yes |
 | Alerts | Mass delete / change / read, and gaps in recording, to Teams, Slack, a webhook, or email | Many built-in rules | Flexible rules and automated responses |
 | Reports | Search and CSV export | Built-in compliance and scheduled reports | Dashboards and compliance mappings |
 | Japanese UI | Yes | Varies by product | No |
@@ -262,8 +265,8 @@ FileAccessMonitor aims at one job: letting a small team see who read, changed, o
 
 **When to choose which**
 
-- **FileAccessMonitor**: you have one or a few Windows file servers, want answers to "who deleted this file?" or "who opened this folder?", and do not want to run a log platform.
-- **A commercial product**: you need to audit several servers, AD, or Microsoft 365 together, need compliance reports, or need vendor support.
+- **FileAccessMonitor**: you have one or several Windows or Samba file servers, want answers to "who deleted this file?" or "who opened this folder?", and do not want to run a log platform.
+- **A commercial product**: you need to audit NAS appliances, AD, or Microsoft 365 together with the file servers, need compliance reports, or need vendor support.
 - **Wazuh**: you are building organization-wide security monitoring and file access is one of many sources.
 
 Product capabilities above are summarized from public information and may change. Check each vendor's documentation for details.
@@ -272,7 +275,8 @@ Product capabilities above are summarized from public information and may change
 
 - **Operations that do not open a file are not recorded.** This includes reading only attributes or timestamps (`0x80` ReadAttributes and similar) and listing folders. For example, when an incremental backup tool finds a file unchanged and skips copying it, that file is not recorded.
 - Events that occur while the service is stopped (for example during an upgrade or reboot) are collected when it starts again, as long as they are still in the Security log. If the log has already overwritten them, the gap is recorded in the operation log.
-- The service must run on the file server it monitors. It cannot monitor remote servers.
+- Each file server needs FileAccessMonitor installed (standalone, or as an agent). Servers without it, and NAS appliances, cannot be monitored.
+- On Linux, only accesses through Samba (SMB) shares are recorded; NFS and changes made on the server itself are not.
 - For renames and moves, only the old path is recorded. The Security log does not include the new path.
 - A folder that is deleted or renamed is recognized as a folder when it is still there as the event is processed, or when accesses to files inside it were seen recently. Otherwise (for example an empty folder) it is recorded as a file.
 - Times are stored in UTC. The GUI shows them, and groups them by day, in the browser's time zone.
@@ -282,13 +286,16 @@ Product capabilities above are summarized from public information and may change
 ```powershell
 dotnet build FileAccessMonitor.csproj
 dotnet test tests/FileAccessMonitor.Tests
+dotnet test linux-agent/tests            # Linux agent (runs on Windows too)
 ```
+
+The Linux agent is the project in `linux-agent/`; it shares the agent protocol, outbox, and recording rules with the Windows service (linked source files). Build it with `dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true`.
 
 To build the installer locally, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run `.\build-installer.ps1 -Version 1.0.0`. The output goes to `dist\`.
 
 To run a second instance for development or demos without touching an installed one, set the `FILEACCESSMONITOR_DATA` environment variable to another data folder (default `C:\ProgramData\FileAccessMonitor`) and another port, e.g. `$env:Kestrel__Endpoints__Http__Url = 'http://localhost:5099'`.
 
-GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app on every push and pull request. Pushing a tag such as `v1.0.0` runs `.github/workflows/release.yml`, which builds the installer and a portable zip and publishes them as a GitHub Release.
+GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app on every push and pull request. Pushing a tag such as `v1.0.0` runs `.github/workflows/release.yml`, which builds the installer, a portable zip, and the Linux agent's tar.gz and publishes them as a GitHub Release.
 
 ## Uninstall
 
@@ -301,6 +308,8 @@ If you installed from source:
 .\restore-audit.ps1 -SharePaths "D:\Share"   # to remove the audit settings as well
 ```
 
+To remove a Linux agent, see [7. Linux file servers](#7-linux-file-servers-samba-agent).
+
 ## Verifying downloads
 
 The release files are built by this repository's [release workflow](.github/workflows/release.yml) on GitHub Actions from the tagged source. Each release includes a GitHub [build provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations), so you can check that a file was built there and has not been modified. With the [GitHub CLI](https://cli.github.com/), run:
@@ -309,7 +318,7 @@ The release files are built by this repository's [release workflow](.github/work
 gh attestation verify FileAccessMonitor-Setup-<version>.exe -R nuts-i77/FileAccessMonitor
 ```
 
-Without the GitHub CLI, compare the output of `Get-FileHash <file>` with `SHA256SUMS.txt` on the release page.
+Without the GitHub CLI, compare the output of `Get-FileHash <file>` (on Linux, `sha256sum <file>`) with `SHA256SUMS.txt` on the release page.
 
 ## Privacy policy
 
