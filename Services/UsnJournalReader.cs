@@ -276,7 +276,7 @@ public class UsnJournalReader
         {
             var error = Marshal.GetLastWin32Error();
             if (error == ErrorJournalNotActive)
-                _logger.LogInformation("Volume {Volume} has no USN change journal, so file creation and the new name of renamed files are not recorded there. An administrator can enable it with: fsutil usn createjournal m=33554432 a=4194304 {Volume}",
+                _logger.LogInformation("Volume {Volume} has no USN change journal, so file creation and the new name of renamed files are not recorded there. An administrator can enable it with: fsutil usn createjournal m=33554432 a=8388608 {Volume}",
                     v.Letter, v.Letter);
             else
                 _logger.LogInformation("The USN change journal of volume {Volume} cannot be read (error {Error}); file creation and new names are not recorded there.",

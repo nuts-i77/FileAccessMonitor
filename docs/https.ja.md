@@ -2,7 +2,9 @@
 
 [English](https.md) | 日本語
 
-FileAccessMonitor は既定でポート 8080 の HTTP で動作します。そのため、ログイン時のパスワードや JWT が暗号化されずにネットワークを流れます。HTTPS にする方法は次の 2 つです。
+1.9 以降、新しくインストールした環境では、Web GUI は既定で HTTPS で動作します（自己署名の証明書、または用意した PFX ファイル）。以前の版から更新した環境は、切り替えるまで HTTP のままです。切り替えは、Windows では `FileAccessMonitor.exe web-https on` を実行してサービスを再起動し、Linux では `sudo fileaccessmonitor-server --https on` を実行します。詳しくは README の「セキュリティ」を参照してください。HTTP のままでは、ログイン時のパスワードや JWT が暗号化されずにネットワークを流れます。
+
+HTTPS を自分で設定したい場合は、次の 2 つの方法もあります。
 
 - [方法 A](#方法-a-アプリ自身で-https-にするkestrel): アプリ自身で HTTPS にする（いちばん手軽）
 - [方法 B](#方法-b-リバースプロキシ): リバースプロキシ経由にする（IIS・nginx・Caddy などを既に使っている場合）

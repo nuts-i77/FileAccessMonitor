@@ -2,7 +2,9 @@
 
 English | [日本語](https.ja.md)
 
-By default FileAccessMonitor serves plain HTTP on port 8080, so sign-in passwords and JWTs cross the network unencrypted. This page shows two ways to add HTTPS:
+Since 1.9, new installs serve the web GUI over HTTPS by default, with a self-signed certificate or your own PFX file. Installs upgraded from earlier versions keep plain HTTP until you switch: `FileAccessMonitor.exe web-https on` on Windows (then restart the service), `sudo fileaccessmonitor-server --https on` on Linux. See "Security" in the README. Over plain HTTP, sign-in passwords and JWTs cross the network unencrypted.
+
+If you prefer to configure HTTPS yourself, this page shows two other ways:
 
 - [Option A](#option-a-https-in-the-app-kestrel): let the app serve HTTPS itself. This is the simplest option.
 - [Option B](#option-b-reverse-proxy): put the app behind a reverse proxy. Use this if you already run IIS, nginx, or Caddy.

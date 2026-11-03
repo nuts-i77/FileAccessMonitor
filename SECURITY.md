@@ -28,7 +28,7 @@ In scope:
 
 Out of scope:
 
-- Running the service over plain HTTP on an untrusted network. HTTPS is opt-in; see the README.
+- Running the web GUI over plain HTTP on an untrusted network. New installs use HTTPS by default since 1.9; installs upgraded from earlier versions stay on HTTP until switched (see the README).
 - Attacks that require local Administrator or SYSTEM access to the server. Those accounts can read the Security event log directly.
 - Vulnerabilities in Windows itself or in the bundled third-party libraries. Please report those upstream.
 
