@@ -120,7 +120,8 @@ public class AgentApiController : ControllerBase
         agent.LastSeenAt = DateTime.UtcNow;
         agent.Version = req.Version;
         if (req.OutboxCount is { } count) agent.OutboxCount = count;
-        if (req.AuditPolicyOk is { } auditOk) agent.AuditPolicyOk = auditOk;
+        agent.AuditPolicyOk = req.AuditPolicyOk; // null: not known, or (Linux) no folders monitored yet
+        if (req.Os is { Length: > 0 } os) agent.Os = os.Length <= 100 ? os : os[..100];
         await _db.SaveChangesAsync();
         return Ok(new { lastBatchSeq = agent.LastBatchSeq, configVersion = agent.ConfigVersion });
     }

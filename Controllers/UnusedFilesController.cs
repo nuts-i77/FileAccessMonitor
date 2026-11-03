@@ -40,10 +40,9 @@ public class UnusedFilesController : ControllerBase
     public async Task<IActionResult> Get([FromQuery] string folder, [FromQuery] int days = 90,
         [FromQuery] string criterion = "read", [FromQuery] string? server = null, CancellationToken ct = default)
     {
-        folder = (folder ?? "").Trim().TrimEnd('\\');
-        if (folder.Length == 0)
+        if (string.IsNullOrWhiteSpace(folder))
             return BadRequest(new { error = Messages.Get("path.required") });
-        if (folder.EndsWith(':')) folder += "\\";
+        folder = PathText.Normalize(folder);
 
         var local = ServerConfigService.IsLocal(server);
         var agent = local ? null : await _servers.FindAgentAsync(server!);
@@ -51,23 +50,25 @@ public class UnusedFilesController : ControllerBase
         var serverName = agent?.Name ?? ServerConfigService.LocalName;
 
         var configs = await _servers.GetPathsAsync(server);
-        if (!configs.Any(c => EventLogCollectorService.IsUnderPath(folder, c.Path)))
+        if (!configs.Any(c => PathText.IsUnder(folder, c.Path)))
             return BadRequest(new { error = Messages.Get("path.notMonitored") });
         if (!User.IsInRole("Admin") && !(_scopes.Get(User) is { } scope && AccessScope.Contains(scope, serverName, folder)))
             return StatusCode(StatusCodes.Status403Forbidden, new { error = Messages.Get("scope.outside") });
 
         var readOnly = criterion != "any";
         var since = days > 0 ? DateTime.UtcNow.AddDays(-days) : DateTime.MinValue;
-        var prefix = folder.EndsWith('\\') ? folder : folder + "\\";
+        var sep = PathText.SeparatorOf(folder);
+        var prefix = folder.EndsWith(sep) ? folder : folder + sep;
 
-        // LIKE is case-insensitive in SQLite, as Windows paths are
+        // LIKE is case-insensitive in SQLite, as Windows paths are; Linux paths are told apart by
+        // the case-sensitive comparer below
         var pattern = prefix.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
         var inFolder = _db.AccessRecords.Where(r =>
             r.ServerName == serverName && EF.Functions.Like(r.FilePath, pattern, "\\") && !r.IsFolder);
         var accessed = inFolder.Where(r => r.AccessTime >= since);
         if (readOnly) accessed = accessed.Where(r => r.AccessType == "Read");
         var used = new HashSet<string>(
-            await accessed.Select(r => r.FilePath).Distinct().ToListAsync(ct), StringComparer.OrdinalIgnoreCase);
+            await accessed.Select(r => r.FilePath).Distinct().ToListAsync(ct), PathText.ComparerOf(folder));
 
         List<ScannedFile> all;
         int scanned;
@@ -103,7 +104,7 @@ public class UnusedFilesController : ControllerBase
         var lastAccess = await inFolder
             .GroupBy(r => r.FilePath)
             .Select(g => new { Path = g.Key, Last = g.Max(r => r.AccessTime) })
-            .ToDictionaryAsync(x => x.Path, x => x.Last, StringComparer.OrdinalIgnoreCase, ct);
+            .ToDictionaryAsync(x => x.Path, x => x.Last, PathText.ComparerOf(folder), ct);
 
         var recordingSince = await _db.AccessRecords.Where(r => r.ServerName == serverName)
             .MinAsync(r => (DateTime?)r.AccessTime, ct);
@@ -165,16 +166,17 @@ public class UnusedFilesController : ControllerBase
     internal static List<FolderSummary> Summarize(string folder, IEnumerable<ScannedFile> files,
         IReadOnlyDictionary<string, DateTime> lastAccess)
     {
-        var prefix = folder.EndsWith('\\') ? folder : folder + "\\";
+        var sep = PathText.SeparatorOf(folder);
+        var prefix = folder.EndsWith(sep) ? folder : folder + sep;
         string KeyOf(string path)
         {
             var rest = path[prefix.Length..];
-            var slash = rest.IndexOf('\\');
+            var slash = rest.IndexOf(sep);
             return slash < 0 ? "" : prefix + rest[..slash];
         }
 
         return files
-            .GroupBy(f => KeyOf(f.Path), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(f => KeyOf(f.Path), PathText.ComparerOf(folder))
             .Select(g => new FolderSummary(
                 g.Key.Length == 0 ? folder : g.Key, g.Key.Length == 0, g.Count(), g.Sum(f => f.Size),
                 g.Count(f => !f.Used), g.Where(f => !f.Used).Sum(f => f.Size),

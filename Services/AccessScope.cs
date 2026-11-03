@@ -31,19 +31,16 @@ public static class AccessScope
         .DistinctBy(e => e.ToString().ToUpperInvariant())
         .ToList();
 
-    // "D:\Share\" -> "D:\Share", but a drive root keeps its backslash ("D:\")
-    public static string Normalize(string path)
-    {
-        var p = path.Trim().TrimEnd('\\');
-        return p.EndsWith(':') ? p + "\\" : p;
-    }
+    // "D:\Share\" -> "D:\Share", but a drive root keeps its backslash ("D:\"); "/srv/share/" -> "/srv/share"
+    public static string Normalize(string path) => PathText.Normalize(path);
 
     public static bool Contains(IReadOnlyList<ScopeEntry> scope, string server, string path) =>
         scope.Any(e => (e.Server == null || e.Server.Equals(server, StringComparison.OrdinalIgnoreCase))
-                       && EventLogCollectorService.IsUnderPath(path, e.Path));
+                       && PathText.IsUnder(path, e.Path));
 
-    // Records whose path is one of the folders or inside one, matched case-insensitively
-    // (SQLite LIKE ignores ASCII case, as Windows paths do), on the entry's server if it names one.
+    // Records whose path is one of the folders or inside one, on the entry's server if it names one.
+    // Windows paths match case-insensitively (SQLite LIKE ignores ASCII case, as Windows does);
+    // Linux paths ("/srv/share") match exactly.
     public static IQueryable<AccessRecord> Apply(IQueryable<AccessRecord> query, IReadOnlyList<ScopeEntry> scope)
     {
         var r = Expression.Parameter(typeof(AccessRecord), "r");
@@ -55,11 +52,20 @@ public static class AccessScope
         Expression Like(string pattern) => Expression.Call(like,
             Expression.Constant(EF.Functions), filePath, Expression.Constant(pattern), Expression.Constant("\\"));
 
+        var substring = typeof(string).GetMethod(nameof(string.Substring), [typeof(int), typeof(int)])!;
+        Expression StartsExactly(string prefix) => Expression.AndAlso(
+            Expression.GreaterThanOrEqual(Expression.Property(filePath, nameof(string.Length)), Expression.Constant(prefix.Length)),
+            Expression.Equal(Expression.Call(filePath, substring, Expression.Constant(0), Expression.Constant(prefix.Length)),
+                Expression.Constant(prefix)));
+
         Expression body = Expression.Constant(false);
         foreach (var entry in scope)
         {
-            var folder = entry.Path.TrimEnd('\\');
-            Expression match = Expression.OrElse(Like(Escape(folder)), Like(Escape(folder + "\\") + "%"));
+            var sep = PathText.SeparatorOf(entry.Path);
+            var folder = entry.Path.TrimEnd(sep);
+            Expression match = PathText.IsUnix(entry.Path)
+                ? Expression.OrElse(Expression.Equal(filePath, Expression.Constant(entry.Path)), StartsExactly(folder + sep))
+                : Expression.OrElse(Like(Escape(folder)), Like(Escape(folder + sep) + "%"));
             if (entry.Server != null)
                 match = Expression.AndAlso(Expression.Equal(serverName, Expression.Constant(entry.Server)), match);
             body = Expression.OrElse(body, match);

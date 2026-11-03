@@ -24,5 +24,11 @@ jobs:
       - name: Test
         run: dotnet test tests/FileAccessMonitor.Tests -c Release --logger "console;verbosity=normal"
 
+      - name: Test Linux agent
+        run: dotnet test linux-agent/tests -c Release
+
+      - name: Publish Linux agent (self-contained, linux-x64)
+        run: dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true -o linux-publish /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None
+
       - name: Publish (self-contained, win-x64)
         run: dotnet publish FileAccessMonitor.csproj -c Release -r win-x64 --self-contained true -o publish /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:DebugType=None /p:IsTransformWebConfigDisabled=true

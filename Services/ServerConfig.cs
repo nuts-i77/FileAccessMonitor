@@ -64,11 +64,8 @@ public class ServerConfigService(AccessDbContext db)
     }
 }
 
-// Something an agent does on its own server for the GUI (check a folder, set or remove its SACL,
-// list its files), handed over when the agent asks for work. Kept in memory: a job waits only as
+// Jobs (AgentJob) handed over when an agent asks for work. Kept in memory: a job waits only as
 // long as the GUI request that started it.
-public record AgentJob(string Id, string Type, JsonObject Args);
-
 public class AgentJobs
 {
     private readonly ConcurrentDictionary<string, Channel<AgentJob>> _queues = new();

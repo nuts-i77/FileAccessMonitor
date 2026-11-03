@@ -117,7 +117,7 @@ public class UsersController : ControllerBase
             if (entry.Server != null && !monitored.ContainsKey(entry.Server))
                 return BadRequest(new { error = Messages.Get("agents.notFound") });
             var candidates = entry.Server == null ? monitored.Values.SelectMany(c => c) : monitored[entry.Server];
-            if (!candidates.Any(c => EventLogCollectorService.IsUnderPath(entry.Path, c.Path)))
+            if (!candidates.Any(c => PathText.IsUnder(entry.Path, c.Path)))
                 return BadRequest(new { error = Messages.Get("scope.notMonitored", entry.ToString().Replace("|", ": ")) });
         }
 

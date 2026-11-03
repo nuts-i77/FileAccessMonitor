@@ -35,6 +35,10 @@ public class Agent
     // Reported by the agent: batches waiting to be sent, and whether File System auditing is on
     public int OutboxCount { get; set; }
     public bool? AuditPolicyOk { get; set; }
+
+    // Reported by the agent: "Windows Server 2022 Standard", "Ubuntu 24.04 LTS" (null before 1.7)
+    [MaxLength(100)]
+    public string? Os { get; set; }
 }
 
 // A one-time registration code issued by an Admin (stored hashed)

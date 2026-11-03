@@ -70,12 +70,7 @@ public class SettingsController : ControllerBase
         return Ok(new { version = AppVersion, updateCheck = req.UpdateCheck });
     }
 
-    // "1.3.0" from the informational version ("1.3.0+<commit>"); "0.0.0" for local builds
-    internal static readonly string AppVersion =
-        (typeof(SettingsController).Assembly
-            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-            .FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute)?.InformationalVersion
-            .Split('+')[0] ?? "0.0.0";
+    internal static string AppVersion => AppInfo.Version;
 
     // On by default
     private static bool UpdateCheckEnabled() =>
@@ -146,7 +141,7 @@ public class SettingsController : ControllerBase
 
         return Ok(new
         {
-            message = Messages.Get("path.added", sacl.Count),
+            message = sacl.Message("path.added"),
             saclCount = sacl.Count,
             saclErrors = sacl.Errors,
             pathConfigs = updated
@@ -186,7 +181,7 @@ public class SettingsController : ControllerBase
         await _audit.WriteAsync(HttpContext, "path.remove",
             $"server={ServerLabel(server)}, path={path}, removeSacl={removeSacl}, sacl={sacl.Count}");
 
-        var message = removeSacl ? Messages.Get("path.removedSacl", sacl.Count) : Messages.Get("path.removed");
+        var message = removeSacl ? sacl.Message("path.removedSacl") : Messages.Get("path.removed");
         return Ok(new { message, saclCount = sacl.Count, saclErrors = sacl.Errors, pathConfigs = updated });
     }
 
@@ -204,7 +199,7 @@ public class SettingsController : ControllerBase
 
         return Ok(new
         {
-            message = Messages.Get("path.saclApplied", sacl.Count),
+            message = sacl.Message("path.saclApplied"),
             saclCount = sacl.Count,
             saclErrors = sacl.Errors
         });
@@ -246,13 +241,17 @@ public class SettingsController : ControllerBase
             ? null
             : NotFound(new { error = Messages.Get("agents.notFound") });
 
-    private record SaclResult(int Count, List<string> Errors)
+    // Count: files and folders given a SACL, or, from a Linux agent (Samba), shares audited
+    private record SaclResult(int Count, List<string> Errors, bool Samba = false)
     {
         public SaclResult((int count, List<string> errors) r) : this(r.count, r.errors) { }
 
         public static SaclResult From(JsonObject o) => new(
             o["count"]?.GetValue<int>() ?? 0,
-            o["errors"] is JsonArray a ? a.Select(e => e?.GetValue<string>() ?? "").ToList() : []);
+            o["errors"] is JsonArray a ? a.Select(e => e?.GetValue<string>() ?? "").ToList() : [],
+            o["kind"]?.GetValue<string>() == "samba");
+
+        public string Message(string key) => Messages.Get(Samba ? key + "Samba" : key, Count);
     }
 
     // Checks the folder exists and sets its SACL, here or on the agent's server
@@ -304,29 +303,7 @@ public class SettingsController : ControllerBase
     internal static (PathConfig[] configs, string dnsServer) ParseSettings(JsonObject root)
     {
         var dns = root["DnsServer"] is JsonValue d && d.TryGetValue<string>(out var s) ? s : "";
-
-        var list = new List<PathConfig>();
-        if (root["MonitoredPaths"] is JsonArray arr)
-        {
-            foreach (var el in arr)
-            {
-                if (el is JsonValue v && v.TryGetValue<string>(out var p))
-                {
-                    // old format: plain string → upgrade to all types
-                    if (!string.IsNullOrEmpty(p)) list.Add(new PathConfig(p, DefaultEventTypes));
-                }
-                else if (el is JsonObject o && o["path"] is JsonValue pv && pv.TryGetValue<string>(out var path)
-                         && !string.IsNullOrEmpty(path))
-                {
-                    var types = o["eventTypes"] is JsonArray ta
-                        ? ta.Select(t => t is JsonValue tv && tv.TryGetValue<string>(out var ts) ? ts : "")
-                            .Where(t => t.Length > 0).ToArray()
-                        : DefaultEventTypes;
-                    list.Add(new PathConfig(path, types));
-                }
-            }
-        }
-        return ([.. list], dns);
+        return (MonitoredPathList.Parse(root).Select(p => new PathConfig(p.Path, p.EventTypes)).ToArray(), dns);
     }
 }
 

@@ -105,11 +105,11 @@ public class StatsController : ControllerBase
             {
                 g.Key.ServerName,
                 g.Key.FolderPath,
-                FolderName = g.Key.FolderPath.Length > 0
-                    ? EF.Functions.Like(g.Key.FolderPath, @"%\%")
+                FolderName = g.Key.FolderPath.Length > 1 && g.Key.FolderPath.StartsWith("/") // from a Linux agent
+                    ? g.Key.FolderPath.Substring(g.Key.FolderPath.LastIndexOf('/') + 1)
+                    : g.Key.FolderPath.Length > 0 && EF.Functions.Like(g.Key.FolderPath, @"%\%")
                         ? g.Key.FolderPath.Substring(g.Key.FolderPath.LastIndexOf('\\') + 1)
-                        : g.Key.FolderPath
-                    : g.Key.FolderPath,
+                        : g.Key.FolderPath,
                 Total = g.Count(),
                 Read = g.Count(r => r.AccessType == "Read"),
                 Write = g.Count(r => r.AccessType == "Write"),

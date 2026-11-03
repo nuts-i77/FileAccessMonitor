@@ -285,6 +285,9 @@ CREATE TABLE IF NOT EXISTS ""AgentEnrollments"" (
         await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""OutboxCount"" INTEGER NOT NULL DEFAULT 0");
     if (!agentColumns.Contains("AuditPolicyOk", StringComparer.OrdinalIgnoreCase))
         await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""AuditPolicyOk"" INTEGER NULL");
+    // v10: the agent's operating system (Windows or Linux)
+    if (!agentColumns.Contains("Os", StringComparer.OrdinalIgnoreCase))
+        await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""Os"" TEXT NULL");
 
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     foreach (var role in new[] { "Admin", "Viewer" })

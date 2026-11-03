@@ -2,7 +2,7 @@
 
 English | [日本語](README.ja.md)
 
-FileAccessMonitor collects file access events (read, write, delete) on a Windows file server's shared folders from the Windows Security audit log. It stores them in SQLite and shows them in a web GUI.
+FileAccessMonitor collects file access events (read, write, delete) on a Windows file server's shared folders from the Windows Security audit log. It stores them in SQLite and shows them in a web GUI. Linux file servers that share folders with Samba can send their records too, through an agent.
 
 ![Dashboard](docs/images/dashboard-en.png)
 
@@ -132,6 +132,32 @@ To change the agent port:
 3. Registered agents keep the old address. Issue a new connection string and, on each file server, run `FileAccessMonitor.exe enroll <connection string>` and restart the service.
 
 If you do not use agents and do not want the port open, set `"Agents": { "Enabled": false }` instead.
+
+### 7. Linux file servers (Samba agent)
+
+A Linux file server that shares folders with Samba can send its records to the monitoring server too. The Linux agent reads the audit lines of Samba's `full_audit` module from the systemd journal; it records accesses through SMB shares (not NFS, and not changes made on the server itself).
+
+Requirements: x86-64 Linux with systemd and Samba 4.x (tested on Ubuntu 24.04 with Samba 4.19 and Rocky Linux 9.4 with Samba 4.23; Debian, RHEL and AlmaLinux work the same way), and root.
+
+1. Download `FileAccessMonitor-<version>-linux-x64.tar.gz` from the release page and unpack it on the file server.
+2. Issue a connection string under **Settings → Agents** on the monitoring server, then run as root:
+
+   ```sh
+   tar xzf FileAccessMonitor-<version>-linux-x64.tar.gz
+   cd FileAccessMonitor-<version>-linux-x64
+   sudo sh install.sh <connection string>
+   ```
+   The agent runs as the systemd service `fileaccessmonitor-agent` (log: `journalctl -u fileaccessmonitor-agent`); its data is in `/var/lib/fileaccessmonitor`.
+3. Restart Samba once when convenient (`systemctl restart smbd`, or `smb` on RHEL). The installer adds a setting so that journald does not drop Samba's audit lines when there are many of them; it takes effect when Samba restarts.
+4. On the **Settings** tab of the monitoring server, pick the Linux server and add folders by their Linux path, such as `/srv/share/docs`.
+
+How it differs from Windows:
+
+- Adding a folder turns on auditing for the Samba shares that hold it (or are inside it), by editing `smb.conf`: the agent checks the new configuration with `testparm`, keeps a backup (`smb.conf.fam-backup-<time>`), and reloads Samba. Its lines sit between `# FileAccessMonitor begin` and `# FileAccessMonitor end`; lines it replaced (a share's own `vfs objects` or `full_audit` settings) are kept as comments and come back when the folder is removed with **Stop monitoring + remove SACL**. Shares defined in included files or in the registry are not changed.
+- Auditing starts with new connections to the share; clients that are already connected are recorded after they reconnect.
+- Paths are case-sensitive. User names are those Samba logs in (`DOMAIN\user` on domain members); the client machine name comes from the SMB connection.
+- Reads and writes are the access the client asked for when opening a file, as on Windows; deletions and renames are recorded when they happen.
+- To remove the agent: remove its folders on the monitoring server first, then run `sudo sh install.sh --uninstall` in the unpacked folder (add `--purge` to delete its data too).
 
 ## Security
 

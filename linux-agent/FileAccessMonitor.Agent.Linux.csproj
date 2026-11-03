@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <!-- The Linux agent: collects Samba (SMB) file accesses and sends them to a monitoring server.
+       Shares the agent protocol, outbox and rules with the Windows service (linked below). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FileAccessMonitor.Agent.Linux</RootNamespace>
+    <AssemblyName>fileaccessmonitor-agent</AssemblyName>
+    <DefineConstants>$(DefineConstants);LINUX_AGENT</DefineConstants>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Development builds; release builds pass /p:Version -->
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+    <Content Remove="tests/**" />
+    <None Remove="tests/**" />
+    <Compile Include="..\Models\AccessRecord.cs" Link="Shared\AccessRecord.cs" />
+    <Compile Include="..\Services\AgentCore.cs" Link="Shared\AgentCore.cs" />
+    <Compile Include="..\Services\AgentProtocol.cs" Link="Shared\AgentProtocol.cs" />
+    <Compile Include="..\Services\AppPaths.cs" Link="Shared\AppPaths.cs" />
+    <Compile Include="..\Services\RecordingRules.cs" Link="Shared\RecordingRules.cs" />
+    <Compile Include="..\Services\SettingsStore.cs" Link="Shared\SettingsStore.cs" />
+    <InternalsVisibleTo Include="FileAccessMonitor.Agent.Linux.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

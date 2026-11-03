@@ -325,6 +325,7 @@ tbody tr:hover td { background: var(--surface2); }
       <a class="nav-link" href="#agent-endpoint">エージェント用ポート</a>
       <a class="nav-link" href="#agent-protocol">登録と送信</a>
       <a class="nav-link" href="#agent-config">設定の配布と指示</a>
+      <a class="nav-link" href="#linux-agent">Linux エージェント</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">バックエンド</div>
@@ -384,6 +385,7 @@ tbody tr:hover td { background: var(--surface2); }
           <tbody>
             <tr><td>1 台構成 / 監視サーバー</td><td><code>agent.json</code> がない</td><td>ローカル収集（<code>LocalRecordSink</code>）、Web GUI と API、DB、通知、エージェント用ポート、エージェント監視</td></tr>
             <tr><td>エージェント</td><td><code>%ProgramData%\FileAccessMonitor\agent.json</code> がある</td><td>収集（<code>RemoteRecordSink</code>）、送信（<code>AgentSender</code>）、指示の実行（<code>AgentJobRunner</code>）。Web GUI と DB はない（<code>AgentHost.RunAsync</code>）</td></tr>
+            <tr><td>Linux エージェント</td><td>別の実行ファイル <code>fileaccessmonitor-agent</code>（<code>linux-agent/</code>）</td><td>Samba の監査ログの収集（<code>SambaAuditCollector</code>）、送信と指示の実行（Windows 版と共通）。<a href="#linux-agent">Linux エージェント</a>を参照</td></tr>
           </tbody>
         </table>
       </div>
@@ -450,7 +452,7 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
             <tr><td>AuditLogs</td><td>操作ログ（Time, UserName, Action, Detail, ClientIp）。ログイン、設定変更、CSV 出力、通知の送信、エージェントの登録・無応答など。Time にインデックス</td></tr>
             <tr><td>CollectorStates</td><td>キー/値。<code>LastRecordId</code> = ローカル収集の Security ログ読み取り位置</td></tr>
             <tr><td>UserScopes</td><td>Viewer の閲覧範囲（UserId, Paths, NotifyEmail）。Paths は 1 行 1 件で <code>SERVER|D:\Share</code> または <code>D:\Share</code>（全サーバー）</td></tr>
-            <tr><td>Agents</td><td>エージェント（Id, Name, KeyHash, CreatedAt, LastSeenAt, Version, LastBatchSeq, Disabled, Config, ConfigVersion, OutboxCount, AuditPolicyOk）</td></tr>
+            <tr><td>Agents</td><td>エージェント（Id, Name, KeyHash, CreatedAt, LastSeenAt, Version, LastBatchSeq, Disabled, Config, ConfigVersion, OutboxCount, AuditPolicyOk, Os）</td></tr>
             <tr><td>AgentEnrollments</td><td>未使用の登録コード（CodeHash, ExpiresAt）。使うと削除</td></tr>
             <tr><td>AspNet*</td><td>ASP.NET Identity（ユーザー、ロール Admin / Viewer ほか）</td></tr>
           </tbody>
@@ -588,7 +590,7 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
         <li>収集した記録は、まず送信待ちフォルダ <code>outbox\</code> に通し番号のファイルとして書く（最大 2 GB）。読み取り位置は <code>agent-position.txt</code></li>
         <li>古い順に <code>POST /api/agent/batch</code>。成功したら削除。失敗したら 5 秒から最大 5 分まで間隔を広げて再試行。401 のときは 5 分待つ（無効化・削除されたエージェント）</li>
         <li>監視サーバーは通し番号を確認し、保存済みの番号なら保存せずに成功を返す（応答が失われた再送を二重に保存しない）。記録と番号は 1 トランザクション</li>
-        <li>送るものがないときは 1 分ごとに <code>heartbeat</code>（バージョン、送信待ち件数、監査ポリシーが有効か）。バッチ送信時も <code>X-Agent-Outbox</code> ヘッダーで残り件数を伝える</li>
+        <li>送るものがないときは 1 分ごとに <code>heartbeat</code>（バージョン、送信待ち件数、監査が有効か、OS 名。Linux で監視フォルダがないときの監査は null で、一覧では「-」）。バッチ送信時も <code>X-Agent-Outbox</code> ヘッダーで残り件数を伝える</li>
         <li>記録の途切れの報告も、送信待ちフォルダ経由で同じ順番で送る</li>
         <li>接続元の端末名は、エージェントがログオンイベントから分かった場合だけ付けて送る。分からない記録は、監視サーバーが受け取ったときに自分の逆引き DNS 設定で解決する（IP ごとに 1 回、キャッシュあり）。DNS の設定と経路は監視サーバーだけで済む</li>
       </ul>
@@ -612,6 +614,30 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
           </tbody>
         </table>
       </div>
+      <p>エージェントの処理のうち Windows と Linux で共通の部分（<code>AgentConfig</code>、<code>AgentOutbox</code>、<code>AgentSender</code>、<code>AgentSettingsSync</code>、<code>AgentJobRunner</code>、<code>AgentCommands</code>）は <code>Services/AgentCore.cs</code> にあり、違う部分は <code>IAgentPlatform</code>（監査が有効か、ジョブの実行）で差し替えます。Windows は <code>WindowsAgentPlatform</code>（SACL）、Linux は <code>LinuxAgentPlatform</code>（Samba）です。</p>
+    </section>
+
+    <!-- Linux エージェント -->
+    <section id="linux-agent">
+      <h2>Linux エージェント</h2>
+      <p>Samba で共有している Linux のファイルサーバー用。<code>linux-agent/FileAccessMonitor.Agent.Linux.csproj</code>（<code>net10.0</code>、linux-x64 の自己完結・単一ファイル）で、共通のソース（<code>AgentCore.cs</code>、<code>AgentProtocol.cs</code>、<code>RecordingRules.cs</code>、<code>SettingsStore.cs</code>、<code>AppPaths.cs</code>、<code>AccessRecord.cs</code>）をリンクして使います（<code>LINUX_AGENT</code> 定数で鍵ファイルの保存方法だけ切り替え）。systemd のサービス <code>fileaccessmonitor-agent</code>（<code>Type=notify</code>、root）として動き、データは <code>/var/lib/fileaccessmonitor</code>。</p>
+      <h3>収集</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>Samba の <code>full_audit</code> モジュールが syslog に出す行を、<code>journalctl --follow --output=json SYSLOG_IDENTIFIER=smbd_audit</code> で読む。続きの位置はジャーナルのカーソルで、送信待ちフォルダと一緒に保存（<code>agent-position.txt</code>）</li>
+        <li>行の形式（<code>full_audit:prefix = %u|%I|%m|%S|%P</code>）: <code>ユーザー|接続元IP|端末名|共有名|共有のパス|操作|ok|引数…</code></li>
+        <li><code>create_file</code>: 要求したアクセスマスクで読取・書込を判定（Windows と同じビット）。<code>dir</code> ならフォルダとして覚える。<code>renameat</code> は名前変更（元のパスで記録）、<code>unlinkat</code> は削除。Samba 4.14 より前は <code>rename</code> / <code>unlink</code> / <code>rmdir</code></li>
+        <li>監視フォルダ・記録ルール・読取のまとめ・フォルダの扱い（削除・名前変更のみ記録）は Windows と同じ。パスは大文字と小文字を区別</li>
+        <li>journald が流量制限で行を捨てると「Suppressed N messages」を記録するので、それを読んで記録の途切れ（<code>gap.journalSuppressed</code>）として通知。カーソルの位置がジャーナルから消えていた場合も通知（<code>gap.journalRotated</code>）。インストーラーは smbd に <code>LogRateLimitIntervalSec=0</code> の drop-in を追加</li>
+      </ul>
+      <h3>監査の設定（applySacl / removeSacl）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>フォルダを含む共有と、フォルダの中にある共有を <code>smb.conf</code>（<code>smbd -b</code> の CONFIGFILE）から探し、その共有のセクションに <code># FileAccessMonitor begin</code> 〜 <code>end</code> の行（<code>vfs objects</code> に <code>full_audit</code> を加えたもの、<code>full_audit:*</code>）を追加（<code>SambaConfigText</code>）。共有の <code>vfs objects</code> は global のものを置き換えるため、今有効なモジュールを引き継ぐ</li>
+        <li>置き換えた行は <code># FileAccessMonitor replaced: </code> を付けてコメントにし、解除で元に戻す。解除は、他の監視フォルダが使っている共有では行わない</li>
+        <li>書き換えは <code>testparm -s</code> で確認してから、バックアップ（<code>smb.conf.fam-backup-日時</code>）を残して置き換え、<code>smbcontrol smbd reload-config</code>。結果に <code>kind: "samba"</code> を付け、監視サーバーは「N 個の共有で監査を有効にしました」と表示</li>
+        <li>heartbeat の「監査」は、すべての監視フォルダが監査中の共有に含まれるか</li>
+      </ul>
+      <h3>監視サーバー側</h3>
+      <p><code>PathText</code> で Windows のパス（<code>\</code>、大文字小文字を区別しない）と Linux のパス（<code>/</code> で始まる、区別する）を扱います。閲覧範囲は Linux のパスを <code>substr</code> の完全一致で絞り、未使用ファイル・フォルダ別の名前も区切り文字に合わせます。</p>
     </section>
 
     <!-- サービス -->
@@ -696,7 +722,7 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
       <div class="card">
         <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agent/enroll</span><span class="endpoint-desc">登録（キー不要、登録コード）</span></div>
         <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agent/batch</span><span class="endpoint-desc">{seq, records?, gap?}</span></div>
-        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agent/heartbeat</span><span class="endpoint-desc">{version, outboxCount, auditPolicyOk} → {configVersion}</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/agent/heartbeat</span><span class="endpoint-desc">{version, outboxCount, auditPolicyOk, os} → {configVersion}</span></div>
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/agent/config</span><span class="endpoint-desc">監視フォルダと記録ルール</span></div>
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/agent/jobs</span><span class="endpoint-desc">long poll（204 = 指示なし）。結果は POST /api/agent/jobs/{id}</span></div>
       </div>
@@ -808,9 +834,12 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
       <h2>ビルド・リリース</h2>
       <pre><code>.\build.ps1 -Version 1.5.0              # publish\（自己完結・単一ファイル）
 .\build-installer.ps1 -Version 1.5.0    # dist\FileAccessMonitor-Setup-1.5.0.exe（Inno Setup 6）
-dotnet test tests/FileAccessMonitor.Tests</code></pre>
+dotnet test tests/FileAccessMonitor.Tests
+dotnet test linux-agent/tests            # Linux エージェント（Windows 上でも実行できる）
+dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true \
+  /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true</code></pre>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
-        <li>GitHub Actions: <code>ci.yml</code>（push / PR でビルド・テスト）、<code>release.yml</code>（<code>v*</code> タグでインストーラー・zip・SHA256SUMS を作って Release に公開。ビルド証明（artifact attestation）を付ける。SignPath の署名手順は変数設定時のみ動く）</li>
+        <li>GitHub Actions: <code>ci.yml</code>（push / PR でビルド・テスト）、<code>release.yml</code>（<code>v*</code> タグでインストーラー・zip・Linux エージェントの tar.gz・SHA256SUMS を作って Release に公開。ビルド証明（artifact attestation）を付ける。SignPath の署名手順は変数設定時のみ動く）</li>
         <li>インストーラー: 役割（1 台構成・監視サーバー / エージェント）、Web のポート、ファイアウォール（FileAccessMonitor.exe を許可するプログラム単位の規則 1 つ。Web とエージェント用ポートの両方が対象。旧版のポート単位の規則「File Access Monitor Web / Agents」は更新時に置き換え。既存の規則は更新時に残し、削除はアンインストール時のみ）。エージェントは接続文字列を受け取って <code>enroll</code> を実行。サイレント: <code>/ROLE=agent /CONNECTION=FAM1.…</code></li>
       </ul>
     </section>

@@ -21,7 +21,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Test
-        run: dotnet test tests/FileAccessMonitor.Tests -c Release
+        run: |
+          dotnet test tests/FileAccessMonitor.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          dotnet test linux-agent/tests -c Release
 
       - name: Install Inno Setup
         shell: pwsh
@@ -88,6 +91,13 @@ jobs:
           $v = "${{ github.ref_name }}".TrimStart('v')
           Compress-Archive -Path publish, install-service.ps1, setup-audit.ps1, restore-audit.ps1, LICENSE, README.md, README.ja.md `
                            -DestinationPath "dist/FileAccessMonitor-$v-win-x64.zip"
+          # Linux agent (Samba): one self-contained file, its systemd unit and installer
+          $linux = "FileAccessMonitor-$v-linux-x64"
+          dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true `
+            -o "linux-dist/$linux" /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None /p:Version=$v
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Copy-Item linux-agent/install.sh, linux-agent/fileaccessmonitor-agent.service, LICENSE, README.md, README.ja.md "linux-dist/$linux/"
+          tar -czf "dist/$linux.tar.gz" -C linux-dist $linux
           Get-ChildItem dist -File | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content dist/SHA256SUMS.txt -Encoding ascii

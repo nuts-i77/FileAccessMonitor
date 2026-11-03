@@ -139,7 +139,8 @@ public class AgentTests : IDisposable
         Assert.True(await sink.SaveAsync([Rec("c.txt")], 130));
 
         var reopened = new AgentOutbox(_dir); // service restart
-        Assert.Equal(130, reopened.Position);
+        Assert.Equal("130", reopened.Position);
+        Assert.Equal(130, await new RemoteRecordSink(reopened, NullLogger<RemoteRecordSink>.Instance).LoadPositionAsync());
         Assert.Equal(3, reopened.Count);
 
         var first = reopened.Oldest()!.Value;

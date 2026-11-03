@@ -55,10 +55,15 @@ public class AgentGap
     public List<string> Args { get; set; } = [];
 }
 
+// Something an agent does on its own server for the GUI: check a folder, set up or remove its
+// auditing, list its files
+public record AgentJob(string Id, string Type, System.Text.Json.Nodes.JsonObject Args);
+
 public record EnrollRequest(string Code, string Name, string? Version);
 public record EnrollResponse(string AgentId, string Key);
-// OutboxCount: batches waiting on the agent; AuditPolicyOk: whether File System auditing is on there
-public record HeartbeatRequest(string? Version, int? OutboxCount = null, bool? AuditPolicyOk = null);
+// OutboxCount: batches waiting on the agent; AuditPolicyOk: whether file access auditing is on there
+// (File System auditing on Windows, Samba's audit module on Linux); Os: the agent's operating system
+public record HeartbeatRequest(string? Version, int? OutboxCount = null, bool? AuditPolicyOk = null, string? Os = null);
 
 // Everything an agent needs to register, in one string an Admin copies from the GUI:
 // the agent endpoint URL, the SHA-256 fingerprint of its certificate, and a one-time code.

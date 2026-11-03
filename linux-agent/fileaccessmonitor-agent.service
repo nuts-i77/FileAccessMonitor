@@ -1,0 +1,17 @@
+[Unit]
+Description=FileAccessMonitor agent (records Samba file accesses for a monitoring server)
+After=network-online.target smbd.service smb.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/opt/fileaccessmonitor/fileaccessmonitor-agent
+Restart=always
+RestartSec=10
+# Stop the agent first; it ends the journalctl it reads from itself
+KillMode=mixed
+# Reads the journal, edits smb.conf and lists shared folders
+User=root
+
+[Install]
+WantedBy=multi-user.target

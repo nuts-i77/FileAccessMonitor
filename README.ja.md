@@ -2,7 +2,7 @@
 
 [English](README.md) | 日本語
 
-Windows ファイルサーバーの共有フォルダへのアクセス（読取・書込・削除）を Windows のセキュリティ監査ログから収集・集計し、Web GUI で可視化するツールです。
+Windows ファイルサーバーの共有フォルダへのアクセス（読取・書込・削除）を Windows のセキュリティ監査ログから収集・集計し、Web GUI で可視化するツールです。Samba で共有している Linux のファイルサーバーの記録も、エージェントで集められます。
 
 ![ダッシュボード](docs/images/dashboard-ja.png)
 
@@ -125,6 +125,32 @@ wevtutil sl Security /ms:1073741824   # 1GB
 3. 登録済みのエージェントは古いアドレスのままです。接続文字列を発行し直し、各ファイルサーバーで `FileAccessMonitor.exe enroll <接続文字列>` を実行してサービスを再起動してください
 
 エージェントを使わず、ポートを開けたくない場合は、代わりに `"Agents": { "Enabled": false }` を指定します。
+
+### 7. Linux のファイルサーバー（Samba エージェント）
+
+Samba でフォルダを共有している Linux のファイルサーバーからも、監視サーバーに記録を送れます。Linux 版エージェントは、Samba の `full_audit` モジュールが出す監査ログを systemd のジャーナルから読みます。記録するのは SMB 共有経由のアクセスです（NFS や、サーバー上での直接の操作は対象外）。
+
+必要なもの: systemd と Samba 4.x が動く x86-64 の Linux（Ubuntu 24.04 + Samba 4.19、Rocky Linux 9.4 + Samba 4.23 で確認。Debian、RHEL、AlmaLinux も同じ手順）と root 権限
+
+1. リリースページから `FileAccessMonitor-<バージョン>-linux-x64.tar.gz` をダウンロードし、ファイルサーバーで展開します
+2. 監視サーバーの **設定 → エージェント** で接続文字列を発行し、root で次を実行します
+
+   ```sh
+   tar xzf FileAccessMonitor-<バージョン>-linux-x64.tar.gz
+   cd FileAccessMonitor-<バージョン>-linux-x64
+   sudo sh install.sh <接続文字列>
+   ```
+   エージェントは systemd のサービス `fileaccessmonitor-agent` として動きます（ログ: `journalctl -u fileaccessmonitor-agent`）。データは `/var/lib/fileaccessmonitor` にあります
+3. 都合のよいときに Samba を 1 回再起動します（`systemctl restart smbd`。RHEL 系は `smb`）。監査ログが大量に出たときに journald が捨てないよう、インストーラーが設定を追加しており、Samba の再起動で有効になります
+4. 監視サーバーの **設定** タブで Linux のサーバーを選び、`/srv/share/docs` のように Linux のパスで監視フォルダを追加します
+
+Windows との違い:
+
+- 監視フォルダを追加すると、そのフォルダを含む（またはその中にある）Samba の共有で、`smb.conf` を書き換えて監査を有効にします。書き換える前に `testparm` で新しい設定を確認し、バックアップ（`smb.conf.fam-backup-<日時>`）を残してから Samba に読み込み直させます。追加した行は `# FileAccessMonitor begin` と `# FileAccessMonitor end` の間にあり、置き換えた行（共有ごとの `vfs objects` や `full_audit` の設定）はコメントとして残します。**監視停止 ＋ SACL も削除** で監視フォルダを外すと元に戻ります。include したファイルやレジストリで定義した共有は変更しません
+- 監査は共有への新しい接続から始まります。すでに接続しているクライアントは、接続し直したあとから記録されます
+- パスは大文字と小文字を区別します。ユーザー名は Samba が記録する名前（ドメイン参加時は `DOMAIN\user`）で、接続元の端末名は SMB の接続から取ります
+- 読み取り・書き込みは、Windows と同じくファイルを開くときに要求したアクセスで判断します。削除と名前変更は、実際に行われたときに記録します
+- アンインストールは、先に監視サーバーでそのサーバーの監視フォルダを外してから、展開したフォルダで `sudo sh install.sh --uninstall` を実行します（データも消す場合は `--purge` を付けます）
 
 ## セキュリティ
 

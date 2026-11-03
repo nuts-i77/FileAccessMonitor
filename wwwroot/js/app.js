@@ -1172,11 +1172,18 @@ async function loadAgents() {
     // A growing outbox means records are not getting through
     const outbox = a => a.outboxCount > 0
       ? `<span class="${a.outboxCount >= 100 ? 'text-danger fw-semibold' : 'text-warning'}">${fmtNum(a.outboxCount)}</span>` : '0';
+    // Windows or Linux (Samba), with the full name on hover; agents before 1.7 do not report it
+    const isLinux = a => !!a.os && !/^windows/i.test(a.os);
+    const os = a => !a.os ? '-'
+      : isLinux(a)
+        ? `<span class="badge bg-dark" title="${esc(a.os)}"><i class="bi bi-terminal me-1"></i>Linux</span> <span class="small text-muted">${esc(a.os)}</span>`
+        : `<span class="badge bg-primary" title="${esc(a.os)}"><i class="bi bi-windows me-1"></i>Windows</span> <span class="small text-muted">${esc(a.os)}</span>`;
     const auditPolicy = a => a.auditPolicyOk == null ? '-'
       : a.auditPolicyOk ? `<span class="badge bg-success-subtle text-success-emphasis">${t('agents.auditOn')}</span>`
-        : `<span class="badge bg-danger" title="${t('agents.auditOffHint')}">${t('agents.auditOff')}</span>`;
+        : `<span class="badge bg-danger" title="${t(isLinux(a) ? 'agents.auditOffHintLinux' : 'agents.auditOffHint')}">${t('agents.auditOff')}</span>`;
     tbody.innerHTML = d.agents.map(a => `<tr>
       <td><i class="bi bi-hdd me-1 text-muted"></i>${esc(a.name)}</td>
+      <td>${os(a)}</td>
       <td>${fmtDate(a.lastSeenAt)}</td>
       <td>${version(a)}</td>
       <td>${status(a)}</td>
@@ -1188,7 +1195,7 @@ async function loadAgents() {
         <button class="btn btn-sm btn-outline-danger py-0" title="${t('agents.remove')}"
           data-name="${esc(a.name)}" onclick="deleteAgent('${esc(a.id)}', this.dataset.name)"><i class="bi bi-trash"></i></button>
       </div></td>
-    </tr>`).join('') || `<tr><td colspan="7" class="text-muted text-center py-3">${t('agents.none')}</td></tr>`;
+    </tr>`).join('') || `<tr><td colspan="8" class="text-muted text-center py-3">${t('agents.none')}</td></tr>`;
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" class="text-danger small p-3">${esc(e.message)}</td></tr>`;
   }
