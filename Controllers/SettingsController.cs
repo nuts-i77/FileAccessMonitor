@@ -299,7 +299,16 @@ public class SettingsController : ControllerBase
     {
         if (!ServerConfigService.IsLocal(server)) return await RunOnAgentAsync(server!, type, args);
         if (_local == null) return (null, BadRequest(new { error = Messages.Get("local.notCollecting") }));
-        var result = await Task.Run(() => _local.RunJob(new AgentJob("local", type, args), HttpContext.RequestAborted));
+        JsonObject result;
+        try
+        {
+            result = await Task.Run(() => _local.RunJob(new AgentJob("local", type, args), HttpContext.RequestAborted));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // As an agent reports a failed job: the message instead of an error page
+            return (null, BadRequest(new { error = ex.Message }));
+        }
         if (result["error"]?.GetValue<string>() is { } message) return (null, BadRequest(new { error = message }));
         return (result, null);
     }

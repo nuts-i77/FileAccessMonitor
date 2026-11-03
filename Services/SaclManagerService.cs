@@ -110,6 +110,13 @@ public class SaclManagerService
     // One entry for both outcomes: success gives the access events, failure the refused attempts.
     internal const AuditFlags AuditedFlags = AuditFlags.Success | AuditFlags.Failure;
 
+    // Folders this service cannot open (a deny entry, for example) are skipped instead of ending the
+    // whole walk; they keep their old SACL
+    private static readonly EnumerationOptions WalkOptions = new()
+    {
+        RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0,
+    };
+
     // Replace (not merge) any existing Everyone audit entry, so re-applying
     // narrows SACLs that were set by older versions.
     private static void ReplaceAuditRule(FileSystemSecurity acl, FileSystemAuditRule rule)
@@ -150,7 +157,7 @@ public class SaclManagerService
         }
 
         // Apply recursively to existing items
-        foreach (var entry in Directory.EnumerateFileSystemEntries(path, "*", SearchOption.AllDirectories))
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path, "*", WalkOptions))
         {
             try
             {
@@ -207,7 +214,7 @@ public class SaclManagerService
         }
 
         // Remove from all existing items recursively
-        foreach (var entry in Directory.EnumerateFileSystemEntries(path, "*", SearchOption.AllDirectories))
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path, "*", WalkOptions))
         {
             try
             {
