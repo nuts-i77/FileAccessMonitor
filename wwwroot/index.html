@@ -62,12 +62,13 @@
 
 <div class="container-fluid mt-3">
 
+  <div id="httpWarning"></div>
   <div id="updateBanner"></div>
   <div id="agentUpdateBanner"></div>
 
   <!-- Summary Cards -->
   <div class="row g-3 mb-3" id="summaryCards">
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
       <div class="card text-bg-primary h-100">
         <div class="card-body">
           <div class="small text-white-50" data-i18n="card.total">総アクセス数</div>
@@ -75,7 +76,7 @@
         </div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
       <div class="card text-bg-success h-100">
         <div class="card-body">
           <div class="small text-white-50" data-i18n="card.files">対象ファイル数</div>
@@ -83,7 +84,7 @@
         </div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
       <div class="card text-bg-warning h-100">
         <div class="card-body">
           <div class="small text-white-50" data-i18n="card.users">アクセスユーザー数</div>
@@ -91,11 +92,20 @@
         </div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
       <div class="card text-bg-info h-100">
         <div class="card-body">
           <div class="small text-white-50" data-i18n="card.types">アクセス種別</div>
           <div id="accessTypesBadge" class="mt-1"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md">
+      <div class="card text-bg-danger h-100">
+        <div class="card-body">
+          <div class="small text-white-50" data-i18n="dash.denied">アクセス拒否（期間内）</div>
+          <div class="fs-3 fw-bold" id="deniedCount">-</div>
+          <a href="#" class="small link-light" onclick="showDeniedLog(); return false;" data-i18n="dash.deniedShow">一覧を表示</a>
         </div>
       </div>
     </div>
@@ -202,8 +212,10 @@
             <option value="" data-i18n="type.all">全種別</option>
             <option value="Read" data-i18n="type.read">読取</option>
             <option value="Write" data-i18n="type.write">書込</option>
+            <option value="Create" data-i18n="type.create">作成</option>
             <option value="Delete" data-i18n="type.delete">削除</option>
             <option value="Rename" data-i18n="type.rename">名前変更</option>
+            <option value="Permission" data-i18n="type.permission">権限変更</option>
           </select>
         </div>
       </div>
@@ -297,8 +309,13 @@
   <!-- Recent Tab -->
   <div id="tab-recent" class="d-none">
     <div class="card">
-      <div class="card-header fw-semibold">
-        <i class="bi bi-clock-history me-1"></i><span data-i18n="recent.title">最新アクセスログ</span>
+      <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-1"></i><span data-i18n="recent.title">最新アクセスログ</span></span>
+        <select id="recentResult" class="form-select form-select-sm" style="width:auto" onchange="loadRecent(1)" data-i18n-title="filter.result" title="結果">
+          <option value="" data-i18n="filter.resultAll">拒否を含むすべて</option>
+          <option value="only" data-i18n="filter.deniedOnly">拒否のみ</option>
+          <option value="exclude" data-i18n="filter.excludeDenied">拒否を除く</option>
+        </select>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
@@ -383,8 +400,19 @@
               <option value="" data-i18n="type.all">全種別</option>
               <option value="Read" data-i18n="type.read">読取</option>
               <option value="Write" data-i18n="type.write">書込</option>
+              <option value="Create" data-i18n="type.create">作成</option>
               <option value="Delete" data-i18n="type.delete">削除</option>
               <option value="Rename" data-i18n="type.rename">名前変更</option>
+              <option value="Permission" data-i18n="type.permission">権限変更</option>
+            </select>
+          </div>
+          <!-- Result filter -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small text-muted" data-i18n="filter.result">結果</label>
+            <select id="searchResult" class="form-select">
+              <option value="" data-i18n="filter.resultAll">すべて</option>
+              <option value="only" data-i18n="filter.deniedOnly">拒否のみ</option>
+              <option value="exclude" data-i18n="filter.excludeDenied">拒否を除く</option>
             </select>
           </div>
           <!-- Search button -->
@@ -492,11 +520,15 @@
                 </div>
                 <div class="form-check">
                   <input class="form-check-input" type="checkbox" id="newPathWrite" checked>
-                  <label class="form-check-label small" for="newPathWrite" data-i18n="type.write">書込</label>
+                  <label class="form-check-label small" for="newPathWrite" data-i18n="type.writeCreate">書込・作成</label>
                 </div>
                 <div class="form-check">
                   <input class="form-check-input" type="checkbox" id="newPathDelete" checked>
                   <label class="form-check-label small" for="newPathDelete" data-i18n="type.deleteRename">削除・名前変更</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="newPathPermission" checked>
+                  <label class="form-check-label small" for="newPathPermission" data-i18n="type.permissionChanges">権限変更</label>
                 </div>
               </div>
             </div>
@@ -510,6 +542,7 @@
         </div>
       </div>
       <div class="col-12">
+        <div id="reapplyBanner"></div>
         <div id="settingsAlert"></div>
       </div>
       <!-- Recording rules (Admin only) -->
@@ -543,6 +576,13 @@
                   <span class="input-group-text" data-i18n="recording.minutes">分</span>
                 </div>
                 <div class="form-text" data-i18n="recording.mergeHint">同じユーザーが同じファイルを、前回の読取からこの時間内に再び読んだ場合は記録しません（0 = すべて記録）。書込・削除・名前変更は常に記録します。</div>
+              </div>
+              <div class="col-12 col-md-6">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="recRecordDenied">
+                  <label class="form-check-label small" for="recRecordDenied" data-i18n="settings.recordDenied">拒否されたアクセスも記録する</label>
+                </div>
+                <div class="form-text" id="recRecordDeniedHelp" data-i18n="settings.recordDeniedHelp">権限がなく拒否された読取・書込・削除の試みも記録します。Windows では、アップグレード後に一度「SACL を再適用」が必要です。Linux では「再適用」後に有効になります。</div>
               </div>
               <div class="col-12 d-flex gap-2">
                 <button class="btn btn-primary btn-sm" onclick="saveRecordingSettings()">
@@ -652,6 +692,18 @@
         </div>
       </div>
 
+      <!-- Web GUI connection (Admin only; read-only: switching is done by the installer or the command line) -->
+      <div class="col-12 d-none" id="webTlsSection">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-shield-lock me-1"></i><span data-i18n="web.card.title">Web GUI の接続（HTTPS）</span>
+          </div>
+          <div class="card-body small" id="webTlsBody">
+            <div class="spinner-border spinner-border-sm"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Reverse DNS -->
       <div class="col-12">
         <div class="card">
@@ -727,6 +779,10 @@
                 <input type="number" id="alertReadThreshold" class="form-control form-control-sm" min="0">
               </div>
               <div class="col-6 col-md-3">
+                <label class="form-label small text-muted" for="alertDeniedThreshold" data-i18n="alerts.deniedThreshold">アクセス拒否のしきい値（件）</label>
+                <input type="number" id="alertDeniedThreshold" class="form-control form-control-sm" min="0">
+              </div>
+              <div class="col-6 col-md-3">
                 <label class="form-label small text-muted" for="alertWindowMinutes" data-i18n="alerts.window">集計時間（分）</label>
                 <input type="number" id="alertWindowMinutes" class="form-control form-control-sm" min="1">
               </div>
@@ -739,6 +795,13 @@
                 <input type="number" id="alertAgentOfflineMinutes" class="form-control form-control-sm" min="0">
               </div>
               <div class="col-12 form-text mt-1" data-i18n="alerts.thresholdHint">0 にするとその種別は通知しません。</div>
+              <div class="col-12">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="alertRansomwareEnabled">
+                  <label class="form-check-label" for="alertRansomwareEnabled" data-i18n="alerts.ransomwareEnabled">ランサムウェアに似た動作を検知して緊急通知する</label>
+                </div>
+                <div class="form-text" data-i18n="alerts.ransomwareHint">同じ拡張子への一斉な名前変更、大量の書き込みと名前変更、複数フォルダへの脅迫文ファイルの作成を検知します。自動的な対処は行いません。</div>
+              </div>
 
               <div class="col-12"><hr class="my-1"><span class="fw-semibold small" data-i18n="alerts.webhook">Webhook（Teams / Slack など）</span></div>
               <div class="col-12 col-md-3">

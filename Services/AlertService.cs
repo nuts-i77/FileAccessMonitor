@@ -18,6 +18,16 @@ public class AlertSettings
     public int DeleteThreshold { get; set; } = 100;
     public int WriteThreshold { get; set; }
     public int ReadThreshold { get; set; }
+    // Refused attempts per user within the window (0 = off)
+    public int DeniedThreshold { get; set; } = 20;
+    // Ransomware-like behaviour: on/off in the GUI, the numbers only in settings.json
+    public bool RansomwareEnabled { get; set; } = true;
+    public int RansomwareWindowMinutes { get; set; } = 2;
+    public int RansomwareSameExtensionRenames { get; set; } = 20;
+    public int RansomwareBurstWrites { get; set; } = 100;
+    public int RansomwareBurstRenames { get; set; } = 50;
+    public int RansomwareNoteFolders { get; set; } = 3;
+    public int RansomwareCooldownMinutes { get; set; } = 30;
     public int WindowMinutes { get; set; } = 5;
     public int CooldownMinutes { get; set; } = 30;
     // Notify when an agent has not been in touch for this long (0 = never)
@@ -37,7 +47,9 @@ public class AlertSettings
     public string? ProxyUser { get; set; }
     public string? ProxyPassword { get; set; }
 
-    [JsonIgnore] public AlertRules Rules => new(DeleteThreshold, WriteThreshold, WindowMinutes, CooldownMinutes, ReadThreshold);
+    [JsonIgnore] public AlertRules Rules => new(DeleteThreshold, WriteThreshold, WindowMinutes, CooldownMinutes, ReadThreshold,
+        DeniedThreshold, new RansomwareRules(RansomwareEnabled, RansomwareWindowMinutes, RansomwareSameExtensionRenames,
+            RansomwareBurstWrites, RansomwareBurstRenames, RansomwareNoteFolders, RansomwareCooldownMinutes));
     [JsonIgnore] public bool HasWebhook => !string.IsNullOrWhiteSpace(WebhookUrl);
     [JsonIgnore] public bool HasMail => !string.IsNullOrWhiteSpace(SmtpHost) && !string.IsNullOrWhiteSpace(MailTo);
 
@@ -216,7 +228,8 @@ public class AlertService
         var results = await SendAsync(s, title, body, alert);
         var channels = string.Join(", ", results.Select(r => $"{r.Channel}={(r.Ok ? "ok" : "failed")}"));
         await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent",
-            $"type={alert.AccessType}, server={alert.ServerName}, user={alert.UserName}, count={alert.Count}, channels=[{channels}]"
+            $"type={alert.AccessType}, " + (alert.Rule.Length > 0 ? $"rule={alert.Rule}, " : "")
+            + $"server={alert.ServerName}, user={alert.UserName}, count={alert.Count}, channels=[{channels}]"
             + (recipient == null ? "" : $", folderRecipient={recipient}"));
     }
 
@@ -226,6 +239,8 @@ public class AlertService
         {
             "Delete" => "alert.deleteTitle",
             "Read" => "alert.readTitle",
+            "Denied" => "alert.deniedTitle",
+            "Ransomware" => "alert.ransomwareTitle",
             _ => "alert.writeTitle",
         });
         string Local(DateTime utc) => utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
@@ -235,20 +250,23 @@ public class AlertService
         sb.AppendLine(Messages.GetIn(lang, "alert.user", a.UserName));
         sb.AppendLine(Messages.GetIn(lang, "alert.count", a.Count, a.WindowMinutes));
         sb.AppendLine(Messages.GetIn(lang, "alert.period", Local(a.FromUtc), Local(a.ToUtc)));
+        if (a.Rule.Length > 0) sb.AppendLine(Messages.GetIn(lang, "alert.rule." + a.Rule));
+        if (!string.IsNullOrEmpty(a.Detail)) sb.AppendLine(Messages.GetIn(lang, "alert.detail", a.Detail));
         sb.AppendLine(Messages.GetIn(lang, "alert.client", client));
         sb.AppendLine(Messages.GetIn(lang, "alert.server", a.ServerName.Length > 0 ? a.ServerName : Environment.MachineName));
         sb.AppendLine(Messages.GetIn(lang, "alert.folders"));
         foreach (var (folder, count) in a.TopFolders) sb.AppendLine($"  {folder} ({count})");
         sb.AppendLine(Messages.GetIn(lang, "alert.samples"));
         foreach (var path in a.SamplePaths) sb.AppendLine($"  {path}");
-        return ($"[FileAccessMonitor] {title}", sb.ToString().TrimEnd());
+        var prefix = a.Priority == "High" ? Messages.GetIn(lang, "alert.highPriority") + " " : "";
+        return ($"{prefix}[FileAccessMonitor] {title}", sb.ToString().TrimEnd());
     }
 
     private async Task<List<ChannelResult>> SendAsync(AlertSettings s, string title, string body, Alert? alert)
     {
         var results = new List<ChannelResult>();
         if (s.HasWebhook) results.Add(await TrySend("webhook", () => SendWebhookAsync(s, title, body, alert)));
-        if (s.HasMail) results.Add(await TrySend("email", () => SendMailAsync(s, title, body)));
+        if (s.HasMail) results.Add(await TrySend("email", () => SendMailAsync(s, title, body, alert?.Priority == "High")));
         return results;
     }
 
@@ -293,7 +311,7 @@ public class AlertService
                     },
                 },
             },
-            "generic" => new { title, text = body, alert },
+            "generic" => new { title, text = body, priority = alert?.Priority == "High" ? "high" : "normal", alert },
             _ => new { text = $"*{title}*\n{body}" },   // Slack incoming webhook
         };
 
@@ -311,7 +329,7 @@ public class AlertService
         return new HttpClient(new SocketsHttpHandler { Proxy = proxy, UseProxy = true }, disposeHandler: true);
     }
 
-    private static async Task SendMailAsync(AlertSettings s, string title, string body)
+    private static async Task SendMailAsync(AlertSettings s, string title, string body, bool highPriority = false)
     {
         using var message = new MailMessage
         {
@@ -321,6 +339,8 @@ public class AlertService
             BodyEncoding = Encoding.UTF8,
             SubjectEncoding = Encoding.UTF8,
         };
+        // High sets the X-Priority: 1, Priority and Importance headers
+        if (highPriority) message.Priority = MailPriority.High;
         foreach (var to in s.MailTo!.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             message.To.Add(to);
 

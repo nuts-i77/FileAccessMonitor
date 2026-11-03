@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using FileAccessMonitor.Models;
 using FileAccessMonitor.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -12,7 +13,9 @@ namespace FileAccessMonitor.Controllers;
 [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 public class SettingsController : ControllerBase
 {
-    private static readonly string[] DefaultEventTypes = ["Read", "Write", "Delete"];
+    // What a folder can record (the checkboxes); a new folder records all of them
+    private static readonly string[] DefaultEventTypes =
+        [AccessTypes.EventRead, AccessTypes.EventWrite, AccessTypes.EventDelete, AccessTypes.EventPermission];
     // Setting a SACL walks every file below the folder, which can take minutes on a large share
     private static readonly TimeSpan SaclJobTimeout = TimeSpan.FromMinutes(15);
 
@@ -44,7 +47,24 @@ public class SettingsController : ControllerBase
         if (ServerConfigService.IsLocal(server) && !ServerConfigService.LocalCollects)
             return Ok(new { pathConfigs = Array.Empty<PathConfig>(), dnsServer = dns });
         if (await CheckServerAsync(server) is { } error) return error;
-        return Ok(new { pathConfigs = await _servers.GetPathsAsync(server), dnsServer = dns });
+        // auditApplied: folder -> version of the auditing set-up (below auditVersion: "Re-apply" needed)
+        return Ok(new
+        {
+            pathConfigs = await _servers.GetPathsAsync(server), dnsServer = dns,
+            auditApplied = AuditApplied.For(SettingsStore.Load(), ServerLabel(server)),
+            auditVersion = AuditApplied.CurrentVersion,
+            os = ServerConfigService.IsLocal(server) ? AppInfo.OsName : (await _servers.FindAgentAsync(server!))?.Os,
+        });
+    }
+
+    // Remembers that a folder's auditing was set up by this version (see AuditApplied). An agent
+    // older than 1.9 does not set up the new entries, so it does not count.
+    private async Task MarkAuditAppliedAsync(string? server, string path)
+    {
+        if (!ServerConfigService.IsLocal(server)
+            && !(Version.TryParse((await _servers.FindAgentAsync(server!))?.Version, out var v) && v >= new Version(1, 9)))
+            return;
+        SettingsStore.Update(root => AuditApplied.Set(root, ServerLabel(server), path));
     }
 
     // GET /api/settings/servers  — this machine (when it collects) and the agents, for the server pickers
@@ -113,6 +133,8 @@ public class SettingsController : ControllerBase
             ExcludeUsers = Clean(req.ExcludeUsers),
             ExcludeProcesses = Clean(req.ExcludeProcesses),
             MergeReadMinutes = req.MergeReadMinutes,
+            RecordDenied = req.RecordDenied,
+            Other = (await _servers.GetRecordingAsync(server)).Other,
         };
         if (new[] { settings.ExcludeFilePatterns, settings.ExcludeUsers, settings.ExcludeProcesses }
             .Any(list => list.Count > 200 || list.Any(s => s.Length > 260)))
@@ -122,7 +144,7 @@ public class SettingsController : ControllerBase
         await _audit.WriteAsync(HttpContext, "recording.update",
             $"server={ServerLabel(server)}, files=[{string.Join(", ", settings.ExcludeFilePatterns)}], " +
             $"users=[{string.Join(", ", settings.ExcludeUsers)}], processes=[{string.Join(", ", settings.ExcludeProcesses)}], " +
-            $"mergeReadMinutes={settings.MergeReadMinutes}");
+            $"mergeReadMinutes={settings.MergeReadMinutes}, recordDenied={settings.RecordDenied}");
         return Ok(new { message = Messages.Get("recording.saved"), settings });
     }
 
@@ -145,6 +167,7 @@ public class SettingsController : ControllerBase
         if (error != null) return error;
 
         var updated = configs.Append(new PathConfig(req.Path, eventTypes)).ToArray();
+        await MarkAuditAppliedAsync(req.Server, req.Path);
         await _servers.SavePathsAsync(req.Server, updated);
         _logger.LogInformation("Path added via Web GUI: {Server} {Path}", ServerLabel(req.Server), req.Path);
         await _audit.WriteAsync(HttpContext, "path.add",
@@ -181,6 +204,7 @@ public class SettingsController : ControllerBase
             sacl = SaclResult.From(result!); // a folder that is gone has nothing to remove
         }
         await _servers.SavePathsAsync(server, updated);
+        SettingsStore.Update(root => AuditApplied.Remove(root, ServerLabel(server), path));
 
         _logger.LogInformation("Path removed via Web GUI: {Server} {Path} (removeSacl={RemoveSacl})", ServerLabel(server), path, removeSacl);
         await _audit.WriteAsync(HttpContext, "path.remove",
@@ -199,6 +223,7 @@ public class SettingsController : ControllerBase
 
         var (sacl, error) = await ApplySaclOnAsync(req.Server, req.Path);
         if (error != null) return error;
+        await MarkAuditAppliedAsync(req.Server, req.Path);
         await _audit.WriteAsync(HttpContext, "path.applySacl",
             $"server={ServerLabel(req.Server)}, path={req.Path}, sacl={sacl.Count}, saclErrors={sacl.Errors.Count}");
 

@@ -73,7 +73,9 @@ const TYPE_COLORS = {
   Read:   '#0d6efd',
   Write:  '#198754',
   Delete: '#dc3545',
-  Rename: '#fd7e14'
+  Rename: '#fd7e14',
+  Create: '#20c997',
+  Permission: '#6f42c1'
 };
 
 const TYPE_LABELS = new Proxy({}, {
@@ -82,6 +84,8 @@ const TYPE_LABELS = new Proxy({}, {
     if (k === 'Write')  return t('type.write');
     if (k === 'Delete') return t('type.delete');
     if (k === 'Rename') return t('type.rename');
+    if (k === 'Create') return t('type.create');
+    if (k === 'Permission') return t('type.permission');
     return typeof k === 'string' ? k : undefined;
   }
 });
@@ -132,8 +136,49 @@ function itemIcon(isFolder) {
 
 function typeBadge(type) {
   const cls = { Read: 'primary', Write: 'success', Delete: 'danger', Rename: 'warning text-dark' };
-  return `<span class="badge bg-${cls[type] || 'secondary'}">${TYPE_LABELS[type] || type}</span>`;
+  // Create and Permission have their own colours (style.css)
+  if (type === 'Create' || type === 'Permission')
+    return `<span class="badge badge-${type.toLowerCase()}">${TYPE_LABELS[type]}</span>`;
+  // a type this browser does not know (from a newer server) is shown as it is
+  return `<span class="badge bg-${cls[type] || 'secondary'}">${TYPE_LABELS[type] || esc(type)}</span>`;
 }
+
+// The type cell of a log row: the type, a red "Denied" badge for a refused attempt, and a button
+// for the details of a permission change
+function recordTypeHtml(r) {
+  let html = typeBadge(r.accessType);
+  if (r.denied) html += ` <span class="badge bg-danger">${t('badge.denied')}</span>`;
+  if (r.detail)
+    html += ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline record-detail-btn" data-detail="${esc(r.detail)}" title="${esc(t('btn.detail'))}" onclick="showRecordDetail(this)"><i class="bi bi-info-circle"></i></button>`;
+  return html;
+}
+
+// The file name; for a rename or move, where the file went, too (full paths in the tooltip)
+function recordNameHtml(r) {
+  const title = r.newPath ? `${r.filePath} -> ${r.newPath}` : r.filePath;
+  const moved = r.newPath
+    ? `<div class="small text-muted text-nowrap"><i class="bi bi-arrow-return-right me-1"></i>${esc(r.newPath)}</div>` : '';
+  return `<span title="${esc(title)}">${itemIcon(r.isFolder)}${esc(r.fileName)}</span>${moved}`;
+}
+
+function rowClass(r) {
+  return r.denied ? ' class="table-danger-subtle"' : '';
+}
+
+// The detail text of a record (a permission change) in a popover: monospace, line breaks kept
+function showRecordDetail(btn) {
+  document.querySelectorAll('.record-detail-btn').forEach(b => {
+    if (b !== btn) bootstrap.Popover.getInstance(b)?.hide();
+  });
+  bootstrap.Popover.getOrCreateInstance(btn, {
+    content: btn.dataset.detail, trigger: 'manual', placement: 'left', container: 'body',
+    customClass: 'record-detail', html: false
+  }).toggle();
+}
+document.addEventListener('click', e => {
+  if (e.target.closest('.record-detail-btn, .record-detail')) return;
+  document.querySelectorAll('.record-detail-btn').forEach(b => bootstrap.Popover.getInstance(b)?.hide());
+});
 
 // ── Summary Cards ─────────────────────────────────────────────────
 async function loadSummary() {
@@ -141,6 +186,7 @@ async function loadSummary() {
   document.getElementById('totalCount').textContent = fmtNum(d.total);
   document.getElementById('uniqueFiles').textContent = fmtNum(d.uniqueFiles);
   document.getElementById('uniqueUsers').textContent = fmtNum(d.uniqueUsers);
+  document.getElementById('deniedCount').textContent = fmtNum(d.denied);
   const badges = (d.byType || []).map(tp =>
     `<span class="badge me-1" style="background:${TYPE_COLORS[tp.type] || '#6c757d'}">${TYPE_LABELS[tp.type] || tp.type}: ${fmtNum(tp.count)}</span>`
   ).join('');
@@ -152,7 +198,7 @@ async function loadTimeline() {
   const data = await api(`/api/stats/timeline?days=${getDays()}`);
 
   const dates = [...new Set(data.map(d => localDay(d.date)))].sort();
-  const types = ['Read', 'Write', 'Delete', 'Rename'];
+  const types = ['Read', 'Write', 'Create', 'Delete', 'Rename', 'Permission'];
   const byType = {};
   types.forEach(tp => byType[tp] = {});
   data.forEach(d => {
@@ -233,7 +279,9 @@ async function loadTopCharts() {
         { label: t('type.read'),   data: files.map(f => f.read),   backgroundColor: TYPE_COLORS.Read },
         { label: t('type.write'),  data: files.map(f => f.write),  backgroundColor: TYPE_COLORS.Write },
         { label: t('type.delete'), data: files.map(f => f.delete), backgroundColor: TYPE_COLORS.Delete },
-        { label: t('type.rename'), data: files.map(f => f.rename), backgroundColor: TYPE_COLORS.Rename }
+        { label: t('type.create'), data: files.map(f => f.create), backgroundColor: TYPE_COLORS.Create },
+        { label: t('type.rename'), data: files.map(f => f.rename), backgroundColor: TYPE_COLORS.Rename },
+        { label: t('type.permission'), data: files.map(f => f.permission), backgroundColor: TYPE_COLORS.Permission }
       ]
     },
     options: {
@@ -254,7 +302,9 @@ async function loadTopCharts() {
         { label: t('type.read'),   data: folders.map(f => f.read),   backgroundColor: TYPE_COLORS.Read },
         { label: t('type.write'),  data: folders.map(f => f.write),  backgroundColor: TYPE_COLORS.Write },
         { label: t('type.delete'), data: folders.map(f => f.delete), backgroundColor: TYPE_COLORS.Delete },
-        { label: t('type.rename'), data: folders.map(f => f.rename), backgroundColor: TYPE_COLORS.Rename }
+        { label: t('type.create'), data: folders.map(f => f.create), backgroundColor: TYPE_COLORS.Create },
+        { label: t('type.rename'), data: folders.map(f => f.rename), backgroundColor: TYPE_COLORS.Rename },
+        { label: t('type.permission'), data: folders.map(f => f.permission), backgroundColor: TYPE_COLORS.Permission }
       ]
     },
     options: {
@@ -287,7 +337,7 @@ async function loadFiles() {
         </div>
       </td>
       <td class="text-end text-primary">${fmtNum(f.read)}</td>
-      <td class="text-end text-success">${fmtNum(f.write)}</td>
+      <td class="text-end text-success">${fmtNum((f.write || 0) + (f.create || 0))}</td>
       <td class="text-end text-danger">${fmtNum(f.delete)}</td>
       <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td>${fmtDate(f.lastAccess)}</td>
@@ -315,7 +365,7 @@ async function loadFolders() {
         </div>
       </td>
       <td class="text-end text-primary">${fmtNum(f.read)}</td>
-      <td class="text-end text-success">${fmtNum(f.write)}</td>
+      <td class="text-end text-success">${fmtNum((f.write || 0) + (f.create || 0))}</td>
       <td class="text-end text-danger">${fmtNum(f.delete)}</td>
       <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td class="text-end">${fmtNum(f.uniqueFiles)}</td>
@@ -335,7 +385,7 @@ async function loadUsers() {
       <td><i class="bi bi-person me-1"></i>${esc(u.user)}</td>
       <td class="text-end fw-bold">${fmtNum(u.total)}</td>
       <td class="text-end text-primary">${fmtNum(u.read)}</td>
-      <td class="text-end text-success">${fmtNum(u.write)}</td>
+      <td class="text-end text-success">${fmtNum((u.write || 0) + (u.create || 0))}</td>
       <td class="text-end text-danger">${fmtNum(u.delete)}</td>
       <td class="text-end" style="color:#fd7e14">${fmtNum(u.rename)}</td>
       <td><button class="btn btn-sm btn-outline-secondary py-0" data-user="${esc(u.user)}" onclick="showUserDetail(this.dataset.user)">${t('btn.detail')}</button></td>
@@ -366,7 +416,7 @@ function buildUserDetailHtml(d) {
       <td class="col-server">${esc(f.serverName || '')}</td>
       <td class="text-end fw-bold">${fmtNum(f.total)}</td>
       <td class="text-end text-primary">${fmtNum(f.read)}</td>
-      <td class="text-end text-success">${fmtNum(f.write)}</td>
+      <td class="text-end text-success">${fmtNum((f.write || 0) + (f.create || 0))}</td>
       <td class="text-end text-danger">${fmtNum(f.delete)}</td>
       <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td class="text-muted small">${fmtDate(f.lastAccess)}</td>
@@ -375,9 +425,9 @@ function buildUserDetailHtml(d) {
   const recentRows = (d.recent || []).map(r =>
     `<tr>
       <td class="text-muted">${fmtDate(r.accessTime)}</td>
-      <td title="${esc(r.filePath)}">${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
+      <td title="${esc(r.filePath)}">${recordNameHtml(r)}</td>
       <td class="col-server">${esc(r.serverName || '')}</td>
-      <td>${typeBadge(r.accessType)}</td>
+      <td>${recordTypeHtml(r)}</td>
     </tr>`).join('');
 
   const noData = `<tr><td colspan="4" class="text-muted text-center">${t('msg.noData')}</td></tr>`;
@@ -470,7 +520,8 @@ function renderPagination(paginationEl, infoEl, page, total, pageSize, gotoFn) {
 // ── Recent Table ──────────────────────────────────────────────────
 async function loadRecent(page = 1) {
   recentPage = page;
-  const data = await api(`/api/stats/recent?page=${page}&pageSize=${PAGE_SIZE}`);
+  const denied = document.getElementById('recentResult')?.value || '';
+  const data = await api(`/api/stats/recent?page=${page}&pageSize=${PAGE_SIZE}${denied ? '&denied=' + denied : ''}`);
 
   const tbody = document.getElementById('recentTableBody');
   tbody.innerHTML = (data.items || []).map(r => {
@@ -481,13 +532,13 @@ async function loadRecent(page = 1) {
       ? `<td class="text-muted small">${srcParts.join('<br>')}</td>`
       : `<td class="text-muted small">-</td>`;
     return `
-    <tr>
+    <tr${rowClass(r)}>
       <td class="text-muted">${fmtDate(r.accessTime)}</td>
-      <td>${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
+      <td>${recordNameHtml(r)}</td>
       <td class="col-server">${esc(r.serverName || '')}</td>
       <td class="path-cell text-muted" title="${esc(r.folderPath)}">${esc(r.folderPath)}</td>
       <td>${esc(r.userName)}</td>
-      <td>${typeBadge(r.accessType)}</td>
+      <td>${recordTypeHtml(r)}</td>
       ${srcCell}
     </tr>`;
   }).join('');
@@ -561,6 +612,17 @@ async function runSearch() {
   await loadSearch(1);
 }
 
+// The dashboard's "Denied" card: the refused attempts of the selected period, in the search tab
+function showDeniedLog() {
+  document.getElementById('searchResult').value = 'only';
+  document.getElementById('searchType').value = '';
+  searchKeywords = [];
+  renderSearchTags();
+  selectSearchPeriodQuick(getDays());
+  switchTab('search', document.querySelector('#mainTabs [data-tab="search"]'));
+  runSearch();
+}
+
 // Query string for the current search conditions (shared by search and CSV export)
 function searchQuery() {
   const inputVal = document.getElementById('searchTagInput')?.value.trim() ?? '';
@@ -577,6 +639,8 @@ function searchQuery() {
   }
   keywords.forEach(kw => { qs += `&q=${encodeURIComponent(kw)}`; });
   if (type) qs += `&type=${encodeURIComponent(type)}`;
+  const result = document.getElementById('searchResult')?.value ?? '';
+  if (result) qs += `&denied=${encodeURIComponent(result)}`;
   return qs;
 }
 
@@ -625,13 +689,13 @@ async function loadSearch(page = 1) {
       const srcParts = [];
       if (r.clientIp) srcParts.push(`<span class="font-monospace">${esc(r.clientIp)}</span>`);
       if (r.clientMachine && r.clientMachine !== r.clientIp) srcParts.push(esc(r.clientMachine));
-      return `<tr>
+      return `<tr${rowClass(r)}>
         <td class="text-muted">${fmtDate(r.accessTime)}</td>
-        <td>${itemIcon(r.isFolder)}${esc(r.fileName)}</td>
+        <td>${recordNameHtml(r)}</td>
         <td class="col-server">${esc(r.serverName || '')}</td>
         <td class="path-cell text-muted" title="${esc(r.folderPath)}">${esc(r.folderPath)}</td>
         <td>${esc(r.userName)}</td>
-        <td>${typeBadge(r.accessType)}</td>
+        <td>${recordTypeHtml(r)}</td>
         <td class="text-muted small">${srcParts.join('<br>') || '-'}</td>
       </tr>`;
     }).join('');
@@ -727,7 +791,7 @@ function buildDetailHtml(d, mode) {
   ).join('');
 
   const recentRows = (d.recent || []).slice(0, 30).map(r =>
-    `<tr><td class="text-muted">${fmtDate(r.accessTime)}</td><td>${esc(r.userName)}</td><td>${typeBadge(r.accessType)}</td></tr>`
+    `<tr><td class="text-muted">${fmtDate(r.accessTime)}</td><td>${esc(r.userName)}</td><td>${recordTypeHtml(r)}${r.newPath ? `<div class="small text-muted">-> ${esc(r.newPath)}</div>` : ""}</td></tr>`
   ).join('');
 
   const topFilesSection = mode === 'folder' && d.topFiles ? `
@@ -1094,6 +1158,63 @@ function openAgentsSettings() {
   setTimeout(() => document.getElementById('agentsSection')?.scrollIntoView({ behavior: 'smooth' }), 500);
 }
 
+// ── Web GUI connection (HTTPS) ───────────────────────────────────
+const HTTP_WARNING_DISMISSED_KEY = 'httpWarningDismissed';
+
+// A bar for Admins when this page came over plain HTTP: the password and the token cross the network in clear text
+function showHttpWarning() {
+  const el = document.getElementById('httpWarning');
+  if (!el) return;
+  if (location.protocol !== 'http:' || sessionStorage.getItem(HTTP_WARNING_DISMISSED_KEY)) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="alert alert-warning py-2 small d-flex align-items-center gap-2 flex-wrap">
+    <i class="bi bi-shield-exclamation"></i>
+    <span>${t('web.httpWarning')}</span>
+    <a href="#" class="alert-link" onclick="openWebTlsSettings(); return false;">${t('web.showCard')}</a>
+    <button class="btn btn-sm btn-link ms-auto py-0" onclick="dismissHttpWarning()">${t('web.dismiss')}</button>
+  </div>`;
+}
+
+function dismissHttpWarning() {
+  try { sessionStorage.setItem(HTTP_WARNING_DISMISSED_KEY, '1'); } catch { /* private mode: shown again next time */ }
+  document.getElementById('httpWarning').innerHTML = '';
+}
+
+function openWebTlsSettings() {
+  switchTab('settings', document.querySelector('[data-tab="settings"]'));
+  setTimeout(() => document.getElementById('webTlsSection')?.scrollIntoView({ behavior: 'smooth' }), 500);
+}
+
+// Read-only: switching HTTPS needs a restart and could lock the Admin out, so the installer or the command line does it
+async function loadWebTls() {
+  const section = document.getElementById('webTlsSection');
+  const body = document.getElementById('webTlsBody');
+  if (!section || !body) return;
+  try {
+    const d = await api('/api/web-tls');
+    section.classList.remove('d-none');
+    const row = (label, value) => `<div class="mb-1"><span class="text-muted">${t(label)}:</span> ${value}</div>`;
+    const state = d.https
+      ? `<span class="badge text-bg-success">${t('web.card.on')}</span>`
+      : `<span class="badge text-bg-secondary">${t('web.card.off')}</span>`;
+    let html = row('web.card.state', state);
+    if (d.https) {
+      html += row('web.card.mode', t(d.mode === 'pfx' ? 'web.card.pfx' : 'web.card.selfSigned'));
+      if (d.subject) html += row('web.card.subject', `<span class="font-monospace">${esc(d.subject)}</span>`);
+      html += row('web.card.names', (d.names || []).map(n => `<span class="font-monospace">${esc(n)}</span>`).join(', ') || '-');
+      html += row('web.card.fingerprint', `<span class="font-monospace text-break">${esc(d.fingerprint || '-')}</span>`);
+      html += row('web.card.expires', d.notAfter ? fmtDate(d.notAfter) : '-');
+      if (d.redirectPort > 0) html += row('web.card.redirect', esc(d.redirectPort));
+    }
+    html += `<div class="mt-2 mb-1 text-muted">${t('web.card.change')}</div>
+      <div class="font-monospace text-break">Windows: "C:\\Program Files\\FileAccessMonitor\\FileAccessMonitor.exe" web-https ${d.https ? 'off' : 'on'}</div>
+      <div class="font-monospace text-break">Linux: sudo fileaccessmonitor-server --https ${d.https ? 'off' : 'on'}</div>
+      <div class="form-text">${t('web.card.changeHint')}</div>`;
+    body.innerHTML = html;
+  } catch (e) {
+    section.classList.add('d-none'); // not available (an older server)
+  }
+}
+
 function dismissUpdate(version) {
   writeStore(UPDATE_DISMISSED_KEY, version);
   document.getElementById('updateBanner').innerHTML = '';
@@ -1408,6 +1529,7 @@ async function loadSettings() {
     loadUsersMgmt();
     loadAgents();
     loadAppInfo();
+    loadWebTls();
     loadAlertSettings();
     loadAuditLog(1);
   } else {
@@ -1430,6 +1552,7 @@ async function loadServerSettings() {
     // Support both new pathConfigs and legacy monitoredPaths response
     const configs = d.pathConfigs
       || (d.monitoredPaths || []).map(p => ({ path: p, eventTypes: ['Read', 'Write', 'Delete'] }));
+    pathAudit = { applied: lowerKeys(d.auditApplied), version: d.auditVersion || 0, os: d.os || '' };
     renderPathsList(configs);
     const dnsInput = document.getElementById('dnsServerInput');
     if (dnsInput) dnsInput.value = d.dnsServer || '';
@@ -1520,22 +1643,41 @@ async function runRetentionCleanup() {
   }
 }
 
-const EVENT_TYPES = ['Read', 'Write', 'Delete'];
-const EVENT_TYPE_COLORS = { Read: 'primary', Write: 'success', Delete: 'danger' };
+const EVENT_TYPES = ['Read', 'Write', 'Delete', 'Permission'];
+const EVENT_TYPE_COLORS = { Read: 'primary', Write: 'success', Delete: 'danger', Permission: 'purple' };
+const EVENT_TYPE_LABELS = { Read: 'type.read', Write: 'type.writeCreate', Delete: 'type.deleteRename', Permission: 'type.permissionChanges' };
+
+// Per folder of the shown server: the version of its auditing set-up (see AuditApplied.cs)
+let pathAudit = { applied: {}, version: 0, os: '' };
+
+function lowerKeys(obj) {
+  const r = {};
+  Object.keys(obj || {}).forEach(k => { r[k.toLowerCase()] = obj[k]; });
+  return r;
+}
+
+// Whether a folder's auditing was set up before 1.9 (no refused attempts or permission changes yet)
+function needsReapply(path) {
+  return pathAudit.version > 0 && (pathAudit.applied[String(path).toLowerCase()] || 0) < pathAudit.version;
+}
 
 function renderPathsList(configs) {
   const el = document.getElementById('monitoredPathsList');
+  const linux = !!pathAudit.os && !/windows/i.test(pathAudit.os);
+  const stale = (configs || []).filter(c => needsReapply(c.path || c));
+  document.getElementById('reapplyBanner').innerHTML = stale.length === 0 ? '' :
+    `<div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${t('msg.reapplyBanner', { n: stale.length })}</div>`;
   if (!configs || configs.length === 0) {
     el.innerHTML = `<div class="text-muted small py-2">${t('msg.noPath')}</div>`;
     return;
   }
   el.innerHTML = configs.map(cfg => {
     const p = cfg.path || cfg; // support legacy string format
-    const types = cfg.eventTypes || EVENT_TYPES;
+    const types = cfg.eventTypes || ['Read', 'Write', 'Delete'];
     const typeCheckboxes = EVENT_TYPES.map(et => {
       const checked = types.includes(et) ? 'checked' : '';
       const color = EVENT_TYPE_COLORS[et];
-      const label = t(et === 'Delete' ? 'type.deleteRename' : 'type.' + et.toLowerCase());
+      const label = t(EVENT_TYPE_LABELS[et]);
       return `<div class="form-check form-check-inline mb-0">
         <input class="form-check-input" type="checkbox" id="et_${esc(p)}_${et}"
           ${checked} onchange="updatePathEventTypes(this.closest('[data-path]').dataset.path)">
@@ -1549,6 +1691,7 @@ function renderPathsList(configs) {
       <div class="d-flex align-items-center gap-2 mb-1">
         <i class="bi bi-folder-fill text-warning"></i>
         <span class="flex-grow-1 font-monospace small text-break fw-semibold">${esc(p)}</span>
+        ${needsReapply(p) ? `<span class="badge text-bg-warning" title="${esc(t(linux ? 'msg.reapplyNeededLinux' : 'msg.reapplyNeeded'))}"><i class="bi bi-exclamation-triangle me-1"></i>${t(linux ? 'msg.reapplyNeededLinux' : 'msg.reapplyNeeded')}</span>` : ''}
         <button class="btn btn-sm btn-outline-secondary py-0" onclick="reapplySacl(this.closest('[data-path]').dataset.path)" title="${t('btn.reapplySacl')}">
           <i class="bi bi-shield-check"></i>
         </button>
@@ -1602,7 +1745,7 @@ async function addPath() {
         msg += `<br><small class="text-warning">${t('msg.saclErrCount', { n: d.saclErrors.length })}</small>`;
       }
       showSettingsAlert(msg, 'success');
-      if (d.pathConfigs) renderPathsList(d.pathConfigs); else loadSettings();
+      loadServerSettings(); // the new folder is up to date, and the notice about the others stays
     }
   } catch (e) {
     showSettingsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
@@ -1696,6 +1839,7 @@ async function reapplySacl(path) {
         msg += `<br><small class="text-warning">${t('msg.saclErrCount', { n: d.saclErrors.length })}</small>`;
       }
       showSettingsAlert(msg, 'success');
+      loadServerSettings(); // the "re-apply" notice of this folder is gone
     }
   } catch (e) {
     showSettingsAlert(`${esc(e.message)}`, 'danger');
@@ -2005,6 +2149,7 @@ async function loadRecordingSettings() {
     setLines('recExcludeUsers', s.excludeUsers);
     setLines('recExcludeProcesses', s.excludeProcesses);
     document.getElementById('recMergeReadMinutes').value = s.mergeReadMinutes;
+    document.getElementById('recRecordDenied').checked = s.recordDenied !== false;
   } catch (e) {
     showRecordingAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
   }
@@ -2019,7 +2164,8 @@ async function saveRecordingSettings() {
         excludeFilePatterns: linesOf('recExcludeFiles'),
         excludeUsers: linesOf('recExcludeUsers'),
         excludeProcesses: linesOf('recExcludeProcesses'),
-        mergeReadMinutes: parseInt(document.getElementById('recMergeReadMinutes').value, 10) || 0
+        mergeReadMinutes: parseInt(document.getElementById('recMergeReadMinutes').value, 10) || 0,
+        recordDenied: document.getElementById('recRecordDenied').checked
       })
     });
     showRecordingAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`);
@@ -2054,6 +2200,8 @@ async function loadAlertSettings() {
     set('alertDeleteThreshold', s.deleteThreshold);
     set('alertWriteThreshold', s.writeThreshold);
     set('alertReadThreshold', s.readThreshold);
+    set('alertDeniedThreshold', s.deniedThreshold);
+    document.getElementById('alertRansomwareEnabled').checked = s.ransomwareEnabled !== false;
     set('alertWindowMinutes', s.windowMinutes);
     set('alertCooldownMinutes', s.cooldownMinutes);
     set('alertAgentOfflineMinutes', s.agentOfflineMinutes);
@@ -2096,6 +2244,8 @@ function alertFormBody() {
     deleteThreshold: num('alertDeleteThreshold'),
     writeThreshold: num('alertWriteThreshold'),
     readThreshold: num('alertReadThreshold'),
+    deniedThreshold: num('alertDeniedThreshold'),
+    ransomwareEnabled: document.getElementById('alertRansomwareEnabled').checked,
     windowMinutes: num('alertWindowMinutes'),
     cooldownMinutes: num('alertCooldownMinutes'),
     agentOfflineMinutes: num('alertAgentOfflineMinutes'),
@@ -2236,7 +2386,7 @@ let myScope = [];
     document.getElementById('navUnused')?.classList.remove('d-none');
     VALID_TABS.push('unused');
   }
-  if (isAdmin()) { checkForUpdate(); checkAgentVersions(); }
+  if (isAdmin()) { checkForUpdate(); checkAgentVersions(); showHttpWarning(); }
   const hashTab = location.hash.slice(1);
   const startTab = VALID_TABS.includes(hashTab) ? hashTab : 'dashboard';
   const startLink = document.querySelector(`[data-tab="${startTab}"]`);

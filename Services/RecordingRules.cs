@@ -22,6 +22,9 @@ public class RecordingSettings
     public int MergeReadMinutes { get; set; } = DefaultMergeReadMinutes;
     // Record accesses that were refused (access denied)
     public bool RecordDenied { get; set; } = true;
+    // Settings this class does not know (e.g. read by the Windows collector from the same node):
+    // kept when the GUI saves the rules
+    [JsonExtensionData] public Dictionary<string, System.Text.Json.JsonElement>? Other { get; set; }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 

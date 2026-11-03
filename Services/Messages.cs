@@ -73,6 +73,13 @@ public static class Messages
         ["alert.deleteTitle"] = "Mass deletion detected",
         ["alert.writeTitle"] = "Mass file changes detected (possible ransomware)",
         ["alert.readTitle"] = "Mass file reads detected (possible data exfiltration)",
+        ["alert.deniedTitle"] = "Many refused access attempts detected",
+        ["alert.ransomwareTitle"] = "Ransomware-like behavior detected",
+        ["alert.rule.extension"] = "Rule: many files renamed to the same new extension",
+        ["alert.rule.burst"] = "Rule: mass writing together with mass renaming",
+        ["alert.rule.note"] = "Rule: ransom note files created in several folders",
+        ["alert.highPriority"] = "[HIGH PRIORITY]",
+        ["alert.detail"] = "Detail: {0}",
         ["agentOffline.title"] = "An agent stopped reporting",
         ["agentOffline.body"] = "The agent \"{0}\" has not been in touch for {1} minutes or more (last contact: {2}). Its service may be stopped, the server may be down, or the network may be cut. Records collected meanwhile wait on the agent and are sent when it reconnects, as long as the Security log there has not overwritten them.",
         ["agentOnline.title"] = "An agent is reporting again",
@@ -104,6 +111,11 @@ public static class Messages
         ["csv.ip"] = "Client IP",
         ["csv.machine"] = "Client Machine",
         ["csv.server"] = "File Server",
+        ["csv.result"] = "Result",
+        ["csv.resultOk"] = "Allowed",
+        ["csv.resultDenied"] = "Denied",
+        ["csv.newPath"] = "New Path",
+        ["csv.detail"] = "Detail",
     };
 
     public static readonly IReadOnlyDictionary<string, string> Ja = new Dictionary<string, string>
@@ -172,6 +184,13 @@ public static class Messages
         ["alert.deleteTitle"] = "大量削除を検知しました",
         ["alert.writeTitle"] = "大量のファイル変更を検知しました（ランサムウェアの可能性）",
         ["alert.readTitle"] = "大量のファイル読取を検知しました（持ち出しの可能性）",
+        ["alert.deniedTitle"] = "アクセス拒否が多数発生しています",
+        ["alert.ransomwareTitle"] = "ランサムウェアに似た動作を検知しました",
+        ["alert.rule.extension"] = "検知ルール: 多数のファイルが同じ新しい拡張子に名前変更されました",
+        ["alert.rule.burst"] = "検知ルール: 大量の書き込みと大量の名前変更が同時に発生しました",
+        ["alert.rule.note"] = "検知ルール: 複数のフォルダに脅迫文のファイルが作成されました",
+        ["alert.highPriority"] = "【緊急】",
+        ["alert.detail"] = "詳細: {0}",
         ["agentOffline.title"] = "エージェントからの接続が途絶えました",
         ["agentOffline.body"] = "エージェント「{0}」から {1} 分以上接続がありません（最終接続: {2}）。サービスの停止、サーバーの停止、ネットワークの切断などが考えられます。この間の記録はエージェントで保持され、再接続時に送られます（そのサーバーの Security ログで上書きされていない場合）。",
         ["agentOnline.title"] = "エージェントからの接続が復旧しました",
@@ -203,6 +222,11 @@ public static class Messages
         ["csv.ip"] = "接続元 IP",
         ["csv.machine"] = "接続元端末",
         ["csv.server"] = "ファイルサーバー",
+        ["csv.result"] = "結果",
+        ["csv.resultOk"] = "許可",
+        ["csv.resultDenied"] = "拒否",
+        ["csv.newPath"] = "変更後のパス",
+        ["csv.detail"] = "詳細",
     };
 
     public static bool IsJapanese => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ja";
