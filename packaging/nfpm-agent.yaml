@@ -1,0 +1,44 @@
+# deb and rpm of the Linux agent, built by the release workflow with nfpm (https://nfpm.goreleaser.com):
+#   (the agent published to build/agent)  VERSION=1.8.0 nfpm package -f packaging/nfpm-agent.yaml -p deb -t dist/
+name: fileaccessmonitor-agent
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: semver
+release: 1
+section: admin
+priority: optional
+maintainer: nuts-i77 <nuts_i77@aol.com>
+vendor: FileAccessMonitor
+homepage: https://github.com/nuts-i77/FileAccessMonitor
+license: MIT
+description: |-
+  FileAccessMonitor agent for Samba file servers.
+  Records who read, wrote, renamed or deleted files through SMB shares, from Samba's
+  audit module, and sends the records to a FileAccessMonitor monitoring server.
+# A machine runs either the monitoring server (which can collect its own Samba accesses) or the agent
+conflicts:
+  - fileaccessmonitor-server
+recommends:
+  - samba
+
+contents:
+  - src: build/agent/fileaccessmonitor-agent
+    dst: /opt/fileaccessmonitor/fileaccessmonitor-agent
+    file_info:
+      mode: 0755
+  - src: /opt/fileaccessmonitor/fileaccessmonitor-agent
+    dst: /usr/bin/fileaccessmonitor-agent
+    type: symlink
+  - src: linux-agent/fileaccessmonitor-agent.service
+    dst: /usr/lib/systemd/system/fileaccessmonitor-agent.service
+  # journald must not drop Samba's audit lines (smbd on Debian/Ubuntu, smb on RHEL)
+  - src: packaging/smbd-journald.conf
+    dst: /usr/lib/systemd/system/smbd.service.d/fileaccessmonitor.conf
+  - src: packaging/smbd-journald.conf
+    dst: /usr/lib/systemd/system/smb.service.d/fileaccessmonitor.conf
+
+scripts:
+  postinstall: packaging/agent-postinstall.sh
+  preremove: packaging/agent-preremove.sh
+  postremove: packaging/agent-postremove.sh

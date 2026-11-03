@@ -11,7 +11,58 @@ permissions:
   attestations: write
 
 jobs:
+  # Linux agent and monitoring server: tar.gz (with install.sh), deb and rpm. Built on Linux so that
+  # file modes and owners in the archives are right.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test Linux agent
+        run: dotnet test linux-agent/tests -c Release
+
+      - name: Install nfpm
+        run: |
+          curl -sSfL -o /tmp/nfpm.deb https://github.com/goreleaser/nfpm/releases/download/v2.48.0/nfpm_2.48.0_amd64.deb
+          echo "787af76e172dd5fc7cedf4d7c5a090a2f62be9001557a4db1103e270f90ddefd  /tmp/nfpm.deb" | sha256sum -c
+          sudo dpkg -i /tmp/nfpm.deb
+
+      - name: Build Linux packages
+        run: |
+          set -e
+          v="${GITHUB_REF_NAME#v}"
+          agent="FileAccessMonitor-$v-linux-x64-agent"
+          server="FileAccessMonitor-$v-linux-x64-server"
+          dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true \
+            -o "build/agent" /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None /p:Version=$v
+          # Culture data is not needed (formatting is culture-invariant), so it runs without libicu
+          dotnet publish FileAccessMonitor.csproj -c Release -r linux-x64 --self-contained true -o "build/server" \
+            /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None /p:IsTransformWebConfigDisabled=true \
+            /p:InvariantGlobalization=true /p:PredefinedCulturesOnly=false /p:Version=$v
+          rm -f build/server/*.a
+          mkdir -p linux-dist "build/$agent" "build/$server"
+          cp -a build/agent/. linux-agent/install.sh linux-agent/fileaccessmonitor-agent.service LICENSE README.md README.ja.md "build/$agent/"
+          cp -a build/server/. linux-server/install.sh linux-server/fileaccessmonitor.service linux-server/fileaccessmonitor-server \
+            LICENSE README.md README.ja.md "build/$server/"
+          tar -czf "linux-dist/$agent.tar.gz" --owner=0 --group=0 -C build "$agent"
+          tar -czf "linux-dist/$server.tar.gz" --owner=0 --group=0 -C build "$server"
+          for format in deb rpm; do
+            VERSION=$v nfpm package -f packaging/nfpm-agent.yaml -p $format -t linux-dist/
+            VERSION=$v nfpm package -f packaging/nfpm-server.yaml -p $format -t linux-dist/
+          done
+          ls -l linux-dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-dist
+          path: linux-dist/*
+
   release:
+    needs: linux
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,10 +72,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Test
-        run: |
-          dotnet test tests/FileAccessMonitor.Tests -c Release
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          dotnet test linux-agent/tests -c Release
+        run: dotnet test tests/FileAccessMonitor.Tests -c Release
 
       - name: Install Inno Setup
         shell: pwsh
@@ -85,29 +133,18 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: dist
 
+      # tar.gz, deb and rpm from the linux job
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-dist
+          path: dist
+
       - name: Package portable zip and checksums
         shell: pwsh
         run: |
           $v = "${{ github.ref_name }}".TrimStart('v')
           Compress-Archive -Path publish, install-service.ps1, setup-audit.ps1, restore-audit.ps1, LICENSE, README.md, README.ja.md `
                            -DestinationPath "dist/FileAccessMonitor-$v-win-x64.zip"
-          # Linux agent (Samba): one self-contained file, its systemd unit and installer
-          $agent = "FileAccessMonitor-$v-linux-x64-agent"
-          dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true `
-            -o "linux-dist/$agent" /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None /p:Version=$v
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Copy-Item linux-agent/install.sh, linux-agent/fileaccessmonitor-agent.service, LICENSE, README.md, README.ja.md "linux-dist/$agent/"
-          tar -czf "dist/$agent.tar.gz" -C linux-dist $agent
-          # Linux monitoring server: the same app as on Windows, with its web GUI files, unit and installer.
-          # Culture data is not needed (formatting is culture-invariant), so it runs without libicu.
-          $server = "FileAccessMonitor-$v-linux-x64-server"
-          dotnet publish FileAccessMonitor.csproj -c Release -r linux-x64 --self-contained true -o "linux-dist/$server" `
-            /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None /p:IsTransformWebConfigDisabled=true `
-            /p:InvariantGlobalization=true /p:PredefinedCulturesOnly=false /p:Version=$v
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Remove-Item "linux-dist/$server/*.a"
-          Copy-Item linux-server/install.sh, linux-server/fileaccessmonitor.service, LICENSE, README.md, README.ja.md "linux-dist/$server/"
-          tar -czf "dist/$server.tar.gz" -C linux-dist $server
           Get-ChildItem dist -File | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content dist/SHA256SUMS.txt -Encoding ascii

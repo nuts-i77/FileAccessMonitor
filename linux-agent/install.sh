@@ -41,6 +41,10 @@ if [ "${1:-}" = "--uninstall" ]; then
     exit 0
 fi
 
+if [ -f /usr/lib/systemd/system/fileaccessmonitor-agent.service ]; then
+    echo "The agent is installed from the deb/rpm package here; upgrade it with apt or dnf instead." >&2
+    exit 1
+fi
 if systemctl list-unit-files fileaccessmonitor.service 2>/dev/null | grep -q "^fileaccessmonitor.service"; then
     echo "The FileAccessMonitor monitoring server is installed on this machine; it can record this machine's" >&2
     echo "Samba accesses itself (install.sh --collect in the server package). No agent is needed." >&2

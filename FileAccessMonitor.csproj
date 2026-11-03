@@ -10,9 +10,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="tests/**;linux-agent/**;linux-server/**;publish/**;dist/**;linux-dist/**" />
-    <Content Remove="tests/**;linux-agent/**;linux-server/**;publish/**;dist/**;linux-dist/**" />
-    <None Remove="tests/**;linux-agent/**;linux-server/**;publish/**;dist/**;linux-dist/**" />
+    <Compile Remove="tests/**;linux-agent/**;linux-server/**;packaging/**;build/**;publish/**;dist/**;linux-dist/**" />
+    <Content Remove="tests/**;linux-agent/**;linux-server/**;packaging/**;build/**;publish/**;dist/**;linux-dist/**" />
+    <None Remove="tests/**;linux-agent/**;linux-server/**;packaging/**;build/**;publish/**;dist/**;linux-dist/**" />
     <InternalsVisibleTo Include="FileAccessMonitor.Tests" />
   </ItemGroup>
 

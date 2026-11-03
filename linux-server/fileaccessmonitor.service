@@ -7,7 +7,8 @@ Wants=network-online.target
 Type=notify
 ExecStart=/opt/fileaccessmonitor/FileAccessMonitor
 WorkingDirectory=/opt/fileaccessmonitor
-# Set by install.sh: fileaccessmonitor (monitoring only) or root (also collecting Samba accesses)
+# Monitoring only; fileaccessmonitor-server --collect runs it as root and --port sets the web GUI
+# port, through drop-ins in /etc/systemd/system/fileaccessmonitor.service.d
 User=fileaccessmonitor
 Restart=always
 RestartSec=10

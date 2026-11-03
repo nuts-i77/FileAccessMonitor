@@ -232,7 +232,7 @@ window.I18N_EN = {
   'app.localCollection': 'Collection on this server:',
   'app.localOn': 'On (records accesses on this server too)',
   'app.localOff': 'Off (monitoring only)',
-  'app.localHint': 'To change it, run FileAccessMonitor local-collection on (or off) on the server and restart the service.',
+  'app.localHint': 'To change it: on Windows, run FileAccessMonitor.exe local-collection on (or off) and restart the service; on Linux, run sudo fileaccessmonitor-server --collect (or --monitor-only).',
   'settings.monitorOnly': 'This server is monitoring only (it does not record accesses on itself). Once agents are registered, set their monitored folders and recording rules here.',
   'app.updateCheck': 'Check for updates',
   'app.updateCheckHint': 'Once a day, when an Admin opens the web GUI, their browser asks GitHub for the latest release. The file server itself does not connect out.',

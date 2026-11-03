@@ -5,7 +5,7 @@ using FileAccessMonitor.Services;
 // fileaccessmonitor-agent enroll <connection string> | unenroll | (no arguments: run as the service)
 if (args.Length > 0 && args[0] is "enroll" or "unenroll")
     return await AgentCommands.RunCommandAsync(args, "fileaccessmonitor-agent",
-        "Run: systemctl restart fileaccessmonitor-agent");
+        "Start it with: systemctl enable fileaccessmonitor-agent && systemctl restart fileaccessmonitor-agent");
 if (args.Length > 0 && args[0] is "--version" or "version")
 {
     Console.WriteLine(AppInfo.Version);

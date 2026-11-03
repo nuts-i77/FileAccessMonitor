@@ -17,3 +17,5 @@ publish/
 *.log
 logs/
 dist/
+build/
+linux-dist/

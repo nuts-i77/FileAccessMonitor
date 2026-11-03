@@ -1,0 +1,39 @@
+# deb and rpm of the Linux monitoring server, built by the release workflow with nfpm:
+#   (the server published to build/server)  VERSION=1.8.0 nfpm package -f packaging/nfpm-server.yaml -p rpm -t dist/
+name: fileaccessmonitor-server
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: semver
+release: 1
+section: admin
+priority: optional
+maintainer: nuts-i77 <nuts_i77@aol.com>
+vendor: FileAccessMonitor
+homepage: https://github.com/nuts-i77/FileAccessMonitor
+license: MIT
+description: |-
+  FileAccessMonitor monitoring server.
+  Web GUI, database and notifications for file access records sent by FileAccessMonitor
+  agents on Windows and Samba file servers; it can also record this machine's Samba accesses.
+conflicts:
+  - fileaccessmonitor-agent
+
+contents:
+  - src: build/server
+    dst: /opt/fileaccessmonitor
+    type: tree
+  - src: linux-server/fileaccessmonitor-server
+    dst: /opt/fileaccessmonitor/fileaccessmonitor-server
+    file_info:
+      mode: 0755
+  - src: /opt/fileaccessmonitor/fileaccessmonitor-server
+    dst: /usr/bin/fileaccessmonitor-server
+    type: symlink
+  - src: linux-server/fileaccessmonitor.service
+    dst: /usr/lib/systemd/system/fileaccessmonitor.service
+
+scripts:
+  postinstall: packaging/server-postinstall.sh
+  preremove: packaging/server-preremove.sh
+  postremove: packaging/server-postremove.sh

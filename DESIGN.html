@@ -649,7 +649,11 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <h2>Linux の監視サーバー</h2>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li>本体を linux-x64 の自己完結・単一ファイルで発行（<code>InvariantGlobalization</code>。書式は元々カルチャーに依存しないため libicu 不要）。<code>wwwroot</code> と <code>libe_sqlite3.so</code> は実行ファイルの隣に置く</li>
-        <li><code>linux-server/install.sh</code>: <code>/opt/fileaccessmonitor</code> に配置し、systemd のサービス <code>fileaccessmonitor</code>（<code>Type=notify</code>、<code>WorkingDirectory</code> で Web のファイルの場所を指定）を登録。監視専用は専用ユーザー <code>fileaccessmonitor</code>、<code>--collect</code>（自分の Samba も収集）は root で動かす。更新時はモードとポートを引き継ぐ。エージェントと同じ機械には入れない（双方のインストーラーで拒否）</li>
+        <li>配置: <code>/opt/fileaccessmonitor</code>、systemd のサービス <code>fileaccessmonitor</code>（<code>Type=notify</code>、<code>WorkingDirectory</code> で Web のファイルの場所を指定、既定は専用ユーザー <code>fileaccessmonitor</code>）</li>
+        <li><code>fileaccessmonitor-server</code>（<code>linux-server/</code> のシェルスクリプト）: モードとポートの表示・変更。<code>--collect</code> は drop-in <code>collect.conf</code>（<code>User=root</code>）と smbd の journald 設定を書いて <code>local-collection on</code>、<code>--monitor-only</code> はその逆、<code>--port</code> は drop-in <code>port.conf</code>（<code>Kestrel__Endpoints__Http__Url</code> の環境変数）。drop-in は <code>/etc/systemd/system/fileaccessmonitor.service.d</code> にあるので更新で消えない。データフォルダの所有者を動作アカウントに合わせる</li>
+        <li>配布: deb / rpm（<code>packaging/nfpm-*.yaml</code>、nfpm で作成）と tar.gz（<code>linux-server/install.sh</code>）。パッケージの postinstall は、新規なら監視専用で起動、更新ならモードを保って再起動。tar.gz の collect 環境から移った場合は <code>collect.conf</code> を作って引き継ぐ。エージェントから置き換えた場合は <code>agent.json</code> を退避して監視専用で始める。<code>remove</code> ではデータを残し、<code>purge</code>（deb）で削除（もう一方のパッケージが入っていれば残す）</li>
+        <li>エージェントと同じ機械には入れない: パッケージは互いに <code>Conflicts</code>、tar.gz のインストーラーは相手を見つけると拒否。Linux エージェントも同じく deb / rpm（<code>fileaccessmonitor-agent</code>。<code>/usr/bin/fileaccessmonitor-agent</code>、smbd 用の journald 設定は <code>/usr/lib/systemd/system/smbd.service.d</code> と <code>smb.service.d</code>）</li>
+        <li>リリース: <code>release.yml</code> の Linux のジョブ（ubuntu-latest）で、両方の tar.gz・deb・rpm を作り（nfpm はチェックサムを固定して取得）、Windows のジョブがリリースに加える</li>
         <li>OS による違い: <code>UseSystemd()</code>（Windows では何もしない）、エージェント用の証明書は <code>agent-endpoint.pfx</code>（600）、鍵や初期パスワードは 600 で作成、Data Protection の鍵は DPAPI を使わずフォルダの権限（700）で保護</li>
         <li><code>enroll</code> / <code>agent.json</code> は Windows 版のみ（Linux では Linux エージェントのパッケージを案内）</li>
       </ul>

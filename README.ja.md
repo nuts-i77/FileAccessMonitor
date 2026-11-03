@@ -24,7 +24,7 @@ FileAccessMonitor は次の 2 つの役割で動きます。
 | 記録する対象 | 1 台構成の場合: このサーバーの共有フォルダ（Windows の監査ログ） | `--collect` の場合: このサーバーの Samba 共有 | このサーバーの共有フォルダ（Windows の監査ログ） | Samba 4.x の共有（SMB 経由のアクセス） |
 | 権限 | 導入に管理者権限（サービスは SYSTEM で動作） | 導入に root（監視専用は専用ユーザー、`--collect` は root で動作） | 導入に管理者権限（SYSTEM で動作） | root |
 | ネットワーク | 受信: TCP 8080（Web 画面）、8443（エージェント） | 受信: TCP 8080、8443 | 送信: 監視サーバーの 8443 のみ | 送信: 監視サーバーの 8443 のみ |
-| 配布ファイル | `FileAccessMonitor-Setup-<版>.exe` | `FileAccessMonitor-<版>-linux-x64-server.tar.gz` | `FileAccessMonitor-Setup-<版>.exe`（役割で「エージェント」を選択） | `FileAccessMonitor-<版>-linux-x64-agent.tar.gz` |
+| 配布ファイル | `FileAccessMonitor-Setup-<版>.exe` | `fileaccessmonitor-server` の rpm / deb（または tar.gz） | `FileAccessMonitor-Setup-<版>.exe`（役割で「エージェント」を選択） | `fileaccessmonitor-agent` の rpm / deb（または tar.gz） |
 | 手順 | [インストーラーで導入する](#インストーラーで導入する推奨) | [8. Linux の監視サーバー](#8-linux-の監視サーバー) | [6. 複数のファイルサーバーから収集する](#6-複数のファイルサーバーから収集するエージェント) | [7. Linux のファイルサーバー](#7-linux-のファイルサーバーsamba-エージェント) |
 
 - どれも自己完結型で配布するため、.NET ランタイムのインストールは不要です（ソースからビルドする場合のみ .NET 10 SDK が必要）
@@ -105,7 +105,7 @@ wevtutil sl Security /ms:1073741824   # 1GB
 
 1 つの画面で、複数のファイルサーバーの記録を見られます。Web GUI を表示するサーバー（監視サーバー）には通常どおりインストールし、他のファイルサーバーには **エージェント** としてインストールします（収集と送信のみを行います）。監視サーバーはファイルサーバーの 1 台でも、**監視サーバーのみ** としてインストールした別の機械（Windows または [Linux](#8-linux-の監視サーバー)）でも構いません。
 
-インストール済みの監視サーバーで、自分自身のアクセスを記録するか（監視専用にするか）を切り替えるには、管理者の PowerShell で `C:\Program Files\FileAccessMonitor` にある `FileAccessMonitor.exe local-collection off`（または `on`）を実行し、サービスを再起動します。今の状態は **設定 → アプリ情報** に表示されます。
+インストール済みの監視サーバーで、自分自身のアクセスを記録するか（監視専用にするか）を切り替えるには、管理者の PowerShell で `C:\Program Files\FileAccessMonitor` にある `FileAccessMonitor.exe local-collection off`（または `on`）を実行し、サービスを再起動します（Linux では `sudo fileaccessmonitor-server --collect` または `--monitor-only`）。今の状態は **設定 → アプリ情報** に表示されます。
 
 1. ファイルサーバーから監視サーバーの TCP **8443**（エージェント用ポート）に接続できるようにします。監視サーバーは常にこのポートで待ち受けており、インストーラーのファイアウォールのオプションで許可できます。この規則は FileAccessMonitor.exe を許可するので、Web GUI のポートとエージェント用ポートの両方が対象です
 2. **設定 → エージェント** で **登録コードを発行** を押します。ファイルサーバーから監視サーバーへ別の名前や IP アドレスで接続する場合は、アドレスを変更して **反映** を押します。表示された接続文字列をコピーします（24 時間有効、1 回だけ使えます）
@@ -151,15 +151,17 @@ Samba でフォルダを共有している Linux のファイルサーバーか�
 
 必要なもの: systemd と Samba 4.x が動く x86-64 の Linux（Ubuntu 24.04 + Samba 4.19、Rocky Linux 9.4 + Samba 4.23 で確認。Debian、RHEL、AlmaLinux も同じ手順）と root 権限
 
-1. リリースページから `FileAccessMonitor-<バージョン>-linux-x64-agent.tar.gz` をダウンロードし、ファイルサーバーで展開します
+1. リリースページから、ディストリビューションに合ったパッケージをダウンロードします。RHEL・Rocky・Alma は `fileaccessmonitor-agent-<バージョン>-1.x86_64.rpm`、Ubuntu・Debian は `fileaccessmonitor-agent_<バージョン>-1_amd64.deb` です
 2. 監視サーバーの **設定 → エージェント** で接続文字列を発行し、root で次を実行します
 
    ```sh
-   tar xzf FileAccessMonitor-<バージョン>-linux-x64-agent.tar.gz
-   cd FileAccessMonitor-<バージョン>-linux-x64-agent
-   sudo sh install.sh <接続文字列>
+   sudo dnf install ./fileaccessmonitor-agent-<バージョン>-1.x86_64.rpm     # または: sudo apt install ./fileaccessmonitor-agent_<バージョン>-1_amd64.deb
+   sudo fileaccessmonitor-agent enroll <接続文字列>
+   sudo systemctl enable --now fileaccessmonitor-agent
    ```
-   エージェントは systemd のサービス `fileaccessmonitor-agent` として動きます（ログ: `journalctl -u fileaccessmonitor-agent`）。データは `/var/lib/fileaccessmonitor` にあります
+   パッケージ管理を使わない場合は `FileAccessMonitor-<バージョン>-linux-x64-agent.tar.gz` を展開し、`sudo sh install.sh <接続文字列>` を実行します。
+
+   エージェントは systemd のサービス `fileaccessmonitor-agent` として動きます（ログ: `journalctl -u fileaccessmonitor-agent`）。データは `/var/lib/fileaccessmonitor` にあります。更新は、新しいパッケージを同じように `dnf install` / `apt install` します
 3. 都合のよいときに Samba を 1 回再起動します（`systemctl restart smbd`。RHEL 系は `smb`）。監査ログが大量に出たときに journald が捨てないよう、インストーラーが設定を追加しており、Samba の再起動で有効になります
 4. 監視サーバーの **設定** タブで Linux のサーバーを選び、`/srv/share/docs` のように Linux のパスで監視フォルダを追加します
 
@@ -169,7 +171,7 @@ Windows との違い:
 - 監査は共有への新しい接続から始まります。すでに接続しているクライアントは、接続し直したあとから記録されます
 - パスは大文字と小文字を区別します。ユーザー名は Samba が記録する名前（ドメイン参加時は `DOMAIN\user`）で、接続元の端末名は SMB の接続から取ります
 - 読み取り・書き込みは、Windows と同じくファイルを開くときに要求したアクセスで判断します。削除と名前変更は、実際に行われたときに記録します
-- アンインストールは、先に監視サーバーでそのサーバーの監視フォルダを外してから、展開したフォルダで `sudo sh install.sh --uninstall` を実行します（データも消す場合は `--purge` を付けます）
+- アンインストールは、先に監視サーバーでそのサーバーの監視フォルダを外してから、`sudo dnf remove fileaccessmonitor-agent` または `sudo apt remove fileaccessmonitor-agent` を実行します（`apt purge` では登録と送信待ちの記録も削除します）。tar.gz で導入した場合は、展開したフォルダで `sudo sh install.sh --uninstall` を実行します（データも消す場合は `--purge` を付けます）
 
 ### 8. Linux の監視サーバー
 
@@ -178,19 +180,28 @@ Windows との違い:
 必要なもの: systemd が動く x86-64 の Linux（Rocky Linux 9.4 で確認。Ubuntu、Debian、RHEL、AlmaLinux も同じ手順）と、導入時の root 権限
 
 ```sh
-tar xzf FileAccessMonitor-<バージョン>-linux-x64-server.tar.gz
-cd FileAccessMonitor-<バージョン>-linux-x64-server
-sudo sh install.sh                  # 監視専用: ユーザー fileaccessmonitor で動きます
-sudo sh install.sh --collect        # この機械の Samba のアクセスも記録: root で動きます
+sudo dnf install ./fileaccessmonitor-server-<バージョン>-1.x86_64.rpm   # RHEL・Rocky・Alma
+sudo apt install ./fileaccessmonitor-server_<バージョン>-1_amd64.deb    # Ubuntu・Debian
 ```
+
+新しく入れた場合は **監視専用** で、ユーザー `fileaccessmonitor` で動きます。動かし方の確認と変更は `fileaccessmonitor-server` コマンドで行います。
+
+```sh
+fileaccessmonitor-server                        # モード、ポート、サービスの状態を表示
+sudo fileaccessmonitor-server --collect         # この機械の Samba のアクセスも記録（root で動きます）
+sudo fileaccessmonitor-server --monitor-only    # 監視専用に戻す
+sudo fileaccessmonitor-server --port 8090       # Web GUI のポート（既定は 8080）
+```
+
+パッケージ管理を使わない場合は `FileAccessMonitor-<バージョン>-linux-x64-server.tar.gz` を展開し、`sudo sh install.sh` を実行します（オプション: `--collect`、`--monitor-only`、`--port <番号>`）。
 
 - `/opt/fileaccessmonitor` に導入され、systemd のサービス `fileaccessmonitor` として動きます（ログ: `journalctl -u fileaccessmonitor`）。記録と設定は `/var/lib/fileaccessmonitor` にあり、サービスのアカウントだけが読めます
 - `http://<サーバー>:8080` を開き、`admin` でログインします。初期パスワードは `/var/lib/fileaccessmonitor/initial-admin-password.txt` にあります（`sudo cat` で表示）
-- ファイアウォールが有効な場合は TCP 8080 と 8443 を開けてください。インストーラーは `firewall-cmd` と `ufw` のコマンドを表示しますが、ファイアウォール自体は変更しません
-- `--port <番号>` で Web GUI のポートを指定します。もう一度 `install.sh` を実行すると、モードとポートを保ったまま更新します。`--collect` / `--monitor-only` でモードを切り替えます
-- `--collect` の場合、この機械はエージェントと同じようにサーバーの一覧に出ます。**設定** タブで監視フォルダを追加すると、[Linux エージェント](#7-linux-のファイルサーバーsamba-エージェント)と同じ方法で監査を設定します。1 台の機械には、監視サーバーとエージェントのどちらか一方だけを入れます
+- ファイアウォールが有効な場合は TCP 8080 と 8443 を開けてください（例: `firewall-cmd --permanent --add-port=8080/tcp --add-port=8443/tcp && firewall-cmd --reload`、`ufw allow 8080/tcp && ufw allow 8443/tcp`）。パッケージはファイアウォールを変更しません
+- 更新（新しいパッケージを入れる、または `install.sh` をもう一度実行）では、モードとポートを引き継ぎます
+- `--collect` の場合、この機械はエージェントと同じようにサーバーの一覧に出ます。**設定** タブで監視フォルダを追加すると、[Linux エージェント](#7-linux-のファイルサーバーsamba-エージェント)と同じ方法で監査を設定します。1 台の機械には、監視サーバーとエージェントのどちらか一方だけを入れます（一方のパッケージを入れると、もう一方は置き換えられます）
 - 通知の秘密情報（Webhook の URL、SMTP のパスワード）は `/var/lib/fileaccessmonitor/keys` の鍵で暗号化し、その鍵はフォルダの権限で保護します（Windows では、鍵自体もマシンの DPAPI で暗号化します）
-- 削除は、展開したフォルダで `sudo sh install.sh --uninstall` を実行します（`--purge` を付けると記録と設定も削除します）
+- 削除は `sudo dnf remove fileaccessmonitor-server` または `sudo apt remove fileaccessmonitor-server` です。記録と設定は残ります（`apt purge` では削除します）。tar.gz で導入した場合は、展開したフォルダで `sudo sh install.sh --uninstall` を実行します（`--purge` を付けると記録と設定も削除します）
 
 ## セキュリティ
 

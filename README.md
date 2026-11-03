@@ -24,7 +24,7 @@ With one file server, install the monitoring server (standalone) on it and you a
 | Records | When standalone: this server's shared folders (Windows audit log) | With `--collect`: this server's Samba shares | This server's shared folders (Windows audit log) | Samba 4.x shares (access through SMB) |
 | Rights | Administrator to install (the service runs as SYSTEM) | root to install (runs as its own user when monitoring only, as root with `--collect`) | Administrator to install (runs as SYSTEM) | root |
 | Network | Inbound TCP 8080 (web GUI) and 8443 (agents) | Inbound TCP 8080 and 8443 | Outbound to the monitoring server's 8443 only | Outbound to the monitoring server's 8443 only |
-| Download | `FileAccessMonitor-Setup-<version>.exe` | `FileAccessMonitor-<version>-linux-x64-server.tar.gz` | `FileAccessMonitor-Setup-<version>.exe` (choose **Agent**) | `FileAccessMonitor-<version>-linux-x64-agent.tar.gz` |
+| Download | `FileAccessMonitor-Setup-<version>.exe` | `fileaccessmonitor-server` rpm / deb (or tar.gz) | `FileAccessMonitor-Setup-<version>.exe` (choose **Agent**) | `fileaccessmonitor-agent` rpm / deb (or tar.gz) |
 | Steps | [Install with the installer](#install-with-the-installer-recommended) | [8. Monitoring server on Linux](#8-monitoring-server-on-linux) | [6. Collect from several file servers](#6-collect-from-several-file-servers-agents) | [7. Linux file servers](#7-linux-file-servers-samba-agent) |
 
 - Everything is published self-contained, so no .NET runtime needs to be installed (the .NET 10 SDK is needed only to build from source).
@@ -112,7 +112,7 @@ wevtutil sl Security /ms:1073741824   # 1 GB
 
 One install can show the records of several file servers. Install FileAccessMonitor normally on the server that will show the web GUI (the monitoring server); on each other file server, install it as an **agent**, which only collects and sends. The monitoring server can be one of the file servers, or a separate machine installed as **Monitoring server only** (on Windows or [Linux](#8-monitoring-server-on-linux)).
 
-To switch an existing monitoring server between recording accesses on itself and monitoring only, run `FileAccessMonitor.exe local-collection off` (or `on`) in an elevated PowerShell in `C:\Program Files\FileAccessMonitor` and restart the service. **Settings → App info** shows the current mode.
+To switch an existing monitoring server between recording accesses on itself and monitoring only, run `FileAccessMonitor.exe local-collection off` (or `on`) in an elevated PowerShell in `C:\Program Files\FileAccessMonitor` and restart the service (on Linux: `sudo fileaccessmonitor-server --collect` or `--monitor-only`). **Settings → App info** shows the current mode.
 
 1. Make sure the file servers can reach the monitoring server on TCP port **8443** (the agent port). The monitoring server always listens on it, and the installer's firewall option allows it: the rule allows FileAccessMonitor.exe, so it covers both the web GUI port and the agent port.
 2. Under **Settings → Agents**, choose **Issue registration code**. If the file servers reach the monitoring server by another name or by IP address, change the address there and choose **Apply**. Copy the connection string; it is valid for 24 hours and can be used once.
@@ -158,15 +158,17 @@ A Linux file server that shares folders with Samba can send its records to the m
 
 Requirements: x86-64 Linux with systemd and Samba 4.x (tested on Ubuntu 24.04 with Samba 4.19 and Rocky Linux 9.4 with Samba 4.23; Debian, RHEL and AlmaLinux work the same way), and root.
 
-1. Download `FileAccessMonitor-<version>-linux-x64-agent.tar.gz` from the release page and unpack it on the file server.
+1. Download the package for your distribution from the release page: `fileaccessmonitor-agent-<version>-1.x86_64.rpm` (RHEL, Rocky, Alma) or `fileaccessmonitor-agent_<version>-1_amd64.deb` (Ubuntu, Debian).
 2. Issue a connection string under **Settings → Agents** on the monitoring server, then run as root:
 
    ```sh
-   tar xzf FileAccessMonitor-<version>-linux-x64-agent.tar.gz
-   cd FileAccessMonitor-<version>-linux-x64-agent
-   sudo sh install.sh <connection string>
+   sudo dnf install ./fileaccessmonitor-agent-<version>-1.x86_64.rpm     # or: sudo apt install ./fileaccessmonitor-agent_<version>-1_amd64.deb
+   sudo fileaccessmonitor-agent enroll <connection string>
+   sudo systemctl enable --now fileaccessmonitor-agent
    ```
-   The agent runs as the systemd service `fileaccessmonitor-agent` (log: `journalctl -u fileaccessmonitor-agent`); its data is in `/var/lib/fileaccessmonitor`.
+   Without a package manager, use `FileAccessMonitor-<version>-linux-x64-agent.tar.gz`: unpack it and run `sudo sh install.sh <connection string>`.
+
+   The agent runs as the systemd service `fileaccessmonitor-agent` (log: `journalctl -u fileaccessmonitor-agent`); its data is in `/var/lib/fileaccessmonitor`. Upgrade it by installing the newer package (`dnf install` / `apt install` again).
 3. Restart Samba once when convenient (`systemctl restart smbd`, or `smb` on RHEL). The installer adds a setting so that journald does not drop Samba's audit lines when there are many of them; it takes effect when Samba restarts.
 4. On the **Settings** tab of the monitoring server, pick the Linux server and add folders by their Linux path, such as `/srv/share/docs`.
 
@@ -176,7 +178,7 @@ How it differs from Windows:
 - Auditing starts with new connections to the share; clients that are already connected are recorded after they reconnect.
 - Paths are case-sensitive. User names are those Samba logs in (`DOMAIN\user` on domain members); the client machine name comes from the SMB connection.
 - Reads and writes are the access the client asked for when opening a file, as on Windows; deletions and renames are recorded when they happen.
-- To remove the agent: remove its folders on the monitoring server first, then run `sudo sh install.sh --uninstall` in the unpacked folder (add `--purge` to delete its data too).
+- To remove the agent: remove its folders on the monitoring server first, then `sudo dnf remove fileaccessmonitor-agent` or `sudo apt remove fileaccessmonitor-agent` (`apt purge` also deletes its registration and waiting records). With the tar.gz, run `sudo sh install.sh --uninstall` in the unpacked folder (add `--purge` to delete its data too).
 
 ### 8. Monitoring server on Linux
 
@@ -185,19 +187,28 @@ The monitoring server (web GUI, database, notifications, agent port) also runs o
 Requirements: x86-64 Linux with systemd (tested on Rocky Linux 9.4; Ubuntu, Debian, RHEL and AlmaLinux work the same way), and root to install.
 
 ```sh
-tar xzf FileAccessMonitor-<version>-linux-x64-server.tar.gz
-cd FileAccessMonitor-<version>-linux-x64-server
-sudo sh install.sh                  # monitoring only: runs as the user fileaccessmonitor
-sudo sh install.sh --collect        # also records this machine's Samba accesses: runs as root
+sudo dnf install ./fileaccessmonitor-server-<version>-1.x86_64.rpm   # RHEL, Rocky, Alma
+sudo apt install ./fileaccessmonitor-server_<version>-1_amd64.deb    # Ubuntu, Debian
 ```
+
+A new install is **monitoring only** and runs as the user `fileaccessmonitor`. The `fileaccessmonitor-server` command shows and changes how it runs:
+
+```sh
+fileaccessmonitor-server                        # mode, port and service state
+sudo fileaccessmonitor-server --collect         # also record this machine's Samba accesses (runs as root)
+sudo fileaccessmonitor-server --monitor-only    # back to monitoring only
+sudo fileaccessmonitor-server --port 8090       # web GUI port (default 8080)
+```
+
+Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar.gz`: unpack it and run `sudo sh install.sh` (options: `--collect`, `--monitor-only`, `--port <number>`).
 
 - The server is installed to `/opt/fileaccessmonitor` and runs as the systemd service `fileaccessmonitor` (log: `journalctl -u fileaccessmonitor`). Records and settings are in `/var/lib/fileaccessmonitor`, readable by the service account only.
 - Sign in at `http://<server>:8080` as `admin`; the initial password is in `/var/lib/fileaccessmonitor/initial-admin-password.txt` (`sudo cat` it).
-- Open TCP 8080 and 8443 in the firewall if it is on. The installer prints the `firewall-cmd` and `ufw` commands but does not change the firewall itself.
-- `--port <number>` sets the web GUI port. Running `install.sh` again upgrades and keeps the mode and port; `--collect` or `--monitor-only` switches the mode.
-- With `--collect`, add the machine's own folders on the **Settings** tab (it appears as a server like the agents) and auditing is set up the same way as on a [Linux agent](#7-linux-file-servers-samba-agent). A machine runs either the monitoring server or the agent, not both.
+- Open TCP 8080 and 8443 in the firewall if it is on, for example `firewall-cmd --permanent --add-port=8080/tcp --add-port=8443/tcp && firewall-cmd --reload` or `ufw allow 8080/tcp && ufw allow 8443/tcp`. The packages do not change the firewall.
+- Upgrades (installing a newer package, or running `install.sh` again) keep the mode and port.
+- With `--collect`, add the machine's own folders on the **Settings** tab (it appears as a server like the agents) and auditing is set up the same way as on a [Linux agent](#7-linux-file-servers-samba-agent). A machine runs either the monitoring server or the agent, not both; installing one package replaces the other.
 - The notification secrets (webhook URL, SMTP password) are encrypted with keys in `/var/lib/fileaccessmonitor/keys`, protected by the folder's permissions (on Windows the keys are also encrypted with the machine's DPAPI).
-- To remove it: `sudo sh install.sh --uninstall` in the unpacked folder (`--purge` also deletes records and settings).
+- To remove it: `sudo dnf remove fileaccessmonitor-server` or `sudo apt remove fileaccessmonitor-server`; records and settings are kept (`apt purge` deletes them). With the tar.gz, `sudo sh install.sh --uninstall` in the unpacked folder (`--purge` also deletes records and settings).
 
 ## Security
 

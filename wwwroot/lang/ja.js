@@ -232,7 +232,7 @@ window.I18N_JA = {
   'app.localCollection': 'このサーバーでの収集:',
   'app.localOn': '有効（このサーバーのアクセスも記録）',
   'app.localOff': '無効（監視専用）',
-  'app.localHint': '切り替えるには、サーバーで FileAccessMonitor local-collection on（または off）を実行し、サービスを再起動します。',
+  'app.localHint': '切り替えるには、Windows では FileAccessMonitor.exe local-collection on（または off）を実行してサービスを再起動します。Linux では sudo fileaccessmonitor-server --collect（または --monitor-only）を実行します。',
   'settings.monitorOnly': 'このサーバーは監視専用です（自分自身のアクセスは記録しません）。エージェントを登録すると、そのサーバーの監視フォルダと記録ルールをここで設定できます。',
   'app.updateCheck': '更新を確認する',
   'app.updateCheckHint': '管理者が画面を開いたとき、1 日 1 回、ブラウザから GitHub に最新版を問い合わせます。ファイルサーバー自体は外部と通信しません。',
