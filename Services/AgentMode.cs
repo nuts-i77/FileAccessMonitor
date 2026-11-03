@@ -7,7 +7,8 @@ namespace FileAccessMonitor.Services;
 // The Windows agent: the collector reads the Security log as on a standalone install and hands its
 // batches to the outbox (AgentCore.cs has the parts shared with the Linux agent).
 
-// Checks folders, sets or removes their SACL, lists files for the Unused Files tab
+// Checks folders, sets or removes their SACL, lists files for the Unused Files tab,
+// reads the permissions below a folder
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public class WindowsAgentPlatform(SaclManagerService sacl, ILogger<WindowsAgentPlatform> logger) : IAgentPlatform
 {
@@ -38,6 +39,8 @@ public class WindowsAgentPlatform(SaclManagerService sacl, ILogger<WindowsAgentP
                     path, new HashSet<string>(), new RecordingRules(RecordingSettings.Load()), ct);
                 return AgentJobRunner.ScanResult(files.Select(f => (f.Path, f.Size, f.ModifiedUtc)), scanned, truncated);
             }
+            case PermissionContract.JobType:
+                return PermissionScanWindows.Scan(path, PermissionContract.OptionsFrom(job.Args), ct);
             default:
                 return new JsonObject { ["error"] = $"Unknown job {job.Type}; update the agent." };
         }
