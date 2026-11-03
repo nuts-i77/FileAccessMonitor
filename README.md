@@ -9,12 +9,27 @@ FileAccessMonitor records file access (read, write, delete) on file servers' sha
 > [!IMPORTANT]
 > This tool records who accessed which file and when. If you use it in an organization, tell the people being monitored in advance, in line with your workplace rules and privacy policy.
 
-## Requirements
+## Roles and requirements
 
-- Windows Server 2016 or later (or Windows 10/11) for Windows file servers, and for the monitoring server unless it runs on Linux. A standalone install runs on the file server that hosts the shared folders; with [agents](#6-collect-from-several-file-servers-agents), the monitoring server can be a separate machine that only shows what agents send.
-- For Linux (optional): x86-64 Linux with systemd; Samba 4.x on file servers. See [7. Linux file servers](#7-linux-file-servers-samba-agent) and [8. Monitoring server on Linux](#8-monitoring-server-on-linux)
-- .NET 10 SDK, needed to build only. The app is published self-contained, so the servers do not need the .NET runtime.
-- Administrator rights (root on Linux), needed to read the audit logs and to set up auditing
+FileAccessMonitor runs in two roles:
+
+- **Monitoring server**: the web GUI, database, and notifications; it collects and shows the records. It can also record accesses to its own shared folders (**standalone**), or only show what agents send (**monitoring server only**).
+- **Agent**: installed on a file server to monitor; it records that server's accesses and sends them to the monitoring server. It has no web GUI.
+
+With one file server, install the monitoring server (standalone) on it and you are done. Install an agent on each further file server.
+
+| | Monitoring server (Windows) | Monitoring server (Linux) | Agent (Windows) | Agent (Linux) |
+|---|---|---|---|---|
+| OS | Windows Server 2016 or later, Windows 10/11 | x86-64 Linux with systemd (tested on Rocky Linux 9.4) | Windows Server 2016 or later, Windows 10/11 | x86-64 Linux with systemd (tested on Ubuntu 24.04 and Rocky Linux 9.4) |
+| Records | When standalone: this server's shared folders (Windows audit log) | With `--collect`: this server's Samba shares | This server's shared folders (Windows audit log) | Samba 4.x shares (access through SMB) |
+| Rights | Administrator to install (the service runs as SYSTEM) | root to install (runs as its own user when monitoring only, as root with `--collect`) | Administrator to install (runs as SYSTEM) | root |
+| Network | Inbound TCP 8080 (web GUI) and 8443 (agents) | Inbound TCP 8080 and 8443 | Outbound to the monitoring server's 8443 only | Outbound to the monitoring server's 8443 only |
+| Download | `FileAccessMonitor-Setup-<version>.exe` | `FileAccessMonitor-<version>-linux-x64-server.tar.gz` | `FileAccessMonitor-Setup-<version>.exe` (choose **Agent**) | `FileAccessMonitor-<version>-linux-x64-agent.tar.gz` |
+| Steps | [Install with the installer](#install-with-the-installer-recommended) | [8. Monitoring server on Linux](#8-monitoring-server-on-linux) | [6. Collect from several file servers](#6-collect-from-several-file-servers-agents) | [7. Linux file servers](#7-linux-file-servers-samba-agent) |
+
+- Everything is published self-contained, so no .NET runtime needs to be installed (the .NET 10 SDK is needed only to build from source).
+- The web GUI is used from a browser (Edge, Chrome, Firefox, and so on) on any PC that can reach the monitoring server.
+- Only agents connect to the monitoring server; the monitoring server never connects to the file servers.
 
 ## Setup
 
