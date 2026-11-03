@@ -123,7 +123,7 @@ public class AgentApiController : ControllerBase
         agent.AuditPolicyOk = req.AuditPolicyOk; // null: not known, or (Linux) no folders monitored yet
         if (req.Os is { Length: > 0 } os) agent.Os = os.Length <= 100 ? os : os[..100];
         await _db.SaveChangesAsync();
-        return Ok(new { lastBatchSeq = agent.LastBatchSeq, configVersion = agent.ConfigVersion });
+        return Ok(new { lastBatchSeq = agent.LastBatchSeq, configVersion = agent.ConfigVersion, protocol = AgentProtocol.Version });
     }
 
     // GET /api/agent/config  — monitored folders and recording rules for this agent's server

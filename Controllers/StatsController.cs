@@ -21,8 +21,11 @@ public class StatsController : ControllerBase
     }
 
     // Records the signed-in user may see (limited to their folders when a scope is set),
-    // of one file server when ?server= is given
-    private IQueryable<Models.AccessRecord> Records => _records ??= FilterServer(_scopes.Records(User));
+    // of one file server when ?server= is given. Denied attempts are not accesses: statistics use
+    // Records (without them); only the log, its CSV and the denied counter use AllRecords.
+    private IQueryable<Models.AccessRecord> AllRecords => _records ??= FilterServer(_scopes.Records(User));
+
+    private IQueryable<Models.AccessRecord> Records => AllRecords.Where(r => !r.Denied);
 
     private IQueryable<Models.AccessRecord> FilterServer(IQueryable<Models.AccessRecord> query) =>
         Request.Query["server"].ToString() is { Length: > 0 } server ? query.Where(r => r.ServerName == server) : query;
@@ -46,7 +49,9 @@ public class StatsController : ControllerBase
             .Select(g => new { Type = g.Key, Count = g.Count() })
             .ToListAsync();
 
-        return Ok(new { total, uniqueFiles, uniqueUsers, byType });
+        var denied = await AllRecords.Where(r => r.Denied && r.AccessTime >= since).CountAsync();
+
+        return Ok(new { total, uniqueFiles, uniqueUsers, byType, denied });
     }
 
     // GET /api/stats/top-files?limit=20&days=7&accessType=
@@ -73,6 +78,8 @@ public class StatsController : ControllerBase
                 Write = g.Count(r => r.AccessType == "Write"),
                 Delete = g.Count(r => r.AccessType == "Delete"),
                 Rename = g.Count(r => r.AccessType == "Rename"),
+                Create = g.Count(r => r.AccessType == "Create"),
+                Permission = g.Count(r => r.AccessType == "Permission"),
                 LastAccess = g.Max(r => r.AccessTime),
                 TopUser = g.GroupBy(r => r.UserName)
                            .OrderByDescending(u => u.Count())
@@ -115,6 +122,8 @@ public class StatsController : ControllerBase
                 Write = g.Count(r => r.AccessType == "Write"),
                 Delete = g.Count(r => r.AccessType == "Delete"),
                 Rename = g.Count(r => r.AccessType == "Rename"),
+                Create = g.Count(r => r.AccessType == "Create"),
+                Permission = g.Count(r => r.AccessType == "Permission"),
                 UniqueFiles = g.Select(r => r.FilePath).Distinct().Count(),
                 LastAccess = g.Max(r => r.AccessTime)
             })
@@ -148,7 +157,7 @@ public class StatsController : ControllerBase
         var recent = await q
             .OrderByDescending(r => r.AccessTime)
             .Take(50)
-            .Select(r => new { r.AccessTime, r.UserName, r.AccessType })
+            .Select(r => new { r.AccessTime, r.UserName, r.AccessType, r.NewPath, r.Detail })
             .ToListAsync();
 
         return Ok(new { path, byUser, byType, timeline, recent });
@@ -248,7 +257,9 @@ public class StatsController : ControllerBase
                 Read = g.Count(r => r.AccessType == "Read"),
                 Write = g.Count(r => r.AccessType == "Write"),
                 Delete = g.Count(r => r.AccessType == "Delete"),
-                Rename = g.Count(r => r.AccessType == "Rename")
+                Rename = g.Count(r => r.AccessType == "Rename"),
+                Create = g.Count(r => r.AccessType == "Create"),
+                Permission = g.Count(r => r.AccessType == "Permission")
             })
             .OrderByDescending(x => x.Total)
             .Take(limit)
@@ -288,6 +299,8 @@ public class StatsController : ControllerBase
                 Write = g.Count(r => r.AccessType == "Write"),
                 Delete = g.Count(r => r.AccessType == "Delete"),
                 Rename = g.Count(r => r.AccessType == "Rename"),
+                Create = g.Count(r => r.AccessType == "Create"),
+                Permission = g.Count(r => r.AccessType == "Permission"),
                 LastAccess = g.Max(r => r.AccessTime)
             })
             .OrderByDescending(x => x.Total)
@@ -299,7 +312,7 @@ public class StatsController : ControllerBase
         var recent = await q
             .OrderByDescending(r => r.AccessTime)
             .Take(30)
-            .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType, r.IsFolder, r.ServerName })
+            .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType, r.IsFolder, r.ServerName, r.NewPath, r.Detail })
             .ToListAsync();
 
         return Ok(new { user, byType, byServer, topFiles, timeline, recent });
@@ -307,20 +320,23 @@ public class StatsController : ControllerBase
 
     // GET /api/stats/recent?page=1&pageSize=50
     [HttpGet("recent")]
-    public async Task<IActionResult> Recent([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    public async Task<IActionResult> Recent([FromQuery] int page = 1, [FromQuery] int pageSize = 50, [FromQuery] string? denied = null)
     {
         if (pageSize < 1 || pageSize > 500) pageSize = 50;
         if (page < 1) page = 1;
 
-        var total = await Records.CountAsync();
-        var items = await Records
+        // The log shows denied attempts too, unless ?denied=exclude (only them with ?denied=only)
+        var query = ApplyDenied(AllRecords, denied);
+        var total = await query.CountAsync();
+        var items = await query
             .OrderByDescending(r => r.AccessTime)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(r => new
             {
                 r.AccessTime, r.FilePath, r.FileName, r.FolderPath,
-                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine, r.ServerName
+                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine, r.ServerName,
+                r.Denied, r.NewPath, r.Detail
             })
             .ToListAsync();
 
@@ -334,7 +350,7 @@ public class StatsController : ControllerBase
         if (pageSize < 1 || pageSize > 500) pageSize = 50;
         if (page < 1) page = 1;
 
-        var query = ApplyFilter(Records.AsQueryable(), filter);
+        var query = ApplyFilter(AllRecords.AsQueryable(), filter);
 
         var total = await query.CountAsync();
         var items = await query
@@ -344,7 +360,8 @@ public class StatsController : ControllerBase
             .Select(r => new
             {
                 r.AccessTime, r.FilePath, r.FileName, r.FolderPath,
-                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine, r.ServerName
+                r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine, r.ServerName,
+                r.Denied, r.NewPath, r.Detail
             })
             .ToListAsync();
 
@@ -357,7 +374,7 @@ public class StatsController : ControllerBase
     [HttpGet("search/export")]
     public async Task Export([FromQuery] SearchFilter filter, [FromQuery] int tzOffsetMinutes = 0)
     {
-        var query = ApplyFilter(Records.AsNoTracking(), filter)
+        var query = ApplyFilter(AllRecords.AsNoTracking(), filter)
             .OrderByDescending(r => r.AccessTime)
             .Take(MaxExportRows);
 
@@ -372,16 +389,19 @@ public class StatsController : ControllerBase
         await writer.WriteLineAsync(CsvLine(
             $"{Messages.Get("csv.time")} (UTC{offsetLabel})", Messages.Get("csv.timeUtc"), Messages.Get("csv.user"),
             Messages.Get("csv.type"), Messages.Get("csv.kind"), Messages.Get("csv.fileName"), Messages.Get("csv.folder"), Messages.Get("csv.path"),
-            Messages.Get("csv.ip"), Messages.Get("csv.machine"), Messages.Get("csv.server")));
+            Messages.Get("csv.ip"), Messages.Get("csv.machine"), Messages.Get("csv.server"),
+            Messages.Get("csv.result"), Messages.Get("csv.newPath"), Messages.Get("csv.detail")));
 
         string kindFile = Messages.Get("csv.kindFile"), kindFolder = Messages.Get("csv.kindFolder");
+        string resultDenied = Messages.Get("csv.resultDenied"), resultOk = Messages.Get("csv.resultOk");
         var rows = 0;
         await foreach (var r in query.AsAsyncEnumerable())
         {
             var utc = DateTime.SpecifyKind(r.AccessTime, DateTimeKind.Utc);
             await writer.WriteLineAsync(CsvLine(
                 utc.Add(offset).ToString("yyyy-MM-dd HH:mm:ss"), utc.ToString("yyyy-MM-ddTHH:mm:ssZ"), r.UserName,
-                r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine, r.ServerName));
+                r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine, r.ServerName,
+                r.Denied ? resultDenied : resultOk, r.NewPath, r.Detail));
             rows++;
         }
         await writer.FlushAsync();
@@ -390,6 +410,15 @@ public class StatsController : ControllerBase
     }
 
     internal const int MaxExportRows = 200_000;
+
+    // denied=only | exclude; anything else keeps all records
+    internal static IQueryable<Models.AccessRecord> ApplyDenied(IQueryable<Models.AccessRecord> query, string? denied) =>
+        denied switch
+        {
+            "only" => query.Where(r => r.Denied),
+            "exclude" => query.Where(r => !r.Denied),
+            _ => query,
+        };
 
     private static IQueryable<Models.AccessRecord> ApplyFilter(IQueryable<Models.AccessRecord> query, SearchFilter f)
     {
@@ -420,7 +449,7 @@ public class StatsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(f.Ip))
             query = query.Where(r => r.ClientIp != null && r.ClientIp.Contains(f.Ip));
 
-        return query;
+        return ApplyDenied(query, f.Denied);
     }
 
     internal static string CsvLine(params string?[] fields) => string.Join(",", fields.Select(CsvField));
@@ -444,7 +473,8 @@ public class SearchFilter
     public string? DateTo { get; set; }
     public string? Type { get; set; }
     public string? Ip { get; set; }
+    public string? Denied { get; set; }   // only | exclude | empty (both)
 
     public string Describe() =>
-        $"q=[{string.Join(" ", Q ?? [])}], days={Days}, from={DateFrom}, to={DateTo}, type={Type}, ip={Ip}";
+        $"q=[{string.Join(" ", Q ?? [])}], days={Days}, from={DateFrom}, to={DateTo}, type={Type}, ip={Ip}, denied={Denied}";
 }

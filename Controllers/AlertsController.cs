@@ -25,7 +25,7 @@ public class AlertsController : ControllerBase
         var s = _alerts.Settings;
         return Ok(new
         {
-            s.Enabled, s.DeleteThreshold, s.WriteThreshold, s.ReadThreshold, s.WindowMinutes, s.CooldownMinutes, s.AgentOfflineMinutes, s.Language,
+            s.Enabled, s.DeleteThreshold, s.WriteThreshold, s.ReadThreshold, s.DeniedThreshold, s.RansomwareEnabled, s.WindowMinutes, s.CooldownMinutes, s.AgentOfflineMinutes, s.Language,
             s.WebhookFormat, webhookUrlSet = s.HasWebhook,
             s.SmtpHost, s.SmtpPort, s.SmtpUseSsl, s.SmtpUser, smtpPasswordSet = !string.IsNullOrEmpty(s.SmtpPassword),
             s.MailFrom, s.MailTo,
@@ -43,7 +43,7 @@ public class AlertsController : ControllerBase
         _alerts.Save(updated);
 
         await _audit.WriteAsync(HttpContext, "alerts.update",
-            $"enabled={updated.Enabled}, delete={updated.DeleteThreshold}, write={updated.WriteThreshold}, read={updated.ReadThreshold}, " +
+            $"enabled={updated.Enabled}, delete={updated.DeleteThreshold}, write={updated.WriteThreshold}, read={updated.ReadThreshold}, denied={updated.DeniedThreshold}, ransomware={updated.RansomwareEnabled}, " +
             $"window={updated.WindowMinutes}m, cooldown={updated.CooldownMinutes}m, agentOffline={updated.AgentOfflineMinutes}m, webhook={updated.HasWebhook}, proxy={!string.IsNullOrEmpty(updated.ProxyUrl)}, email={updated.HasMail}");
         return Ok(new { message = Messages.Get("alerts.saved") });
     }
@@ -71,7 +71,7 @@ public class AlertsController : ControllerBase
 
     private static string? Validate(AlertSettingsRequest req)
     {
-        if (req.DeleteThreshold < 0 || req.WriteThreshold < 0 || req.ReadThreshold < 0 || req.WindowMinutes < 1 || req.CooldownMinutes < 1
+        if (req.DeleteThreshold < 0 || req.WriteThreshold < 0 || req.ReadThreshold < 0 || req.DeniedThreshold < 0 || req.WindowMinutes < 1 || req.CooldownMinutes < 1
             || req.AgentOfflineMinutes < 0
             || req.SmtpPort is < 1 or > 65535)
             return Messages.Get("alerts.invalid");
@@ -94,6 +94,15 @@ public class AlertsController : ControllerBase
             DeleteThreshold = req.DeleteThreshold,
             WriteThreshold = req.WriteThreshold,
             ReadThreshold = req.ReadThreshold,
+            DeniedThreshold = req.DeniedThreshold,
+            RansomwareEnabled = req.RansomwareEnabled,
+            // the numbers of the ransomware rules are edited in settings.json only
+            RansomwareWindowMinutes = current.RansomwareWindowMinutes,
+            RansomwareSameExtensionRenames = current.RansomwareSameExtensionRenames,
+            RansomwareBurstWrites = current.RansomwareBurstWrites,
+            RansomwareBurstRenames = current.RansomwareBurstRenames,
+            RansomwareNoteFolders = current.RansomwareNoteFolders,
+            RansomwareCooldownMinutes = current.RansomwareCooldownMinutes,
             AgentOfflineMinutes = req.AgentOfflineMinutes,
             WindowMinutes = req.WindowMinutes,
             CooldownMinutes = req.CooldownMinutes,
@@ -119,4 +128,5 @@ public record AlertSettingsRequest(
     string? Language, string? WebhookFormat, string? WebhookUrl,
     string? SmtpHost, int SmtpPort, bool SmtpUseSsl, string? SmtpUser, string? SmtpPassword,
     string? MailFrom, string? MailTo, int ReadThreshold = 0, int AgentOfflineMinutes = 15,
-    string? ProxyUrl = null, string? ProxyUser = null, string? ProxyPassword = null);
+    string? ProxyUrl = null, string? ProxyUser = null, string? ProxyPassword = null,
+    int DeniedThreshold = 20, bool RansomwareEnabled = true);

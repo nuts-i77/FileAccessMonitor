@@ -287,6 +287,11 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
 
         var backoff = TimeSpan.FromSeconds(5);
         var lastContact = DateTime.MinValue;
+        // What the monitoring server understands (see AgentProtocol.ForServer): assumed to be the old
+        // protocol until a heartbeat reply says otherwise, so a heartbeat goes before the first batch
+        var serverProtocol = 1;
+        var protocolKnown = false;
+        var lastHeartbeat = DateTime.MinValue;
         var failing = false;
         logger.LogInformation("Agent sending to {Server} ({Count} batches waiting).", config.ServerUrl, outbox.Count);
 
@@ -294,11 +299,13 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
         {
             try
             {
-                if (outbox.Oldest() is { } next)
+                // An old server is asked again now and then, so that it is noticed when it has been upgraded
+                var heartbeatFirst = !protocolKnown || (serverProtocol < AgentProtocol.Version && DateTime.UtcNow - lastHeartbeat >= HeartbeatInterval);
+                if (!heartbeatFirst && outbox.Oldest() is { } next)
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Post, "api/agent/batch")
                     {
-                        Content = JsonContent.Create(next.Batch),
+                        Content = JsonContent.Create(AgentProtocol.ForServer(next.Batch, serverProtocol)),
                     };
                     request.Headers.Add("X-Agent-Outbox", (outbox.Count - 1).ToString()); // still waiting after this one
                     using var response = await client.SendAsync(request, stoppingToken);
@@ -307,7 +314,7 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
                     response.EnsureSuccessStatusCode();
                     outbox.Remove(next.Path);
                 }
-                else if (DateTime.UtcNow - lastContact >= HeartbeatInterval)
+                else if (heartbeatFirst || DateTime.UtcNow - lastContact >= HeartbeatInterval)
                 {
                     using var response = await client.PostAsJsonAsync("api/agent/heartbeat",
                         new HeartbeatRequest(AppInfo.Version, outbox.Count, platform.AuditOk(), AppInfo.OsName), stoppingToken);
@@ -315,6 +322,9 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
                         throw new AgentRejectedException();
                     response.EnsureSuccessStatusCode();
                     var reply = await response.Content.ReadFromJsonAsync<JsonElement>(stoppingToken);
+                    serverProtocol = reply.TryGetProperty("protocol", out var p) && p.TryGetInt32(out var pv) ? pv : 1;
+                    protocolKnown = true;
+                    lastHeartbeat = DateTime.UtcNow;
                     if (reply.TryGetProperty("configVersion", out var v) && v.GetInt32() != AgentSettingsSync.AppliedVersion)
                         await AgentSettingsSync.FetchAsync(client, logger, stoppingToken);
                 }

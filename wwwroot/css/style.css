@@ -69,3 +69,20 @@ html[lang="en"] {
 body.single-server .col-server {
   display: none;
 }
+
+/* Create (green-teal) and Permission (purple) have no Bootstrap colour of their own */
+.badge-create     { background-color: #20c997; color: #000; }
+.badge-permission { background-color: #6f42c1; color: #fff; }
+.bg-purple-subtle     { background-color: #e2d9f3; }
+.text-purple-emphasis { color: #432874; }
+.border-purple-subtle { border-color: #cbbbe9 !important; }
+
+/* The detail of a permission change (popover) */
+.record-detail { --bs-popover-max-width: 520px; }
+.record-detail .popover-body {
+  white-space: pre-wrap;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.8rem;
+  max-width: 480px;
+  word-break: break-all;
+}

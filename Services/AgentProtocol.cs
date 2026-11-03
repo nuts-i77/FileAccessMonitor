@@ -69,6 +69,28 @@ public class AgentGap
 public static class AgentProtocol
 {
     public const int Version = 2;
+
+    // What a server that announced `protocol` understands. Protocol 1 (1.8 and older, or no answer
+    // yet) knows neither refused attempts nor Create/Permission, and would store them as ordinary
+    // accesses; so for it denied and Permission records are left out, Create is sent as Write and
+    // NewPath/Detail are dropped. The batch (the outbox file) is not changed, so a server that is
+    // upgraded later still gets everything that was waiting.
+    public static AgentBatch ForServer(AgentBatch batch, int protocol)
+    {
+        if (protocol >= 2 || batch.Records == null) return batch;
+        var records = new List<AgentRecord>(batch.Records.Count);
+        foreach (var r in batch.Records)
+        {
+            if (r.Denied || r.AccessType == AccessTypes.Permission) continue;
+            records.Add(new AgentRecord
+            {
+                FilePath = r.FilePath, FileName = r.FileName, FolderPath = r.FolderPath, UserName = r.UserName,
+                AccessType = r.AccessType == AccessTypes.Create ? AccessTypes.Write : r.AccessType,
+                AccessTime = r.AccessTime, ClientIp = r.ClientIp, ClientMachine = r.ClientMachine, IsFolder = r.IsFolder,
+            });
+        }
+        return new AgentBatch { Seq = batch.Seq, Records = records, Gap = batch.Gap };
+    }
 }
 
 // Something an agent does on its own server for the GUI: check a folder, set up or remove its

@@ -65,7 +65,7 @@ public class UnusedFilesController : ControllerBase
         // the case-sensitive comparer below
         var pattern = prefix.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
         var inFolder = _db.AccessRecords.Where(r =>
-            r.ServerName == serverName && EF.Functions.Like(r.FilePath, pattern, "\\") && !r.IsFolder);
+            r.ServerName == serverName && EF.Functions.Like(r.FilePath, pattern, "\\") && !r.IsFolder && !r.Denied);
         var accessed = inFolder.Where(r => r.AccessTime >= since);
         if (readOnly) accessed = accessed.Where(r => r.AccessType == "Read");
         var used = new HashSet<string>(
