@@ -58,6 +58,8 @@ public class SambaPlatform(ILogger<SambaPlatform> logger) : IAgentPlatform
                 }
                 return AgentJobRunner.ScanResult(files, scanned, false);
             }
+            case PermissionContract.JobType:
+                return PermissionScanLinux.Scan(path, PermissionContract.OptionsFrom(job.Args), ct);
             default:
                 return new JsonObject { ["error"] = $"Unknown job {job.Type}; update the agent." };
         }
