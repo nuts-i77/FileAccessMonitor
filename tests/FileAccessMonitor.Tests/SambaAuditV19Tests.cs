@@ -109,6 +109,8 @@ public class SambaAuditV19Tests : IDisposable
     [Theory]
     [InlineData("fset_nt_acl|ok|docs/a.txt", "/srv/share/docs/a.txt", null)]
     [InlineData("fset_nt_acl|ok|/srv/share/docs/a.txt", "/srv/share/docs/a.txt", null)]
+    [InlineData("fset_nt_acl|ok|/srv/share/docs/a.txt []", "/srv/share/docs/a.txt", null)] // as Samba 4.19 / 4.23 write it
+    [InlineData("fset_nt_acl|ok|/srv/share/docs/a b.txt [x y]", "/srv/share/docs/a b.txt", null)]
     [InlineData("sys_acl_set_fd|ok|docs/a.txt", "/srv/share/docs/a.txt", null)]
     [InlineData("fchmod|ok|docs/a.txt|644", "/srv/share/docs/a.txt", "mode 0644")]
     [InlineData("fchmod|ok|docs/a.txt|2775", "/srv/share/docs/a.txt", "mode 2775")]

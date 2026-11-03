@@ -80,6 +80,7 @@ public record AuditAccess(string Path, string Type, bool IsFolder, string? NewPa
 public static class AuditInterpreter
 {
     private const long DeleteRight = 0x10000L;
+    private static readonly Regex AclSuffix = new(@"\s\[[^\]]*\]\s*$");
 
     public static AuditAccess? Interpret(AuditLine line)
     {
@@ -132,7 +133,8 @@ public static class AuditInterpreter
             // not logged by default (Samba itself calls them when it creates files).
             case "fset_nt_acl":
             case "sys_acl_set_fd":
-                return line.Args.Length == 0 ? null : new AuditAccess(line.FullPath(line.Args[0]), AccessTypes.Permission, false);
+                // Samba appends the ACL text in brackets to the path ("/srv/share/docs/a.txt []")
+                return line.Args.Length == 0 ? null : new AuditAccess(line.FullPath(AclSuffix.Replace(line.Args[0], "")), AccessTypes.Permission, false);
             case "fchmod":
                 return line.Args.Length < 2 ? null
                     : new AuditAccess(line.FullPath(line.Args[0]), AccessTypes.Permission, false, Detail: "mode " + ModeText(line.Args[1]));
