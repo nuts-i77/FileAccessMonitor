@@ -35,7 +35,10 @@ public class EventLogCollectorService : BackgroundService
     }
 
     // Parsed event, so the EventRecord can be disposed on the watcher thread
-    private sealed record RawEvent(int Id, long RecordId, DateTime? TimeCreated, Dictionary<string, string> Data);
+    // Failure: the event has the Audit Failure keyword (a refused access)
+    internal sealed record RawEvent(int Id, long RecordId, DateTime? TimeCreated, Dictionary<string, string> Data, bool Failure = false);
+
+    private const long AuditFailureKeyword = 0x10000000000000L;
 
     private const int MaxBatchSize = 500;
     // Saving the position is cheap but not free; for events that produce no record
@@ -45,9 +48,14 @@ public class EventLogCollectorService : BackgroundService
     // 4663: object access (read/write/delete)
     // 4659: handle requested with intent to delete (fired specifically for DELETE on modern Windows)
     // 4660: object deleted (follows the 4663 DELETE access of a deletion, but not of a rename)
+    // 4656: handle requested, only the Audit Failure ones (refused access). The success ones are
+    //       not read, so the existing success auditing adds no load.
+    // 4670: permissions on an object were changed
     // 4624: logon (for IP/machine caching)
     // 5140: network share access (for IP/machine caching)
-    private const string XPathQuery = "*[System[(EventID=4663) or (EventID=4659) or (EventID=4660) or (EventID=4624) or (EventID=5140)]]";
+    // 4503599627370496 = 0x10000000000000, the Audit Failure keyword
+    private const string XPathQuery = "*[System[(EventID=4663) or (EventID=4659) or (EventID=4660) or (EventID=4670)"
+        + " or (EventID=4656 and band(Keywords,4503599627370496)) or (EventID=4624) or (EventID=5140)]]";
 
     private readonly IRecordSink _sink;
     private readonly ILogger<EventLogCollectorService> _logger;
@@ -82,11 +90,45 @@ public class EventLogCollectorService : BackgroundService
     private DateTime _pathConfigsFileTime = DateTime.MinValue;
     private readonly Stopwatch _pathConfigsCheck = new();
     private RecordingRules _rules = new(new RecordingSettings());
+    private volatile string[] _usnRoots = [];
+    private bool _pathConfigsFixed;
 
     // Used only by the consumer task
     private readonly ReadMerger _readMerger = new();
     private readonly DeleteTracker _deleteTracker = new(path => File.Exists(path) || Directory.Exists(path));
     private readonly RecentFolders _recentFolders = new();
+    private readonly DeniedMerger _deniedMerger = new();
+    private readonly PermissionMerger _permissionMerger = new();
+
+    // Creates and new names of renamed files come from the NTFS change journal (the Security log has
+    // neither). Records that can use them wait briefly in the correlator; see UsnCorrelator.
+    private readonly UsnCorrelator _usnCorrelator = new();
+    private UsnJournalReader? _usnReader;
+    private bool _usnEnabled = true;
+
+    // Refused attempts by the same user on the same file with the same type are recorded once; the
+    // window slides like ReadMerger's, so a client that keeps retrying makes one record.
+    internal sealed class DeniedMerger
+    {
+        public static readonly TimeSpan Window = TimeSpan.FromSeconds(60);
+        private const int MaxEntries = 50_000;
+        private readonly Dictionary<(string User, string Path, string Type), DateTime> _last = new();
+
+        public bool ShouldRecord(AccessRecord record)
+        {
+            var key = (record.UserName.ToUpperInvariant(), record.FilePath.ToUpperInvariant(), record.AccessType);
+            var time = record.AccessTime;
+            var merged = _last.TryGetValue(key, out var last) && (time - last).Duration() < Window;
+            _last[key] = merged && last > time ? last : time;
+            if (_last.Count > MaxEntries)
+            {
+                foreach (var old in _last.Where(kv => time - kv.Value >= Window).Select(kv => kv.Key).ToList())
+                    _last.Remove(old);
+                if (_last.Count > MaxEntries) _last.Clear();
+            }
+            return !merged;
+        }
+    }
 
     public EventLogCollectorService(
         IRecordSink sink,
@@ -124,6 +166,11 @@ public class EventLogCollectorService : BackgroundService
                 RefreshSmbSessions();
             }
         }, stoppingToken);
+
+        GetPathConfigs(); // monitored folders and Recording settings, before the reader asks for them
+        _usnReader = new UsnJournalReader(_usnCorrelator, _logger, () => _usnRoots, () => _usnEnabled,
+            Path.Combine(AppPaths.DataDir, "usn-position.json"));
+        _ = Task.Run(() => _usnReader.RunAsync(stoppingToken), stoppingToken);
 
         var lastRecordId = long.TryParse(await _sink.LoadPositionAsync(), out var savedId) ? savedId : 0;
         var consumer = Task.Run(() => ConsumeAsync(lastRecordId, excludeSystem, excludeProcessSet));
@@ -249,7 +296,8 @@ public class EventLogCollectorService : BackgroundService
 
         try
         {
-            _queue.Writer.TryWrite(new RawEvent(record.Id, recordId, record.TimeCreated, ParseEventData(record)));
+            var failure = ((record.Keywords ?? 0) & AuditFailureKeyword) != 0;
+            _queue.Writer.TryWrite(new RawEvent(record.Id, recordId, record.TimeCreated, ParseEventData(record), failure));
         }
         catch (Exception ex)
         {
@@ -271,7 +319,13 @@ public class EventLogCollectorService : BackgroundService
 
         void Add(AccessRecord record)
         {
-            if (_readMerger.ShouldRecord(record, _rules.MergeReadWindow)) batch.Add(record);
+            // Refused attempts are merged among themselves, never with successful reads
+            if (record.Denied ? !_deniedMerger.ShouldRecord(record) : !_readMerger.ShouldRecord(record, _rules.MergeReadWindow))
+                return;
+            if (UsnCorrelator.NeedsCorrelation(record) && _usnReader?.Covers(record.FilePath) == true)
+                _usnCorrelator.Hold(record, DateTime.UtcNow); // waits for the change journal, see UsnCorrelator
+            else
+                batch.Add(record);
         }
 
         while (await WaitForEventsAsync(reader))
@@ -291,6 +345,7 @@ public class EventLogCollectorService : BackgroundService
                 }
             }
             _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow).ForEach(Add);
+            batch.AddRange(_usnCorrelator.Release(DateTime.UtcNow));
 
             if (batch.Count > 0 || (lastRecordId != savedRecordId && sinceSave.Elapsed >= PositionSaveInterval))
             {
@@ -298,12 +353,14 @@ public class EventLogCollectorService : BackgroundService
                 {
                     savedRecordId = lastRecordId;
                     sinceSave.Restart();
+                    _usnReader?.SavePositions();
                 }
                 batch.Clear();
             }
         }
 
         _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow, force: true).ForEach(Add);
+        batch.AddRange(_usnCorrelator.Release(DateTime.UtcNow, force: true));
         if (batch.Count > 0 || lastRecordId != savedRecordId)
             await _sink.SaveAsync(batch, lastRecordId.ToString());
     }
@@ -312,13 +369,15 @@ public class EventLogCollectorService : BackgroundService
     // events, so they get resolved. Returns false once the queue is completed.
     private async Task<bool> WaitForEventsAsync(ChannelReader<RawEvent> reader)
     {
-        if (!_deleteTracker.HasPending) return await reader.WaitToReadAsync();
-        using var timeout = new CancellationTokenSource(DeleteTracker.ConfirmTimeout);
+        var held = _usnCorrelator.HasHeld;
+        if (!_deleteTracker.HasPending && !held) return await reader.WaitToReadAsync();
+        // Records held for the change journal are released as it catches up: look again every second
+        using var timeout = new CancellationTokenSource(held ? TimeSpan.FromSeconds(1) : DeleteTracker.ConfirmTimeout);
         try { return await reader.WaitToReadAsync(timeout.Token); }
         catch (OperationCanceledException) { return true; }
     }
 
-    private AccessRecord? ProcessEvent(RawEvent ev, bool excludeSystem, HashSet<string> excludeProcessSet)
+    internal AccessRecord? ProcessEvent(RawEvent ev, bool excludeSystem, HashSet<string> excludeProcessSet)
     {
         var data = ev.Data;
 
@@ -332,6 +391,10 @@ public class EventLogCollectorService : BackgroundService
         // Before any filter below: a DELETE access, recorded or not, ends a pending one on the same handle
         if (ev.Id == 4663 && (ParseMask(data.GetValueOrDefault("AccessMask", "0x0")) & DeleteRight) != 0)
             _deleteTracker.Release(data.GetValueOrDefault("ProcessId", ""), data.GetValueOrDefault("HandleId", ""));
+
+        // 4656 with the failure keyword: a refused access (the XPath only lets those through)
+        if (ev.Id == 4656 && (!ev.Failure || !_rules.Settings.RecordDenied || !IsAccessRefused(data)))
+            return null;
 
         var objectType = data.GetValueOrDefault("ObjectType", "");
         if (!string.Equals(objectType, "File", StringComparison.OrdinalIgnoreCase))
@@ -375,48 +438,76 @@ public class EventLogCollectorService : BackgroundService
             || rules.IsExcludedProcess(processName))
             return null;
 
+        var eventTypes = matchedConfig != default ? matchedConfig.EventTypes : AllEventTypes;
+        var logonSessionId = data.GetValueOrDefault("SubjectLogonId", "");
+
+        AccessRecord NewRecord(string accessType, bool isFolder)
+        {
+            _logonCache.TryGetValue(logonSessionId, out var clientInfo);
+            // Fallback: use live SMB session table keyed by username
+            if (string.IsNullOrEmpty(clientInfo.Ip))
+                _smbSessionCache.TryGetValue(userName, out clientInfo);
+
+            return new AccessRecord
+            {
+                FilePath = filePath,
+                FileName = Path.GetFileName(filePath),
+                FolderPath = Path.GetDirectoryName(filePath) ?? filePath,
+                UserName = fullUserName,
+                AccessType = accessType,
+                AccessTime = ev.TimeCreated?.ToUniversalTime() ?? DateTime.UtcNow,
+                ClientIp = string.IsNullOrEmpty(clientInfo.Ip) ? null : clientInfo.Ip,
+                ClientMachine = ResolveMachine(clientInfo.Ip, clientInfo.Machine),
+                IsFolder = isFolder,
+                ServerName = ServerName,
+            };
+        }
+
+        // Event 4670: permissions changed. Files and folders are recorded (the folder's own change
+        // carries the text; the per-child events of a propagated change are dropped by the merger).
+        if (ev.Id == 4670)
+        {
+            if (!eventTypes.Contains(AccessTypes.EventPermission)) return null;
+            var change = PermissionChange.Analyze(data.GetValueOrDefault("OldSd"), data.GetValueOrDefault("NewSd"));
+            if (change == null) return null;
+            var time = ev.TimeCreated?.ToUniversalTime() ?? DateTime.UtcNow;
+            if (!_permissionMerger.ShouldRecord(logonSessionId, filePath, time, change.Explicit)) return null;
+
+            var folder = Directory.Exists(filePath);
+            if (folder) _recentFolders.Add(filePath);
+            var permission = NewRecord(AccessTypes.Permission, folder || _recentFolders.Contains(filePath));
+            permission.Detail = change.Text;
+            return permission;
+        }
+
         // Event 4659 = "handle requested with intent to delete" → always Delete
         // Event 4663 = determine type from AccessMask. DELETE access is also used for renames
         // and moves, so it is decided later by the delete tracker.
+        // Event 4656 (failure) = the type that was refused; never goes through the delete tracker.
         var mask = ParseMask(data.GetValueOrDefault("AccessMask", "0x0"));
+        var denied = ev.Id == 4656;
         var deleteAccess = ev.Id == 4663 && (mask & DeleteRight) != 0;
-        var accessType = ev.Id == 4659 ? "Delete" : deleteAccess ? "Delete" : ParseAccessType(mask);
+        var accessType = denied ? ParseDeniedType(mask)
+            : ev.Id == 4659 ? "Delete" : deleteAccess ? "Delete" : ParseAccessType(mask);
         if (accessType == null) return null;
 
         // Filter by per-path event types (skip if this access type is not monitored for this path).
         // A DELETE access can still turn out to be a write, so it is filtered when resolved.
-        var eventTypes = matchedConfig != default ? matchedConfig.EventTypes : AllEventTypes;
         if (!deleteAccess && !eventTypes.Contains(accessType))
             return null;
 
-        // Folders (the SACL applies to them too) are recorded only when deleted or renamed.
+        // Folders (the SACL applies to them too) are recorded only when deleted or renamed, or when
+        // refused (opening or listing a forbidden folder is the typical probe).
         // A folder may already be gone when its deletion is processed, but its contents were
         // deleted before it, so it is then known as their parent. Checked last: touches the disk.
         var isFolder = Directory.Exists(filePath);
         if (isFolder) _recentFolders.Add(filePath);
         isFolder |= _recentFolders.Contains(filePath); // also when it is gone by now
-        if (isFolder && !deleteAccess)
+        if (isFolder && !deleteAccess && !denied)
             return null;
 
-        var logonSessionId = data.GetValueOrDefault("SubjectLogonId", "");
-        _logonCache.TryGetValue(logonSessionId, out var clientInfo);
-        // Fallback: use live SMB session table keyed by username
-        if (string.IsNullOrEmpty(clientInfo.Ip))
-            _smbSessionCache.TryGetValue(userName, out clientInfo);
-
-        var record = new AccessRecord
-        {
-            FilePath = filePath,
-            FileName = Path.GetFileName(filePath),
-            FolderPath = Path.GetDirectoryName(filePath) ?? filePath,
-            UserName = fullUserName,
-            AccessType = accessType,
-            AccessTime = ev.TimeCreated?.ToUniversalTime() ?? DateTime.UtcNow,
-            ClientIp = string.IsNullOrEmpty(clientInfo.Ip) ? null : clientInfo.Ip,
-            ClientMachine = ResolveMachine(clientInfo.Ip, clientInfo.Machine),
-            IsFolder = isFolder,
-            ServerName = ServerName,
-        };
+        var record = NewRecord(accessType, isFolder);
+        if (denied) record.Denied = true;
         if (!deleteAccess) return record;
 
         _deleteTracker.Add(data.GetValueOrDefault("ProcessId", ""), data.GetValueOrDefault("HandleId", ""),
@@ -573,6 +664,7 @@ public class EventLogCollectorService : BackgroundService
     // Settings changes from the GUI take effect within a second, without re-reading the file per event.
     private (string Path, HashSet<string> EventTypes)[] GetPathConfigs()
     {
+        if (_pathConfigsFixed) return _pathConfigs;
         if (_pathConfigsCheck.IsRunning && _pathConfigsCheck.Elapsed < TimeSpan.FromSeconds(1))
             return _pathConfigs;
         _pathConfigsCheck.Restart();
@@ -588,8 +680,31 @@ public class EventLogCollectorService : BackgroundService
                 .Select(c => (c.Path, new HashSet<string>(c.EventTypes, StringComparer.OrdinalIgnoreCase)))
                 .ToArray();
             _rules = new RecordingRules(RecordingSettings.Load());
+            _usnRoots = _pathConfigs.Select(c => c.Path).ToArray();
+            _usnEnabled = UsnCorrelationEnabled();
         }
         return _pathConfigs;
+    }
+
+    // Recording.UsnCorrelation in settings.json (not part of RecordingSettings): default on
+    private static bool UsnCorrelationEnabled()
+    {
+        try
+        {
+            return SettingsStore.Load()[RecordingSettings.SettingsKey]?["UsnCorrelation"]?.GetValue<bool>() ?? true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+        {
+            return true;
+        }
+    }
+
+    // Tests: fixed monitored paths and rules instead of settings.json
+    internal void UseConfigForTest((string Path, HashSet<string> EventTypes)[] paths, RecordingRules rules)
+    {
+        _pathConfigs = paths;
+        _rules = rules;
+        _pathConfigsFixed = true;
     }
 
     private string ConvertToLocalPath(string ntPath)
@@ -632,7 +747,20 @@ public class EventLogCollectorService : BackgroundService
 
     // Types used when no monitored path is configured (all folders are recorded)
     private static readonly IReadOnlySet<string> AllEventTypes =
-        new HashSet<string>(["Read", "Write", "Delete"], StringComparer.OrdinalIgnoreCase);
+        new HashSet<string>(["Read", "Write", "Delete", "Permission"], StringComparer.OrdinalIgnoreCase);
+
+    // A SACL failure entry only fires when the access check failed. If the event names a status,
+    // it must be STATUS_ACCESS_DENIED; others (sharing violation, ...) are not a refusal.
+    private const long StatusAccessDenied = 0xC0000022L;
+
+    internal static bool IsAccessRefused(Dictionary<string, string> data)
+    {
+        var status = data.GetValueOrDefault("Status", "");
+        return string.IsNullOrWhiteSpace(status) || status == "-" || ParseMask(status) == StatusAccessDenied;
+    }
+
+    // What was refused, from the requested access mask (same classification as a granted access)
+    internal static string? ParseDeniedType(long mask) => ParseAccessType(mask);
 
     internal static long ParseMask(string accessMaskStr)
     {

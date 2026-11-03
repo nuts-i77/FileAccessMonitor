@@ -23,6 +23,8 @@ Write-Host "`n[1/3] Enabling File System audit policy..." -ForegroundColor Yello
 
 # Use GUID for "File System" subcategory to avoid locale-dependent name issues
 auditpol /set /subcategory:"{0CCE921D-69AE-11D9-BED3-505054503030}" /success:enable /failure:enable | Out-Null
+# Authorization Policy Change: event 4670 (permissions changed) may be logged under this one
+auditpol /set /subcategory:"{0CCE9231-69AE-11D9-BED3-505054503030}" /success:enable /failure:enable | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "auditpol returned exit code $LASTEXITCODE. Check permissions."
 } else {
@@ -53,13 +55,15 @@ if ($SharePaths.Count -eq 0) {
 
         try {
             $identity   = New-Object System.Security.Principal.NTAccount("Everyone")
-            # Only content read / write / append / delete. Read/Write would also audit
+            # Only content read / write / append / delete (and permission or owner changes). Read/Write would also audit
             # attribute and permission reads, flooding the Security log with no benefit.
             $rights     = [System.Security.AccessControl.FileSystemRights]::ReadData `
                         -bor [System.Security.AccessControl.FileSystemRights]::WriteData `
                         -bor [System.Security.AccessControl.FileSystemRights]::AppendData `
-                        -bor [System.Security.AccessControl.FileSystemRights]::Delete
-            $auditType  = [System.Security.AccessControl.AuditFlags]::Success
+                        -bor [System.Security.AccessControl.FileSystemRights]::Delete `
+                        -bor [System.Security.AccessControl.FileSystemRights]::ChangePermissions `
+                        -bor [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+            $auditType  = [System.Security.AccessControl.AuditFlags]::Success -bor [System.Security.AccessControl.AuditFlags]::Failure
 
             # Rule for the root folder itself (with inheritance to future children)
             $folderRule = New-Object System.Security.AccessControl.FileSystemAuditRule(

@@ -25,6 +25,8 @@ public class AccessMaskTests
     [InlineData("0x8")]       // ReadEA
     [InlineData("0x10")]      // WriteEA
     [InlineData("0x20000")]   // READ_CONTROL
+    [InlineData("0x40000")]   // WRITE_DAC: the permission change is recorded from event 4670, not from this one
+    [InlineData("0x80000")]   // WRITE_OWNER
     [InlineData("0x0")]
     [InlineData("")]
     [InlineData("-")]

@@ -14,31 +14,45 @@ public class SaclManagerService
         _logger = logger;
     }
 
+    // File System: the SACL entries (success and failure) only produce events when this is on.
+    // Authorization Policy Change: event 4670 (permissions changed) is documented under this
+    // subcategory, although File System auditing is said to log it for files too. Both are enabled
+    // until a test on a real machine shows which one is needed (VERIFY).
+    private static readonly string[] AuditSubcategories =
+    [
+        "{0CCE921D-69AE-11D9-BED3-505054503030}",
+        "{0CCE9231-69AE-11D9-BED3-505054503030}",
+    ];
+
     public void EnableAuditPolicy()
     {
-        try
+        foreach (var subcategory in AuditSubcategories)
         {
-            var psi = new ProcessStartInfo("auditpol.exe",
-                "/set /subcategory:\"{0CCE921D-69AE-11D9-BED3-505054503030}\" /success:enable /failure:enable")
+            try
             {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            using var proc = Process.Start(psi);
-            proc?.WaitForExit(5000);
-            _logger.LogInformation("Audit policy enabled.");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to enable audit policy.");
+                var psi = new ProcessStartInfo("auditpol.exe",
+                    $"/set /subcategory:\"{subcategory}\" /success:enable /failure:enable")
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                proc?.WaitForExit(5000);
+                _logger.LogInformation("Audit policy {Subcategory} enabled.", subcategory);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to enable audit policy {Subcategory}.", subcategory);
+            }
         }
     }
 
     // "File System" audit subcategory, as set by EnableAuditPolicy
     private static readonly Guid FileSystemSubcategory = new("0CCE921D-69AE-11D9-BED3-505054503030");
     private const uint PolicyAuditEventSuccess = 1;
+    private const uint PolicyAuditEventFailure = 2;
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct AuditPolicyInformation
@@ -56,7 +70,12 @@ public class SaclManagerService
 
     // Whether successful file access is audited (without it nothing is recorded); null if unknown.
     // Read through the API rather than auditpol's output, which is localized.
-    public static bool? IsFileSystemAuditOn()
+    public static bool? IsFileSystemAuditOn() => QueryFileSystemAudit(PolicyAuditEventSuccess);
+
+    // Whether refused file access is audited too (needed for Denied records); null if unknown.
+    public static bool? IsFileSystemFailureAuditOn() => QueryFileSystemAudit(PolicyAuditEventFailure);
+
+    private static bool? QueryFileSystemAudit(uint flag)
     {
         try
         {
@@ -64,7 +83,7 @@ public class SaclManagerService
             try
             {
                 var info = System.Runtime.InteropServices.Marshal.PtrToStructure<AuditPolicyInformation>(buffer);
-                return (info.AuditingInformation & PolicyAuditEventSuccess) != 0;
+                return (info.AuditingInformation & flag) != 0;
             }
             finally
             {
@@ -77,13 +96,19 @@ public class SaclManagerService
         }
     }
 
-    // Only rights that the collector turns into Read/Write/Delete records.
+    // Only rights that the collector turns into Read/Write/Delete/Permission records.
     // FileSystemRights.Read/Write would also audit ReadAttributes, ReadEA,
     // ReadPermissions, WriteAttributes etc., which floods the Security log
     // (e.g. media indexers scanning metadata) without producing any records.
-    private const FileSystemRights AuditedRights =
+    // ChangePermissions and TakeOwnership are rare. Their 4663 events are ignored by the
+    // collector; the 4670 event that follows a change carries the before/after.
+    internal const FileSystemRights AuditedRights =
         FileSystemRights.ReadData | FileSystemRights.WriteData |
-        FileSystemRights.AppendData | FileSystemRights.Delete;
+        FileSystemRights.AppendData | FileSystemRights.Delete |
+        FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+
+    // One entry for both outcomes: success gives the access events, failure the refused attempts.
+    internal const AuditFlags AuditedFlags = AuditFlags.Success | AuditFlags.Failure;
 
     // Replace (not merge) any existing Everyone audit entry, so re-applying
     // narrows SACLs that were set by older versions.
@@ -104,11 +129,11 @@ public class SaclManagerService
         var folderRule = new FileSystemAuditRule(
             identity, rights,
             InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
-            PropagationFlags.None, AuditFlags.Success);
+            PropagationFlags.None, AuditedFlags);
 
         var fileRule = new FileSystemAuditRule(
             identity, rights,
-            InheritanceFlags.None, PropagationFlags.None, AuditFlags.Success);
+            InheritanceFlags.None, PropagationFlags.None, AuditedFlags);
 
         // Apply to root folder
         try
