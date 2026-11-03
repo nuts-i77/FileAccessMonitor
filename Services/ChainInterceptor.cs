@@ -15,8 +15,7 @@ namespace FileAccessMonitor.Services;
 // operation log can be written from anywhere without a deadlock.
 public class ChainInterceptor : SaveChangesInterceptor
 {
-    private static readonly TimeSpan Watchdog = TimeSpan.FromSeconds(30);
-
+    private readonly TimeSpan _watchdog = TimeSpan.FromSeconds(30);
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly ConditionalWeakTable<DbContext, Hold> _holds = new();
     private readonly ILogger? _logger;
@@ -29,7 +28,12 @@ public class ChainInterceptor : SaveChangesInterceptor
     public ChainInterceptor(ILogger<ChainInterceptor> logger) { _logger = logger; }
 
     // Tests: a given key and no logging
-    internal ChainInterceptor(byte[] key) { _key = key; _keyTried = true; }
+    internal ChainInterceptor(byte[] key, TimeSpan? watchdog = null)
+    {
+        _key = key;
+        _keyTried = true;
+        if (watchdog != null) _watchdog = watchdog.Value;
+    }
 
     // The HMAC key; null when it cannot be read (records are then saved unchained and reported as such)
     public byte[]? Key
@@ -220,11 +224,11 @@ public class ChainInterceptor : SaveChangesInterceptor
         public void Start() => _timer = new Timer(_ =>
         {
             if (Interlocked.CompareExchange(ref _released, 1, 0) != 0) return;
-            _owner._logger?.LogWarning("The chain lock was held for more than {Seconds} s without a save result; released.", Watchdog.TotalSeconds);
+            _owner._logger?.LogWarning("The chain lock was held for more than {Seconds} s without a save result; released.", _owner._watchdog.TotalSeconds);
             _owner._heads = null;
             _timer?.Dispose();
             _owner._lock.Release();
-        }, null, Watchdog, Timeout.InfiniteTimeSpan);
+        }, null, _owner._watchdog, Timeout.InfiniteTimeSpan);
 
         public void Dispose()
         {

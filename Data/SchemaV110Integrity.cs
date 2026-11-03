@@ -8,7 +8,10 @@ namespace FileAccessMonitor.Data;
 // Old rows are not hashed: they are counted (LegacyMaxId / LegacyCount) and reported as not protected.
 public static class SchemaV110Integrity
 {
-    public static async Task ApplyAsync(AccessDbContext db)
+    public static Task ApplyAsync(AccessDbContext db) => ApplyAsync(db, null);
+
+    // key: the chain key; null = the one in the data folder
+    internal static async Task ApplyAsync(AccessDbContext db, byte[]? key)
     {
         await db.Database.ExecuteSqlRawAsync(@"
 CREATE TABLE IF NOT EXISTS ""ChainHeads"" (
@@ -37,7 +40,7 @@ CREATE TABLE IF NOT EXISTS ""ChainCheckpoints"" (
             }
         }
 
-        try { EnsureGenesis(db, SecretStore.GetOrCreateChainKey()); }
+        try { EnsureGenesis(db, key ?? SecretStore.GetOrCreateChainKey()); }
         catch (Exception ex)
         {
             Serilog.Log.Warning(ex, "Tamper detection is off: the chain key or its start could not be set up.");
