@@ -15,6 +15,11 @@ public class ServerConfigService(AccessDbContext db)
 {
     public static readonly string LocalName = Environment.MachineName;
 
+    // Whether this machine records accesses on itself ("LocalCollection" in settings.json, on by
+    // default, read at startup). Off: a monitoring server only, showing what agents send.
+    public const string LocalCollectionKey = "LocalCollection";
+    public static bool LocalCollects { get; set; } = true;
+
     // null or empty: this machine
     public static bool IsLocal(string? server) =>
         string.IsNullOrWhiteSpace(server) || server.Equals(LocalName, StringComparison.OrdinalIgnoreCase);
@@ -25,9 +30,12 @@ public class ServerConfigService(AccessDbContext db)
         return await db.Agents.FirstOrDefaultAsync(a => a.Name.ToUpper() == upper);
     }
 
-    // This machine first, then the agents
-    public async Task<List<string>> ServerNamesAsync() =>
-        [LocalName, .. await db.Agents.OrderBy(a => a.Name).Select(a => a.Name).ToListAsync()];
+    // This machine first (when it collects), then the agents
+    public async Task<List<string>> ServerNamesAsync()
+    {
+        var agents = await db.Agents.OrderBy(a => a.Name).Select(a => a.Name).ToListAsync();
+        return LocalCollects ? [LocalName, .. agents] : agents;
+    }
 
     public async Task<JsonObject> LoadAsync(string? server)
     {

@@ -47,11 +47,25 @@ public static class SecretStore
         try { File.Delete(InitialAdminPasswordFile); } catch { }
     }
 
-    // Readable by SYSTEM and Administrators only
-    internal static void WriteProtected(string path, string content)
+    internal static void WriteProtected(string path, string content) =>
+        WriteProtected(path, new System.Text.UTF8Encoding(false).GetBytes(content));
+
+    // Readable by SYSTEM and Administrators only (on Linux: by the service account only)
+    internal static void WriteProtected(string path, byte[] content)
     {
         Directory.CreateDirectory(DataDir);
         if (File.Exists(path)) File.Delete(path);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            using var unixFile = new FileStream(path, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew, Access = FileAccess.Write,
+                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            });
+            unixFile.Write(content);
+            return;
+        }
 
         var security = new FileSecurity();
         security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
@@ -62,7 +76,6 @@ public static class SecretStore
         using var fs = new FileInfo(path).Create(
             FileMode.CreateNew, FileSystemRights.FullControl, FileShare.None,
             4096, FileOptions.None, security);
-        using var writer = new StreamWriter(fs);
-        writer.Write(content);
+        fs.Write(content);
     }
 }

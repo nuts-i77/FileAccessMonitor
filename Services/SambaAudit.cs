@@ -3,9 +3,8 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FileAccessMonitor.Models;
-using FileAccessMonitor.Services;
 
-namespace FileAccessMonitor.Agent.Linux;
+namespace FileAccessMonitor.Services;
 
 // One line of Samba's full_audit module, as set up by SambaConfig:
 //   <user>|<client IP>|<client machine>|<share>|<share path>|<operation>|ok|<arguments...>
@@ -99,9 +98,11 @@ public static class AuditInterpreter
 }
 
 // Reads Samba's audit lines from the systemd journal (journalctl), turns them into access records
-// and puts them in the outbox. The journal cursor is kept with the outbox, so after a restart the
-// agent continues where it stopped.
-public class SambaAuditCollector(AgentOutbox outbox, ILogger<SambaAuditCollector> logger) : BackgroundService
+// and hands them to the record sink: the outbox on a Linux agent, the database on a Linux
+// monitoring server that also collects. The journal cursor is saved with them, so after a restart
+// collection continues where it stopped.
+[System.Runtime.Versioning.SupportedOSPlatform("linux")]
+public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> logger) : BackgroundService
 {
     public const string SyslogIdentifier = "smbd_audit";
     private const int MaxBatchSize = 500;
@@ -133,11 +134,11 @@ public class SambaAuditCollector(AgentOutbox outbox, ILogger<SambaAuditCollector
 
     private async Task ReadJournalAsync(CancellationToken ct)
     {
-        var cursor = outbox.Position;
+        var cursor = await sink.LoadPositionAsync();
         if (cursor.Length > 0 && !await CursorStillInJournalAsync(cursor, ct))
         {
-            logger.LogWarning("The journal no longer has the entry the agent stopped at; accesses in between may be missing.");
-            outbox.Add(new AgentBatch { Gap = new AgentGap { AuditDetail = "reason=journalRotated", MessageKey = "gap.journalRotated" } });
+            logger.LogWarning("The journal no longer has the entry collection stopped at; accesses in between may be missing.");
+            await sink.ReportGapAsync($"server={Environment.MachineName}, reason=journalRotated", "gap.journalRotated");
         }
 
         var psi = Samba.StartInfo("journalctl",
@@ -156,6 +157,14 @@ public class SambaAuditCollector(AgentOutbox outbox, ILogger<SambaAuditCollector
         var reader = process.StandardOutput;
         Task<string?>? pending = null;
 
+        async Task FlushAsync()
+        {
+            if (lastCursor == null) return;
+            await sink.SaveAsync(batch, lastCursor); // logs and drops the batch if it cannot be kept
+            batch.Clear();
+            lastCursor = null;
+        }
+
         while (true)
         {
             pending ??= reader.ReadLineAsync(ct).AsTask();
@@ -163,22 +172,22 @@ public class SambaAuditCollector(AgentOutbox outbox, ILogger<SambaAuditCollector
             if (batch.Count > 0 || lastCursor != null)
             {
                 var done = await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(1), ct));
-                if (done != pending) { Flush(batch, ref lastCursor); continue; }
+                if (done != pending) { await FlushAsync(); continue; }
             }
             var line = await pending;
             pending = null;
             if (line == null) break; // journalctl exited
 
-            if (Handle(line, batch) is { } entryCursor) lastCursor = entryCursor;
-            if (batch.Count >= MaxBatchSize) Flush(batch, ref lastCursor);
+            if (await HandleAsync(line, batch) is { } entryCursor) lastCursor = entryCursor;
+            if (batch.Count >= MaxBatchSize) await FlushAsync();
         }
-        Flush(batch, ref lastCursor);
+        await FlushAsync();
         if (!ct.IsCancellationRequested)
             logger.LogWarning("journalctl exited (code {Code}).", process.HasExited ? process.ExitCode : -1);
     }
 
     // Returns the entry's cursor
-    private string? Handle(string json, List<AccessRecord> batch)
+    private async Task<string?> HandleAsync(string json, List<AccessRecord> batch)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -192,11 +201,8 @@ public class SambaAuditCollector(AgentOutbox outbox, ILogger<SambaAuditCollector
             if (Suppressed.Match(message) is { Success: true } m)
             {
                 logger.LogWarning("journald dropped {Count} Samba audit lines (rate limit).", m.Groups[1].Value);
-                outbox.Add(new AgentBatch
-                {
-                    Gap = new AgentGap { AuditDetail = $"reason=journalSuppressed, count={m.Groups[1].Value}",
-                        MessageKey = "gap.journalSuppressed", Args = [m.Groups[1].Value] },
-                });
+                await sink.ReportGapAsync($"server={Environment.MachineName}, reason=journalSuppressed, count={m.Groups[1].Value}",
+                    "gap.journalSuppressed", long.Parse(m.Groups[1].Value));
             }
             return cursor;
         }
@@ -253,6 +259,7 @@ public class SambaAuditCollector(AgentOutbox outbox, ILogger<SambaAuditCollector
             ClientIp = NormalizeIp(line.ClientIp),
             ClientMachine = string.IsNullOrEmpty(line.ClientMachine) ? null : line.ClientMachine,
             IsFolder = isFolder,
+            ServerName = Environment.MachineName, // used when collecting on the monitoring server itself
         };
     }
 
@@ -262,17 +269,6 @@ public class SambaAuditCollector(AgentOutbox outbox, ILogger<SambaAuditCollector
         _paths = paths.Select(p => (p.Path, new HashSet<string>(p.EventTypes, StringComparer.OrdinalIgnoreCase))).ToArray();
         _rules = new RecordingRules(rules);
         _settingsTime = DateTime.MaxValue;
-    }
-
-    private void Flush(List<AccessRecord> batch, ref string? lastCursor)
-    {
-        if (lastCursor == null) return;
-        if (batch.Count > 0 && !outbox.Add(new AgentBatch { Records = batch.Select(AgentRecord.From).ToList() }))
-            logger.LogError("The outbox is full ({Max} bytes); dropping {Count} records. Is the monitoring server reachable?",
-                AgentOutbox.MaxBytes, batch.Count);
-        outbox.SavePosition(lastCursor);
-        batch.Clear();
-        lastCursor = null;
     }
 
     private static async Task<bool> CursorStillInJournalAsync(string cursor, CancellationToken ct)

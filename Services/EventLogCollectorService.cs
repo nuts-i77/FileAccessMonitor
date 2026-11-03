@@ -10,6 +10,7 @@ using FileAccessMonitor.Models;
 
 namespace FileAccessMonitor.Services;
 
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public class EventLogCollectorService : BackgroundService
 {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -124,7 +125,7 @@ public class EventLogCollectorService : BackgroundService
             }
         }, stoppingToken);
 
-        var lastRecordId = await _sink.LoadPositionAsync();
+        var lastRecordId = long.TryParse(await _sink.LoadPositionAsync(), out var savedId) ? savedId : 0;
         var consumer = Task.Run(() => ConsumeAsync(lastRecordId, excludeSystem, excludeProcessSet));
 
         EventLogWatcher? watcher = null;
@@ -293,7 +294,7 @@ public class EventLogCollectorService : BackgroundService
 
             if (batch.Count > 0 || (lastRecordId != savedRecordId && sinceSave.Elapsed >= PositionSaveInterval))
             {
-                if (await _sink.SaveAsync(batch, lastRecordId))
+                if (await _sink.SaveAsync(batch, lastRecordId.ToString()))
                 {
                     savedRecordId = lastRecordId;
                     sinceSave.Restart();
@@ -304,7 +305,7 @@ public class EventLogCollectorService : BackgroundService
 
         _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow, force: true).ForEach(Add);
         if (batch.Count > 0 || lastRecordId != savedRecordId)
-            await _sink.SaveAsync(batch, lastRecordId);
+            await _sink.SaveAsync(batch, lastRecordId.ToString());
     }
 
     // While DELETE accesses are pending, wakes up after the confirm timeout even without new

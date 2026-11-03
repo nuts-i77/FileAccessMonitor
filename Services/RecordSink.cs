@@ -3,27 +3,14 @@ using FileAccessMonitor.Models;
 
 namespace FileAccessMonitor.Services;
 
-// Where the collector hands what it found. A standalone install or the monitoring server keeps it
-// in the local database; an agent will send it to the monitoring server instead.
-public interface IRecordSink
-{
-    // Saves the records together with the Security log position they were collected up to,
-    // so that neither is saved without the other. False when the batch had to be dropped.
-    Task<bool> SaveAsync(IReadOnlyList<AccessRecord> batch, long lastRecordId);
-
-    // Security log record id to resume after (0 = start with live events)
-    Task<long> LoadPositionAsync();
-
-    // Recording was interrupted (log overwritten or cleared): log it and notify
-    Task ReportGapAsync(string auditDetail, string messageKey, params object[] args);
-}
-
+// The monitoring server's record sink (IRecordSink is in AgentCore.cs): the local database
 public class LocalRecordSink(IServiceScopeFactory scopeFactory, AlertService alerts, AuditLog audit,
     ILogger<LocalRecordSink> logger) : IRecordSink
 {
-    private const string LastRecordIdKey = "LastRecordId";
+    // Where the collector got to (Security log record id, or journal cursor on Linux); the key keeps its old name
+    private const string PositionKey = "LastRecordId";
 
-    public async Task<bool> SaveAsync(IReadOnlyList<AccessRecord> batch, long lastRecordId)
+    public async Task<bool> SaveAsync(IReadOnlyList<AccessRecord> batch, string position)
     {
         for (var attempt = 1; ; attempt++)
         {
@@ -33,16 +20,16 @@ public class LocalRecordSink(IServiceScopeFactory scopeFactory, AlertService ale
                 var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
                 db.AccessRecords.AddRange(batch);
 
-                var state = await db.CollectorStates.FindAsync(LastRecordIdKey);
+                var state = await db.CollectorStates.FindAsync(PositionKey);
                 if (state == null)
-                    db.CollectorStates.Add(new CollectorState { Key = LastRecordIdKey, Value = lastRecordId.ToString() });
+                    db.CollectorStates.Add(new CollectorState { Key = PositionKey, Value = position });
                 else
-                    state.Value = lastRecordId.ToString();
+                    state.Value = position;
 
                 await db.SaveChangesAsync(); // one implicit transaction
                 if (batch.Count > 0)
                 {
-                    logger.LogDebug("Recorded {Count} accesses (up to record {RecordId}).", batch.Count, lastRecordId);
+                    logger.LogDebug("Recorded {Count} accesses (up to position {Position}).", batch.Count, position);
                     alerts.Observe(batch.ToArray()); // the caller reuses the list
                 }
                 return true;
@@ -60,25 +47,25 @@ public class LocalRecordSink(IServiceScopeFactory scopeFactory, AlertService ale
         }
     }
 
-    public async Task<long> LoadPositionAsync()
+    public async Task<string> LoadPositionAsync()
     {
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-            var state = await db.CollectorStates.FindAsync(LastRecordIdKey);
-            return state != null && long.TryParse(state.Value, out var id) ? id : 0;
+            var state = await db.CollectorStates.FindAsync(PositionKey);
+            return state?.Value ?? "";
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Could not read the collector position; starting with live events.");
-            return 0;
+            return "";
         }
     }
 
     public async Task ReportGapAsync(string auditDetail, string messageKey, params object[] args)
     {
         await audit.WriteAsync(AuditLog.SystemUser, "collector.gap", auditDetail);
-        _ = Task.Run(() => alerts.NotifyGapAsync(EventLogCollectorService.ServerName, messageKey, args));
+        _ = Task.Run(() => alerts.NotifyGapAsync(ServerConfigService.LocalName, messageKey, args));
     }
 }

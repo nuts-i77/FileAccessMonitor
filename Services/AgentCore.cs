@@ -215,6 +215,61 @@ public class AgentOutbox
         File.Exists(path) && long.TryParse(File.ReadAllText(path).Trim(), out var n) ? n : 0;
 }
 
+// Where a collector hands what it found: the local database on a monitoring server
+// (LocalRecordSink), the outbox on an agent (RemoteRecordSink)
+public interface IRecordSink
+{
+    // Saves the records together with the position they were collected up to (Security log record
+    // id, or journal cursor on Linux), so that neither is saved without the other. False when the
+    // batch had to be dropped.
+    Task<bool> SaveAsync(IReadOnlyList<FileAccessMonitor.Models.AccessRecord> batch, string position);
+
+    // Position to resume after ("" = start with live events)
+    Task<string> LoadPositionAsync();
+
+    // Recording was interrupted (log overwritten or cleared): log it and notify
+    Task ReportGapAsync(string auditDetail, string messageKey, params object[] args);
+}
+
+// The agent's record sink: puts batches in the outbox for AgentSender to deliver
+public class RemoteRecordSink(AgentOutbox outbox, ILogger<RemoteRecordSink> logger) : IRecordSink
+{
+    public Task<bool> SaveAsync(IReadOnlyList<FileAccessMonitor.Models.AccessRecord> batch, string position)
+    {
+        try
+        {
+            if (batch.Count > 0 && !outbox.Add(new AgentBatch { Records = batch.Select(AgentRecord.From).ToList() }))
+            {
+                logger.LogError("The outbox is full ({Max} bytes); dropping {Count} records. Is the monitoring server reachable?",
+                    AgentOutbox.MaxBytes, batch.Count);
+                return Task.FromResult(false);
+            }
+            outbox.SavePosition(position);
+            return Task.FromResult(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogError(ex, "Could not write {Count} records to the outbox.", batch.Count);
+            return Task.FromResult(false);
+        }
+    }
+
+    public Task<string> LoadPositionAsync() => Task.FromResult(outbox.Position);
+
+    public Task ReportGapAsync(string auditDetail, string messageKey, params object[] args)
+    {
+        outbox.Add(new AgentBatch
+        {
+            Gap = new AgentGap
+            {
+                AuditDetail = auditDetail, MessageKey = messageKey,
+                Args = args.Select(a => Convert.ToString(a, System.Globalization.CultureInfo.InvariantCulture) ?? "").ToList(),
+            },
+        });
+        return Task.CompletedTask;
+    }
+}
+
 // Sends the outbox to the monitoring server in order, retrying with growing waits while it is
 // unreachable, and says hello once a minute when there is nothing to send.
 public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform platform, ILogger<AgentSender> logger)

@@ -41,6 +41,12 @@ if [ "${1:-}" = "--uninstall" ]; then
     exit 0
 fi
 
+if systemctl list-unit-files fileaccessmonitor.service 2>/dev/null | grep -q "^fileaccessmonitor.service"; then
+    echo "The FileAccessMonitor monitoring server is installed on this machine; it can record this machine's" >&2
+    echo "Samba accesses itself (install.sh --collect in the server package). No agent is needed." >&2
+    exit 1
+fi
+
 SMB_UNIT=$(smb_unit)
 if [ -z "$SMB_UNIT" ]; then
     echo "Samba (smbd) is not installed. Install it first (apt install samba / dnf install samba)." >&2

@@ -2,6 +2,7 @@
 ;   ISCC.exe /DAppVersion=1.2.3 installer\FileAccessMonitor.iss
 ; Silent install:
 ;   FileAccessMonitor-Setup-x.y.z.exe /VERYSILENT /SUPPRESSMSGBOXES /TASKS=firewall /PORT=8080
+; Silent install of a monitoring server that does not collect on itself: add /ROLE=monitor
 ; Silent install as an agent (connection string from Settings > Agents on the monitoring server):
 ;   FileAccessMonitor-Setup-x.y.z.exe /VERYSILENT /SUPPRESSMSGBOXES /ROLE=agent /CONNECTION=FAM1.xxxx
 
@@ -54,6 +55,7 @@ en.UninstallKeptData=Access records, settings and keys were kept in:%n%1%n%nDele
 en.RoleCaption=Installation type
 en.RoleDescription=Choose how this server is used.
 en.RoleFull=Standalone / monitoring server: collect on this server and show the web GUI (other file servers can send their records here as agents)
+en.RoleMonitor=Monitoring server only: show the web GUI and receive records from agents; accesses on this server itself are not recorded
 en.RoleAgent=Agent: send this file server's access records to a monitoring server (no web GUI on this server)
 en.ConnCaption=Monitoring server
 en.ConnDescription=Paste the connection string issued under Settings > Agents on the monitoring server. It is valid for 24 hours and can be used once.
@@ -76,6 +78,7 @@ ja.UninstallKeptData=アクセス記録・設定・鍵は次のフォルダに�
 ja.RoleCaption=インストールの種類
 ja.RoleDescription=このサーバーの使い方を選んでください。
 ja.RoleFull=1 台構成 / 監視サーバー: このサーバーで収集し、Web GUI を表示します（他のファイルサーバーからエージェントとして記録を受け取ることもできます）
+ja.RoleMonitor=監視サーバーのみ: Web GUI を表示し、エージェントから記録を受け取ります（このサーバー自身のアクセスは記録しません）
 ja.RoleAgent=エージェント: このファイルサーバーのアクセス記録を監視サーバーに送ります（このサーバーには Web GUI を置きません）
 ja.ConnCaption=監視サーバー
 ja.ConnDescription=監視サーバーの「設定 > エージェント」で発行した接続文字列を貼り付けてください。24 時間有効で、1 回だけ使えます。
@@ -125,13 +128,32 @@ begin
   Result := DataDir() + '\agent.json';
 end;
 
-// Called by [Tasks] checks, possibly before the wizard pages exist
+// Roles on the first page: 0 = standalone / monitoring server, 1 = monitoring server only (does not
+// collect on itself), 2 = agent. Called by [Tasks] checks, possibly before the wizard pages exist.
 function IsAgentRole(): Boolean;
+begin
+  if RolePage <> nil then
+    Result := RolePage.SelectedValueIndex = 2
+  else
+    Result := PreviousRole = 'agent';
+end;
+
+function IsMonitorOnlyRole(): Boolean;
 begin
   if RolePage <> nil then
     Result := RolePage.SelectedValueIndex = 1
   else
-    Result := PreviousRole = 'agent';
+    Result := PreviousRole = 'monitor';
+end;
+
+// "LocalCollection": false in settings.json (set by an earlier "monitoring server only" install,
+// or with "FileAccessMonitor.exe local-collection off")
+function LocalCollectionOff(): Boolean;
+var
+  Content: AnsiString;
+begin
+  Result := LoadStringFromFile(DataDir() + '\settings.json', Content)
+    and (Pos('"localcollection": false', Lowercase(String(Content))) > 0);
 end;
 
 function IsFullRole(): Boolean;
@@ -204,13 +226,18 @@ begin
     else
       PreviousRole := 'full';
   end;
-  // Silent installs can pass /ROLE=agent
+  if (PreviousRole = 'full') and LocalCollectionOff() then
+    PreviousRole := 'monitor';
+  // Silent installs can pass /ROLE=full, /ROLE=monitor or /ROLE=agent
   PreviousRole := Lowercase(ExpandConstant('{param:ROLE|' + PreviousRole + '}'));
 
   RolePage := CreateInputOptionPage(wpSelectDir, CustomMessage('RoleCaption'), CustomMessage('RoleDescription'), '', True, False);
   RolePage.Add(CustomMessage('RoleFull'));
+  RolePage.Add(CustomMessage('RoleMonitor'));
   RolePage.Add(CustomMessage('RoleAgent'));
   if PreviousRole = 'agent' then
+    RolePage.SelectedValueIndex := 2
+  else if PreviousRole = 'monitor' then
     RolePage.SelectedValueIndex := 1
   else
     RolePage.SelectedValueIndex := 0;
@@ -240,6 +267,8 @@ begin
   SetPreviousData(PreviousDataKey, 'Port', GetPort(''));
   if IsAgentRole() then
     SetPreviousData(PreviousDataKey, 'Role', 'agent')
+  else if IsMonitorOnlyRole() then
+    SetPreviousData(PreviousDataKey, 'Role', 'monitor')
   else
     SetPreviousData(PreviousDataKey, 'Role', 'full');
 end;
@@ -329,6 +358,11 @@ begin
   if FileExists(AgentConfigFile()) then
     DeleteFile(AgentConfigFile());
   WritePortSetting();
+  // Whether this server also records accesses on itself (read when the service starts)
+  if IsMonitorOnlyRole() then
+    Exec(ExpandConstant('{app}\{#AppExe}'), 'local-collection off', '', SW_HIDE, ewWaitUntilTerminated, Code)
+  else
+    Exec(ExpandConstant('{app}\{#AppExe}'), 'local-collection on', '', SW_HIDE, ewWaitUntilTerminated, Code);
   WizardForm.StatusLabel.Caption := CustomMessage('InstallingService');
   Args := '-Action Install';
   if WizardIsTaskSelected('firewall') then

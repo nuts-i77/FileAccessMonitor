@@ -31,12 +31,38 @@ Log.Logger = new LoggerConfiguration()
 // Agent registration from the command line (also run by the installer)
 if (args.Length > 0 && args[0] is "enroll" or "unenroll")
 {
+    if (!OperatingSystem.IsWindows())
+    {
+        Console.Error.WriteLine("On Linux, install the Linux agent package (fileaccessmonitor-agent) on file servers instead.");
+        Environment.ExitCode = 2;
+        return;
+    }
     Environment.ExitCode = await AgentHost.RunCommandAsync(args);
+    return;
+}
+// "local-collection on|off": whether this monitoring server records accesses on itself (also run
+// by the installers); takes effect when the service starts
+if (args.Length > 0 && args[0] == "local-collection")
+{
+    if (args.Length < 2 || args[1] is not ("on" or "off"))
+    {
+        Console.Error.WriteLine("Usage: FileAccessMonitor local-collection on|off");
+        Environment.ExitCode = 2;
+        return;
+    }
+    SettingsStore.Update(root => root[ServerConfigService.LocalCollectionKey] = args[1] == "on");
+    Console.WriteLine($"Collection on this server: {args[1]}. Restart the service to apply.");
     return;
 }
 // Registered as an agent: collect and send only, no web GUI or database
 if (AgentConfig.Exists)
 {
+    if (!OperatingSystem.IsWindows())
+    {
+        Log.Error("{File} exists, but this is the monitoring server package; use the Linux agent package for agents.", AgentConfig.FilePath);
+        Environment.ExitCode = 1;
+        return;
+    }
     await AgentHost.RunAsync(args);
     return;
 }
@@ -47,10 +73,15 @@ builder.Host.UseSerilog();
 var userSettingsFile = Path.Combine(AppPaths.DataDir, "settings.json");
 builder.Configuration.AddJsonFile(userSettingsFile, optional: true, reloadOnChange: true);
 
+// A Windows service, or a systemd service on Linux (each does nothing on the other system)
 builder.Host.UseWindowsService(options =>
 {
     options.ServiceName = "FileAccessMonitor";
 });
+builder.Host.UseSystemd();
+
+// Whether this machine also records accesses on itself, or only shows what agents send
+ServerConfigService.LocalCollects = builder.Configuration.GetValue(ServerConfigService.LocalCollectionKey, true);
 
 var dbPath = Path.Combine(AppPaths.DataDir, "fileaccess.db");
 Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
@@ -124,11 +155,14 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// Encrypts alert secrets (webhook URL, SMTP password) stored in settings.json
-builder.Services.AddDataProtection()
+// Encrypts alert secrets (webhook URL, SMTP password) stored in settings.json. On Windows the keys
+// are themselves encrypted with the machine's DPAPI; on Linux they are protected by the data
+// folder being readable by the service account only.
+var dataProtection = builder.Services.AddDataProtection()
     .SetApplicationName("FileAccessMonitor")
-    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(AppPaths.DataDir, "keys")))
-    .ProtectKeysWithDpapi(protectToLocalMachine: true);
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(AppPaths.DataDir, "keys")));
+if (OperatingSystem.IsWindows())
+    dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
 
 // Behind a reverse proxy, take the client IP (for the operation log) from X-Forwarded-For,
 // but only from the proxies listed in ReverseProxy:KnownProxies.
@@ -142,7 +176,6 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 builder.Services.AddAuthorization();
 builder.Services.AddHttpClient();
-builder.Services.AddSingleton<SaclManagerService>();
 builder.Services.AddSingleton<DnsResolverService>();
 builder.Services.AddSingleton<AuditLog>();
 builder.Services.AddSingleton<AlertService>();
@@ -151,7 +184,19 @@ builder.Services.AddScoped<UserScopeService>();
 builder.Services.AddScoped<ServerConfigService>();
 builder.Services.AddSingleton<AgentJobs>();
 builder.Services.AddSingleton<IRecordSink, LocalRecordSink>();
-builder.Services.AddHostedService<EventLogCollectorService>();
+// Collecting on this machine: the Security log on Windows, Samba's audit lines on Linux. Auditing
+// for its folders is set up the way an agent does it (IAgentPlatform).
+if (ServerConfigService.LocalCollects && OperatingSystem.IsWindows())
+{
+    builder.Services.AddSingleton<SaclManagerService>();
+    builder.Services.AddSingleton<IAgentPlatform, WindowsAgentPlatform>();
+    builder.Services.AddHostedService<EventLogCollectorService>();
+}
+else if (ServerConfigService.LocalCollects && OperatingSystem.IsLinux())
+{
+    builder.Services.AddSingleton<IAgentPlatform, SambaPlatform>();
+    builder.Services.AddHostedService<SambaAuditCollector>();
+}
 builder.Services.AddHostedService<AgentMonitorService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RetentionService>());
@@ -311,8 +356,8 @@ CREATE TABLE IF NOT EXISTS ""AgentEnrollments"" (
         if (result.Succeeded)
         {
             await userManager.AddToRoleAsync(admin, "Admin");
-            Log.Information("Default admin user created. Username: admin / Password is in {File} (readable by Administrators only).",
-                SecretStore.InitialAdminPasswordFile);
+            Log.Information("Default admin user created. Username: admin / Password is in {File} (readable by {Who} only).",
+                SecretStore.InitialAdminPasswordFile, OperatingSystem.IsWindows() ? "Administrators" : "root");
         }
         else
         {

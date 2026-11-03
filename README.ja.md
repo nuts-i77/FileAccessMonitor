@@ -11,8 +11,8 @@ Windows ファイルサーバーの共有フォルダへのアクセス（読取
 
 ## 必要環境
 
-- 監視サーバーと Windows のファイルサーバー: Windows Server 2016 以降（または Windows 10/11）。1 台構成では共有フォルダのあるファイルサーバー上で動かします。[エージェント](#6-複数のファイルサーバーから収集するエージェント)を使う場合、監視サーバーは別の機械にできます
-- Linux のファイルサーバー（任意）: systemd と Samba 4.x が動く x86-64 の Linux。[7. Linux のファイルサーバー](#7-linux-のファイルサーバーsamba-エージェント)を参照
+- Windows のファイルサーバーと、Linux で動かさない場合の監視サーバー: Windows Server 2016 以降（または Windows 10/11）。1 台構成では共有フォルダのあるファイルサーバー上で動かします。[エージェント](#6-複数のファイルサーバーから収集するエージェント)を使う場合、監視サーバーはエージェントから届いた記録だけを表示する別の機械にできます
+- Linux（任意）: systemd が動く x86-64 の Linux。ファイルサーバーには Samba 4.x。[7. Linux のファイルサーバー](#7-linux-のファイルサーバーsamba-エージェント)と[8. Linux の監視サーバー](#8-linux-の監視サーバー)を参照
 - .NET 10 SDK（ビルド時のみ）。自己完結型で発行するため、サーバー側に .NET ランタイムは不要です
 - 管理者権限（Linux では root）。監査ログの読み取りと監査の設定に必要です
 
@@ -24,6 +24,7 @@ Windows ファイルサーバーの共有フォルダへのアクセス（読取
 
 - `C:\Program Files\FileAccessMonitor` にインストール
 - Windows サービス `FileAccessMonitor` を登録して起動
+- サーバーの使い方を選択: **1 台構成 / 監視サーバー**（このサーバーのアクセスを記録し、Web GUI を表示）、**監視サーバーのみ**（Web GUI を表示し[エージェント](#6-複数のファイルサーバーから収集するエージェント)から記録を受け取る。このサーバー自身のアクセスは記録せず、監査の設定も変更しない）、**エージェント**
 - Web GUI のポートを指定（既定値は 8080）。必要なら FileAccessMonitor.exe の受信を許可するファイアウォール規則も追加（Web GUI のポートとエージェント用ポート 8443）
 
 新しいバージョンのインストーラーを実行すると、設定を引き継いだまま上書き更新します。インストール後は [3. 初回ログイン](#3-初回ログイン) に進んでください。
@@ -87,7 +88,9 @@ wevtutil sl Security /ms:1073741824   # 1GB
 
 ### 6. 複数のファイルサーバーから収集する（エージェント）
 
-1 つの画面で、複数のファイルサーバーの記録を見られます。Web GUI を表示するサーバー（監視サーバー）には通常どおりインストールし、他のファイルサーバーには **エージェント** としてインストールします（収集と送信のみを行います）。
+1 つの画面で、複数のファイルサーバーの記録を見られます。Web GUI を表示するサーバー（監視サーバー）には通常どおりインストールし、他のファイルサーバーには **エージェント** としてインストールします（収集と送信のみを行います）。監視サーバーはファイルサーバーの 1 台でも、**監視サーバーのみ** としてインストールした別の機械（Windows または [Linux](#8-linux-の監視サーバー)）でも構いません。
+
+インストール済みの監視サーバーで、自分自身のアクセスを記録するか（監視専用にするか）を切り替えるには、管理者の PowerShell で `C:\Program Files\FileAccessMonitor` にある `FileAccessMonitor.exe local-collection off`（または `on`）を実行し、サービスを再起動します。今の状態は **設定 → アプリ情報** に表示されます。
 
 1. ファイルサーバーから監視サーバーの TCP **8443**（エージェント用ポート）に接続できるようにします。監視サーバーは常にこのポートで待ち受けており、インストーラーのファイアウォールのオプションで許可できます。この規則は FileAccessMonitor.exe を許可するので、Web GUI のポートとエージェント用ポートの両方が対象です
 2. **設定 → エージェント** で **登録コードを発行** を押します。ファイルサーバーから監視サーバーへ別の名前や IP アドレスで接続する場合は、アドレスを変更して **反映** を押します。表示された接続文字列をコピーします（24 時間有効、1 回だけ使えます）
@@ -133,12 +136,12 @@ Samba でフォルダを共有している Linux のファイルサーバーか�
 
 必要なもの: systemd と Samba 4.x が動く x86-64 の Linux（Ubuntu 24.04 + Samba 4.19、Rocky Linux 9.4 + Samba 4.23 で確認。Debian、RHEL、AlmaLinux も同じ手順）と root 権限
 
-1. リリースページから `FileAccessMonitor-<バージョン>-linux-x64.tar.gz` をダウンロードし、ファイルサーバーで展開します
+1. リリースページから `FileAccessMonitor-<バージョン>-linux-x64-agent.tar.gz` をダウンロードし、ファイルサーバーで展開します
 2. 監視サーバーの **設定 → エージェント** で接続文字列を発行し、root で次を実行します
 
    ```sh
-   tar xzf FileAccessMonitor-<バージョン>-linux-x64.tar.gz
-   cd FileAccessMonitor-<バージョン>-linux-x64
+   tar xzf FileAccessMonitor-<バージョン>-linux-x64-agent.tar.gz
+   cd FileAccessMonitor-<バージョン>-linux-x64-agent
    sudo sh install.sh <接続文字列>
    ```
    エージェントは systemd のサービス `fileaccessmonitor-agent` として動きます（ログ: `journalctl -u fileaccessmonitor-agent`）。データは `/var/lib/fileaccessmonitor` にあります
@@ -152,6 +155,27 @@ Windows との違い:
 - パスは大文字と小文字を区別します。ユーザー名は Samba が記録する名前（ドメイン参加時は `DOMAIN\user`）で、接続元の端末名は SMB の接続から取ります
 - 読み取り・書き込みは、Windows と同じくファイルを開くときに要求したアクセスで判断します。削除と名前変更は、実際に行われたときに記録します
 - アンインストールは、先に監視サーバーでそのサーバーの監視フォルダを外してから、展開したフォルダで `sudo sh install.sh --uninstall` を実行します（データも消す場合は `--purge` を付けます）
+
+### 8. Linux の監視サーバー
+
+監視サーバー（Web GUI、データベース、通知、エージェント用ポート）は Linux でも動きます。エージェントから届いた記録だけを表示することも、動いている Linux 自身の Samba のアクセスを記録することもできます。
+
+必要なもの: systemd が動く x86-64 の Linux（Rocky Linux 9.4 で確認。Ubuntu、Debian、RHEL、AlmaLinux も同じ手順）と、導入時の root 権限
+
+```sh
+tar xzf FileAccessMonitor-<バージョン>-linux-x64-server.tar.gz
+cd FileAccessMonitor-<バージョン>-linux-x64-server
+sudo sh install.sh                  # 監視専用: ユーザー fileaccessmonitor で動きます
+sudo sh install.sh --collect        # この機械の Samba のアクセスも記録: root で動きます
+```
+
+- `/opt/fileaccessmonitor` に導入され、systemd のサービス `fileaccessmonitor` として動きます（ログ: `journalctl -u fileaccessmonitor`）。記録と設定は `/var/lib/fileaccessmonitor` にあり、サービスのアカウントだけが読めます
+- `http://<サーバー>:8080` を開き、`admin` でログインします。初期パスワードは `/var/lib/fileaccessmonitor/initial-admin-password.txt` にあります（`sudo cat` で表示）
+- ファイアウォールが有効な場合は TCP 8080 と 8443 を開けてください。インストーラーは `firewall-cmd` と `ufw` のコマンドを表示しますが、ファイアウォール自体は変更しません
+- `--port <番号>` で Web GUI のポートを指定します。もう一度 `install.sh` を実行すると、モードとポートを保ったまま更新します。`--collect` / `--monitor-only` でモードを切り替えます
+- `--collect` の場合、この機械はエージェントと同じようにサーバーの一覧に出ます。**設定** タブで監視フォルダを追加すると、[Linux エージェント](#7-linux-のファイルサーバーsamba-エージェント)と同じ方法で監査を設定します。1 台の機械には、監視サーバーとエージェントのどちらか一方だけを入れます
+- 通知の秘密情報（Webhook の URL、SMTP のパスワード）は `/var/lib/fileaccessmonitor/keys` の鍵で暗号化し、その鍵はフォルダの権限で保護します（Windows では、鍵自体もマシンの DPAPI で暗号化します）
+- 削除は、展開したフォルダで `sudo sh install.sh --uninstall` を実行します（`--purge` を付けると記録と設定も削除します）
 
 ## セキュリティ
 
@@ -184,7 +208,7 @@ Windows との違い:
 
 | ファイル | 内容 |
 |---|---|
-| `settings.json` | 監視フォルダ・記録するイベント種別・逆引き DNS サーバー・保持期間・通知設定（GUI から変更） |
+| `settings.json` | 監視フォルダ・記録するイベント種別・逆引き DNS サーバー・保持期間・通知設定（GUI から変更）、このサーバー自身のアクセスを記録するか（`LocalCollection`） |
 | `fileaccess.db` | アクセス記録（SQLite） |
 | `logs\app-YYYYMMDD.log` | アプリケーションログ（14 日保持） |
 | `jwt.key` | JWT 署名鍵 |
@@ -282,13 +306,13 @@ dotnet test tests/FileAccessMonitor.Tests
 dotnet test linux-agent/tests            # Linux エージェント（Windows 上でも実行できます）
 ```
 
-Linux エージェントは `linux-agent/` のプロジェクトで、エージェントの通信・送信待ち・記録ルールを Windows のサービスと共有しています（ソースファイルをリンク）。`dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true` でビルドします。
+Linux エージェントは `linux-agent/` のプロジェクトで、エージェントの通信・送信待ち・記録ルールを Windows のサービスと共有しています（ソースファイルをリンク）。`dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true` でビルドします。監視サーバーの Linux 版はメインのプロジェクトから `dotnet publish FileAccessMonitor.csproj -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true /p:InvariantGlobalization=true /p:PredefinedCulturesOnly=false` でビルドします（`linux-server/` のインストーラーと一緒に配布）。
 
 インストーラーを手元で作る場合は、[Inno Setup 6](https://jrsoftware.org/isinfo.php) をインストールしてから `.\build-installer.ps1 -Version 1.0.0` を実行します。`dist\` に出力されます。
 
 開発やデモのために、インストール済みの環境に影響を与えず別のインスタンスを動かす場合は、環境変数 `FILEACCESSMONITOR_DATA` で別のデータフォルダ（既定は `C:\ProgramData\FileAccessMonitor`）を、`$env:Kestrel__Endpoints__Http__Url = 'http://localhost:5099'` などで別のポートを指定します。
 
-GitHub Actions（`.github/workflows/ci.yml`）で push / Pull Request ごとにビルド・テスト・発行を実行します。`v1.0.0` のようなタグを push すると、`.github/workflows/release.yml` がインストーラー、zip 版、Linux エージェントの tar.gz を作成し、GitHub Releases に公開します。
+GitHub Actions（`.github/workflows/ci.yml`）で push / Pull Request ごとにビルド・テスト・発行を実行します。`v1.0.0` のようなタグを push すると、`.github/workflows/release.yml` がインストーラー、zip 版、Linux エージェントと Linux 監視サーバーの tar.gz を作成し、GitHub Releases に公開します。
 
 ## アンインストール
 
@@ -301,7 +325,7 @@ GitHub Actions（`.github/workflows/ci.yml`）で push / Pull Request ごとに�
 .\restore-audit.ps1 -SharePaths "D:\Share"   # 監査設定を元に戻す場合
 ```
 
-Linux エージェントの削除は [7. Linux のファイルサーバー](#7-linux-のファイルサーバーsamba-エージェント)を参照してください。
+Linux エージェントと Linux の監視サーバーの削除は、[7. Linux のファイルサーバー](#7-linux-のファイルサーバーsamba-エージェント)と[8. Linux の監視サーバー](#8-linux-の監視サーバー)を参照してください。
 
 ## ダウンロードしたファイルの検証
 

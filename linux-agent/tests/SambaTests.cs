@@ -1,4 +1,3 @@
-using FileAccessMonitor.Agent.Linux;
 using FileAccessMonitor.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -43,7 +42,7 @@ public class SambaTests : IDisposable
     [Fact]
     public void Records_follow_monitored_folders_and_rules()
     {
-        var collector = new SambaAuditCollector(new AgentOutbox(_dir), NullLogger<SambaAuditCollector>.Instance);
+        var collector = new SambaAuditCollector(new RemoteRecordSink(new AgentOutbox(_dir), NullLogger<RemoteRecordSink>.Instance), NullLogger<SambaAuditCollector>.Instance);
         collector.UseSettings([("/srv/share/docs", ["Read", "Delete"])], new RecordingSettings { MergeReadMinutes = 0 });
         var time = new DateTime(2026, 11, 3, 1, 2, 3, DateTimeKind.Utc);
 
@@ -68,7 +67,7 @@ public class SambaTests : IDisposable
     [Fact]
     public void Real_samba_lines_give_the_expected_records()
     {
-        var collector = new SambaAuditCollector(new AgentOutbox(_dir), NullLogger<SambaAuditCollector>.Instance);
+        var collector = new SambaAuditCollector(new RemoteRecordSink(new AgentOutbox(_dir), NullLogger<RemoteRecordSink>.Instance), NullLogger<SambaAuditCollector>.Instance);
         collector.UseSettings([("/srv/share/docs", ["Read", "Write", "Delete"])], new RecordingSettings { MergeReadMinutes = 0 });
         var lines = """
             nobody|127.0.0.1|ct114|share|/srv/share|create_file|ok|0x120089|file|open|/srv/share/docs/report.txt
@@ -127,9 +126,9 @@ public class SambaTests : IDisposable
     {
         var shares = new SambaConfigText(Conf).Shares();
         Assert.Equal(["share", "projects"], shares.Keys);
-        Assert.Equal(["share"], LinuxAgentPlatform.SharesFor(shares, "/srv/share/docs"));     // folder inside a share
-        Assert.Equal(["share", "projects"], LinuxAgentPlatform.SharesFor(shares, "/srv"));    // shares inside the folder
-        Assert.Empty(LinuxAgentPlatform.SharesFor(shares, "/srv/other"));
+        Assert.Equal(["share"], SambaPlatform.SharesFor(shares, "/srv/share/docs"));     // folder inside a share
+        Assert.Equal(["share", "projects"], SambaPlatform.SharesFor(shares, "/srv"));    // shares inside the folder
+        Assert.Empty(SambaPlatform.SharesFor(shares, "/srv/other"));
     }
 
     [Fact]

@@ -11,8 +11,8 @@ FileAccessMonitor collects file access events (read, write, delete) on a Windows
 
 ## Requirements
 
-- Windows Server 2016 or later (or Windows 10/11) for the monitoring server and for Windows file servers. A standalone install runs on the file server that hosts the shared folders; with [agents](#6-collect-from-several-file-servers-agents), the monitoring server can be a separate machine.
-- For Linux file servers (optional): x86-64 Linux with systemd and Samba 4.x; see [7. Linux file servers](#7-linux-file-servers-samba-agent)
+- Windows Server 2016 or later (or Windows 10/11) for Windows file servers, and for the monitoring server unless it runs on Linux. A standalone install runs on the file server that hosts the shared folders; with [agents](#6-collect-from-several-file-servers-agents), the monitoring server can be a separate machine that only shows what agents send.
+- For Linux (optional): x86-64 Linux with systemd; Samba 4.x on file servers. See [7. Linux file servers](#7-linux-file-servers-samba-agent) and [8. Monitoring server on Linux](#8-monitoring-server-on-linux)
 - .NET 10 SDK, needed to build only. The app is published self-contained, so the servers do not need the .NET runtime.
 - Administrator rights (root on Linux), needed to read the audit logs and to set up auditing
 
@@ -24,6 +24,7 @@ Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.
 
 - Installs to `C:\Program Files\FileAccessMonitor`
 - Registers and starts the `FileAccessMonitor` Windows service
+- Lets you choose how the server is used: **Standalone / monitoring server** (records accesses on this server and shows the web GUI), **Monitoring server only** (shows the web GUI and receives records from [agents](#6-collect-from-several-file-servers-agents), but does not record or change auditing on this server), or **Agent**
 - Lets you choose the web GUI port (default 8080) and, optionally, adds a firewall rule that allows FileAccessMonitor.exe (the web GUI port and the agent port 8443)
 
 When you run a newer installer, it upgrades the existing install and keeps your settings. Then continue with [3. First sign-in](#3-first-sign-in).
@@ -94,7 +95,9 @@ wevtutil sl Security /ms:1073741824   # 1 GB
 
 ### 6. Collect from several file servers (agents)
 
-One install can show the records of several file servers. Install FileAccessMonitor normally on the server that will show the web GUI (the monitoring server); on each other file server, install it as an **agent**, which only collects and sends.
+One install can show the records of several file servers. Install FileAccessMonitor normally on the server that will show the web GUI (the monitoring server); on each other file server, install it as an **agent**, which only collects and sends. The monitoring server can be one of the file servers, or a separate machine installed as **Monitoring server only** (on Windows or [Linux](#8-monitoring-server-on-linux)).
+
+To switch an existing monitoring server between recording accesses on itself and monitoring only, run `FileAccessMonitor.exe local-collection off` (or `on`) in an elevated PowerShell in `C:\Program Files\FileAccessMonitor` and restart the service. **Settings → App info** shows the current mode.
 
 1. Make sure the file servers can reach the monitoring server on TCP port **8443** (the agent port). The monitoring server always listens on it, and the installer's firewall option allows it: the rule allows FileAccessMonitor.exe, so it covers both the web GUI port and the agent port.
 2. Under **Settings → Agents**, choose **Issue registration code**. If the file servers reach the monitoring server by another name or by IP address, change the address there and choose **Apply**. Copy the connection string; it is valid for 24 hours and can be used once.
@@ -140,12 +143,12 @@ A Linux file server that shares folders with Samba can send its records to the m
 
 Requirements: x86-64 Linux with systemd and Samba 4.x (tested on Ubuntu 24.04 with Samba 4.19 and Rocky Linux 9.4 with Samba 4.23; Debian, RHEL and AlmaLinux work the same way), and root.
 
-1. Download `FileAccessMonitor-<version>-linux-x64.tar.gz` from the release page and unpack it on the file server.
+1. Download `FileAccessMonitor-<version>-linux-x64-agent.tar.gz` from the release page and unpack it on the file server.
 2. Issue a connection string under **Settings → Agents** on the monitoring server, then run as root:
 
    ```sh
-   tar xzf FileAccessMonitor-<version>-linux-x64.tar.gz
-   cd FileAccessMonitor-<version>-linux-x64
+   tar xzf FileAccessMonitor-<version>-linux-x64-agent.tar.gz
+   cd FileAccessMonitor-<version>-linux-x64-agent
    sudo sh install.sh <connection string>
    ```
    The agent runs as the systemd service `fileaccessmonitor-agent` (log: `journalctl -u fileaccessmonitor-agent`); its data is in `/var/lib/fileaccessmonitor`.
@@ -159,6 +162,27 @@ How it differs from Windows:
 - Paths are case-sensitive. User names are those Samba logs in (`DOMAIN\user` on domain members); the client machine name comes from the SMB connection.
 - Reads and writes are the access the client asked for when opening a file, as on Windows; deletions and renames are recorded when they happen.
 - To remove the agent: remove its folders on the monitoring server first, then run `sudo sh install.sh --uninstall` in the unpacked folder (add `--purge` to delete its data too).
+
+### 8. Monitoring server on Linux
+
+The monitoring server (web GUI, database, notifications, agent port) also runs on Linux. It can show only what agents send, or also record the Samba accesses of the Linux machine it runs on.
+
+Requirements: x86-64 Linux with systemd (tested on Rocky Linux 9.4; Ubuntu, Debian, RHEL and AlmaLinux work the same way), and root to install.
+
+```sh
+tar xzf FileAccessMonitor-<version>-linux-x64-server.tar.gz
+cd FileAccessMonitor-<version>-linux-x64-server
+sudo sh install.sh                  # monitoring only: runs as the user fileaccessmonitor
+sudo sh install.sh --collect        # also records this machine's Samba accesses: runs as root
+```
+
+- The server is installed to `/opt/fileaccessmonitor` and runs as the systemd service `fileaccessmonitor` (log: `journalctl -u fileaccessmonitor`). Records and settings are in `/var/lib/fileaccessmonitor`, readable by the service account only.
+- Sign in at `http://<server>:8080` as `admin`; the initial password is in `/var/lib/fileaccessmonitor/initial-admin-password.txt` (`sudo cat` it).
+- Open TCP 8080 and 8443 in the firewall if it is on. The installer prints the `firewall-cmd` and `ufw` commands but does not change the firewall itself.
+- `--port <number>` sets the web GUI port. Running `install.sh` again upgrades and keeps the mode and port; `--collect` or `--monitor-only` switches the mode.
+- With `--collect`, add the machine's own folders on the **Settings** tab (it appears as a server like the agents) and auditing is set up the same way as on a [Linux agent](#7-linux-file-servers-samba-agent). A machine runs either the monitoring server or the agent, not both.
+- The notification secrets (webhook URL, SMTP password) are encrypted with keys in `/var/lib/fileaccessmonitor/keys`, protected by the folder's permissions (on Windows the keys are also encrypted with the machine's DPAPI).
+- To remove it: `sudo sh install.sh --uninstall` in the unpacked folder (`--purge` also deletes records and settings).
 
 ## Security
 
@@ -191,7 +215,7 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 
 | File | Contents |
 |---|---|
-| `settings.json` | Monitored folders, recorded access types, reverse-DNS server, retention, notifications (edited from the GUI) |
+| `settings.json` | Monitored folders, recorded access types, reverse-DNS server, retention, notifications (edited from the GUI); whether this server records accesses on itself (`LocalCollection`) |
 | `fileaccess.db` | Access records (SQLite) |
 | `logs\app-YYYYMMDD.log` | Application log (kept for 14 days) |
 | `jwt.key` | JWT signing key |
@@ -289,13 +313,13 @@ dotnet test tests/FileAccessMonitor.Tests
 dotnet test linux-agent/tests            # Linux agent (runs on Windows too)
 ```
 
-The Linux agent is the project in `linux-agent/`; it shares the agent protocol, outbox, and recording rules with the Windows service (linked source files). Build it with `dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true`.
+The Linux agent is the project in `linux-agent/`; it shares the agent protocol, outbox, and recording rules with the Windows service (linked source files). Build it with `dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true`. The monitoring server builds for Linux from the main project: `dotnet publish FileAccessMonitor.csproj -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true /p:InvariantGlobalization=true /p:PredefinedCulturesOnly=false` (the files for the `linux-server/` installer).
 
 To build the installer locally, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run `.\build-installer.ps1 -Version 1.0.0`. The output goes to `dist\`.
 
 To run a second instance for development or demos without touching an installed one, set the `FILEACCESSMONITOR_DATA` environment variable to another data folder (default `C:\ProgramData\FileAccessMonitor`) and another port, e.g. `$env:Kestrel__Endpoints__Http__Url = 'http://localhost:5099'`.
 
-GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app on every push and pull request. Pushing a tag such as `v1.0.0` runs `.github/workflows/release.yml`, which builds the installer, a portable zip, and the Linux agent's tar.gz and publishes them as a GitHub Release.
+GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app on every push and pull request. Pushing a tag such as `v1.0.0` runs `.github/workflows/release.yml`, which builds the installer, a portable zip, and the Linux agent's and monitoring server's tar.gz and publishes them as a GitHub Release.
 
 ## Uninstall
 
@@ -308,7 +332,7 @@ If you installed from source:
 .\restore-audit.ps1 -SharePaths "D:\Share"   # to remove the audit settings as well
 ```
 
-To remove a Linux agent, see [7. Linux file servers](#7-linux-file-servers-samba-agent).
+To remove a Linux agent or a Linux monitoring server, see [7. Linux file servers](#7-linux-file-servers-samba-agent) and [8. Monitoring server on Linux](#8-monitoring-server-on-linux).
 
 ## Verifying downloads
 

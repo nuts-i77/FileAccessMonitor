@@ -326,6 +326,7 @@ tbody tr:hover td { background: var(--surface2); }
       <a class="nav-link" href="#agent-protocol">登録と送信</a>
       <a class="nav-link" href="#agent-config">設定の配布と指示</a>
       <a class="nav-link" href="#linux-agent">Linux エージェント</a>
+      <a class="nav-link" href="#linux-server">Linux の監視サーバー</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">バックエンド</div>
@@ -378,12 +379,13 @@ tbody tr:hover td { background: var(--surface2); }
     <!-- 構成と役割 -->
     <section id="roles">
       <h2>構成と役割</h2>
-      <p>同じ EXE が、起動時の状態によって 2 つの役割のどちらかで動きます。インストーラーで役割を選びます。</p>
+      <p>同じプログラム（<code>FileAccessMonitor.csproj</code>、<code>net10.0</code>。win-x64 と linux-x64 で発行）が、起動時の状態によって役割を変えます。Windows ではインストーラーで、Linux では <code>linux-server/install.sh</code> のオプションで役割を選びます。Windows 専用の部分（イベントログ、SACL、DPAPI、証明書ストア）は <code>[SupportedOSPlatform("windows")]</code> を付け、実行時に OS で切り替えます。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>役割</th><th>判定</th><th>動くもの</th></tr></thead>
           <tbody>
-            <tr><td>1 台構成 / 監視サーバー</td><td><code>agent.json</code> がない</td><td>ローカル収集（<code>LocalRecordSink</code>）、Web GUI と API、DB、通知、エージェント用ポート、エージェント監視</td></tr>
+            <tr><td>1 台構成 / 監視サーバー</td><td><code>agent.json</code> がない</td><td>ローカル収集（<code>LocalRecordSink</code>。Windows は <code>EventLogCollectorService</code>、Linux は <code>SambaAuditCollector</code>）、Web GUI と API、DB、通知、エージェント用ポート、エージェント監視</td></tr>
+            <tr><td>監視サーバーのみ</td><td>上記で <code>settings.json</code> の <code>"LocalCollection": false</code></td><td>ローカル収集なし（監査ポリシーや SACL、smb.conf にも触れない）。サーバーの一覧に自分自身を出さない（<code>ServerConfigService.LocalCollects</code>）。起動時に読むので、切り替えは再起動で反映</td></tr>
             <tr><td>エージェント</td><td><code>%ProgramData%\FileAccessMonitor\agent.json</code> がある</td><td>収集（<code>RemoteRecordSink</code>）、送信（<code>AgentSender</code>）、指示の実行（<code>AgentJobRunner</code>）。Web GUI と DB はない（<code>AgentHost.RunAsync</code>）</td></tr>
             <tr><td>Linux エージェント</td><td>別の実行ファイル <code>fileaccessmonitor-agent</code>（<code>linux-agent/</code>）</td><td>Samba の監査ログの収集（<code>SambaAuditCollector</code>）、送信と指示の実行（Windows 版と共通）。<a href="#linux-agent">Linux エージェント</a>を参照</td></tr>
           </tbody>
@@ -391,8 +393,9 @@ tbody tr:hover td { background: var(--surface2); }
       </div>
       <h3>コマンドライン</h3>
       <pre><code>FileAccessMonitor.exe enroll &lt;接続文字列&gt;   # 監視サーバーに登録して agent.json を作る（インストーラーも使用）
-FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構成に戻す</code></pre>
-      <p>データフォルダは既定で <code>C:\ProgramData\FileAccessMonitor</code>。環境変数 <code>FILEACCESSMONITOR_DATA</code> で別のフォルダを指定でき（<code>AppPaths.DataDir</code>）、インストール済みの環境に影響を与えずに開発用・デモ用のインスタンスを動かせます。</p>
+FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構成に戻す
+FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする（on で戻す。インストーラーも使用）</code></pre>
+      <p>データフォルダは既定で <code>C:\ProgramData\FileAccessMonitor</code>（Linux は <code>/var/lib/fileaccessmonitor</code>）。環境変数 <code>FILEACCESSMONITOR_DATA</code> で別のフォルダを指定でき（<code>AppPaths.DataDir</code>）、インストール済みの環境に影響を与えずに開発用・デモ用のインスタンスを動かせます。</p>
     </section>
 
     <!-- 技術スタック -->
@@ -638,6 +641,18 @@ FileAccessMonitor.exe unenroll               # agent.json を消して 1 台構�
       </ul>
       <h3>監視サーバー側</h3>
       <p><code>PathText</code> で Windows のパス（<code>\</code>、大文字小文字を区別しない）と Linux のパス（<code>/</code> で始まる、区別する）を扱います。閲覧範囲は Linux のパスを <code>substr</code> の完全一致で絞り、未使用ファイル・フォルダ別の名前も区切り文字に合わせます。</p>
+      <p>Samba の収集部分（<code>SambaAudit.cs</code>、<code>SambaConfig.cs</code>、<code>SambaPlatform.cs</code>）は本体の <code>Services/</code> にあり、Linux エージェントはそれをリンクします。収集部分は <code>IRecordSink</code> に渡すので、Linux 版の監視サーバーが自分自身を収集するときは DB（<code>LocalRecordSink</code>）に、エージェントでは送信待ち（<code>RemoteRecordSink</code>）に入ります。続きの位置は文字列（Windows はレコード ID、Linux はジャーナルのカーソル）です。</p>
+    </section>
+
+    <!-- Linux の監視サーバー -->
+    <section id="linux-server">
+      <h2>Linux の監視サーバー</h2>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>本体を linux-x64 の自己完結・単一ファイルで発行（<code>InvariantGlobalization</code>。書式は元々カルチャーに依存しないため libicu 不要）。<code>wwwroot</code> と <code>libe_sqlite3.so</code> は実行ファイルの隣に置く</li>
+        <li><code>linux-server/install.sh</code>: <code>/opt/fileaccessmonitor</code> に配置し、systemd のサービス <code>fileaccessmonitor</code>（<code>Type=notify</code>、<code>WorkingDirectory</code> で Web のファイルの場所を指定）を登録。監視専用は専用ユーザー <code>fileaccessmonitor</code>、<code>--collect</code>（自分の Samba も収集）は root で動かす。更新時はモードとポートを引き継ぐ。エージェントと同じ機械には入れない（双方のインストーラーで拒否）</li>
+        <li>OS による違い: <code>UseSystemd()</code>（Windows では何もしない）、エージェント用の証明書は <code>agent-endpoint.pfx</code>（600）、鍵や初期パスワードは 600 で作成、Data Protection の鍵は DPAPI を使わずフォルダの権限（700）で保護</li>
+        <li><code>enroll</code> / <code>agent.json</code> は Windows 版のみ（Linux では Linux エージェントのパッケージを案内）</li>
+      </ul>
     </section>
 
     <!-- サービス -->
@@ -839,8 +854,8 @@ dotnet test linux-agent/tests            # Linux エージェント（Windows �
 dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true \
   /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true</code></pre>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
-        <li>GitHub Actions: <code>ci.yml</code>（push / PR でビルド・テスト）、<code>release.yml</code>（<code>v*</code> タグでインストーラー・zip・Linux エージェントの tar.gz・SHA256SUMS を作って Release に公開。ビルド証明（artifact attestation）を付ける。SignPath の署名手順は変数設定時のみ動く）</li>
-        <li>インストーラー: 役割（1 台構成・監視サーバー / エージェント）、Web のポート、ファイアウォール（FileAccessMonitor.exe を許可するプログラム単位の規則 1 つ。Web とエージェント用ポートの両方が対象。旧版のポート単位の規則「File Access Monitor Web / Agents」は更新時に置き換え。既存の規則は更新時に残し、削除はアンインストール時のみ）。エージェントは接続文字列を受け取って <code>enroll</code> を実行。サイレント: <code>/ROLE=agent /CONNECTION=FAM1.…</code></li>
+        <li>GitHub Actions: <code>ci.yml</code>（push / PR でビルド・テスト）、<code>release.yml</code>（<code>v*</code> タグでインストーラー・zip・Linux エージェントと Linux 監視サーバーの tar.gz（<code>-linux-x64-agent</code> / <code>-linux-x64-server</code>）・SHA256SUMS を作って Release に公開。ビルド証明（artifact attestation）を付ける。SignPath の署名手順は変数設定時のみ動く）</li>
+        <li>インストーラー: 役割（1 台構成・監視サーバー / 監視サーバーのみ / エージェント。監視サーバーのみは <code>local-collection off</code> を実行し、更新時は <code>settings.json</code> から判定。サイレント: <code>/ROLE=monitor</code>）、Web のポート、ファイアウォール（FileAccessMonitor.exe を許可するプログラム単位の規則 1 つ。Web とエージェント用ポートの両方が対象。旧版のポート単位の規則「File Access Monitor Web / Agents」は更新時に置き換え。既存の規則は更新時に残し、削除はアンインストール時のみ）。エージェントは接続文字列を受け取って <code>enroll</code> を実行。サイレント: <code>/ROLE=agent /CONNECTION=FAM1.…</code></li>
       </ul>
     </section>
 

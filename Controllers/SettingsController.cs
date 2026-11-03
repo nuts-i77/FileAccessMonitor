@@ -16,17 +16,19 @@ public class SettingsController : ControllerBase
     // Setting a SACL walks every file below the folder, which can take minutes on a large share
     private static readonly TimeSpan SaclJobTimeout = TimeSpan.FromMinutes(15);
 
-    private readonly SaclManagerService _sacl;
+    // Sets up auditing on this machine (SACLs on Windows, Samba on Linux), the same way an agent
+    // does on its server; null when this machine does not collect
+    private readonly IAgentPlatform? _local;
     private readonly DnsResolverService _dns;
     private readonly ServerConfigService _servers;
     private readonly AgentJobs _jobs;
     private readonly AuditLog _audit;
     private readonly ILogger<SettingsController> _logger;
 
-    public SettingsController(SaclManagerService sacl, DnsResolverService dns, ServerConfigService servers,
+    public SettingsController(IServiceProvider services, DnsResolverService dns, ServerConfigService servers,
         AgentJobs jobs, AuditLog audit, ILogger<SettingsController> logger)
     {
-        _sacl = sacl;
+        _local = services.GetService<IAgentPlatform>();
         _dns = dns;
         _servers = servers;
         _jobs = jobs;
@@ -37,15 +39,21 @@ public class SettingsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Get([FromQuery] string? server = null)
     {
-        if (await CheckServerAsync(server) is { } error) return error;
         var (_, dns) = ReadSettingsDoc();
+        // A monitoring-only server has no folders of its own, but the global settings still apply
+        if (ServerConfigService.IsLocal(server) && !ServerConfigService.LocalCollects)
+            return Ok(new { pathConfigs = Array.Empty<PathConfig>(), dnsServer = dns });
+        if (await CheckServerAsync(server) is { } error) return error;
         return Ok(new { pathConfigs = await _servers.GetPathsAsync(server), dnsServer = dns });
     }
 
-    // GET /api/settings/servers  — this machine and the agents, for the server pickers
+    // GET /api/settings/servers  — this machine (when it collects) and the agents, for the server pickers
     [HttpGet("servers")]
-    public async Task<IActionResult> Servers() =>
-        Ok(new { local = ServerConfigService.LocalName, servers = await _servers.ServerNamesAsync() });
+    public async Task<IActionResult> Servers() => Ok(new
+    {
+        local = ServerConfigService.LocalCollects ? ServerConfigService.LocalName : null,
+        servers = await _servers.ServerNamesAsync(),
+    });
 
     [HttpPost("dns")]
     public async Task<IActionResult> SetDns([FromBody] DnsRequest req)
@@ -60,7 +68,11 @@ public class SettingsController : ControllerBase
 
     // GET /api/settings/app  — running version, and whether Admins' browsers check GitHub for updates
     [HttpGet("app")]
-    public IActionResult GetApp() => Ok(new { version = AppVersion, updateCheck = UpdateCheckEnabled() });
+    public IActionResult GetApp() => Ok(new
+    {
+        version = AppVersion, updateCheck = UpdateCheckEnabled(),
+        localCollection = ServerConfigService.LocalCollects, os = AppInfo.OsName,
+    });
 
     [HttpPut("app")]
     public async Task<IActionResult> PutApp([FromBody] AppSettingsRequest req)
@@ -164,16 +176,9 @@ public class SettingsController : ControllerBase
         var sacl = new SaclResult(0, []);
         if (removeSacl)
         {
-            if (ServerConfigService.IsLocal(server))
-            {
-                if (Directory.Exists(path)) sacl = new SaclResult(_sacl.RemoveSacl(path));
-            }
-            else
-            {
-                var (result, error) = await RunOnAgentAsync(server!, "removeSacl", new JsonObject { ["path"] = path });
-                if (error != null) return error;
-                sacl = SaclResult.From(result!);
-            }
+            var (result, error) = await RunJobAsync(server, "removeSacl", new JsonObject { ["path"] = path });
+            if (error != null) return error;
+            sacl = SaclResult.From(result!); // a folder that is gone has nothing to remove
         }
         await _servers.SavePathsAsync(server, updated);
 
@@ -235,17 +240,17 @@ public class SettingsController : ControllerBase
     private static string ServerLabel(string? server) =>
         ServerConfigService.IsLocal(server) ? ServerConfigService.LocalName : server!;
 
-    // An unknown server name is an error; this machine always exists
-    private async Task<IActionResult?> CheckServerAsync(string? server) =>
-        ServerConfigService.IsLocal(server) || await _servers.FindAgentAsync(server!) != null
-            ? null
-            : NotFound(new { error = Messages.Get("agents.notFound") });
+    // An unknown server name is an error; so is this machine when it does not collect
+    private async Task<IActionResult?> CheckServerAsync(string? server)
+    {
+        if (ServerConfigService.IsLocal(server))
+            return ServerConfigService.LocalCollects ? null : BadRequest(new { error = Messages.Get("local.notCollecting") });
+        return await _servers.FindAgentAsync(server!) != null ? null : NotFound(new { error = Messages.Get("agents.notFound") });
+    }
 
-    // Count: files and folders given a SACL, or, from a Linux agent (Samba), shares audited
+    // Count: files and folders given a SACL, or, with Samba on Linux, shares audited
     private record SaclResult(int Count, List<string> Errors, bool Samba = false)
     {
-        public SaclResult((int count, List<string> errors) r) : this(r.count, r.errors) { }
-
         public static SaclResult From(JsonObject o) => new(
             o["count"]?.GetValue<int>() ?? 0,
             o["errors"] is JsonArray a ? a.Select(e => e?.GetValue<string>() ?? "").ToList() : [],
@@ -254,22 +259,24 @@ public class SettingsController : ControllerBase
         public string Message(string key) => Messages.Get(Samba ? key + "Samba" : key, Count);
     }
 
-    // Checks the folder exists and sets its SACL, here or on the agent's server
+    // Checks the folder exists and sets up its auditing, here or on the agent's server
     private async Task<(SaclResult Result, IActionResult? Error)> ApplySaclOnAsync(string? server, string path)
     {
-        if (ServerConfigService.IsLocal(server))
-        {
-            if (!Directory.Exists(path))
-                return (new(0, []), BadRequest(new { error = Messages.Get("path.notFound", path) }));
-            _sacl.EnableAuditPolicy();
-            return (new SaclResult(_sacl.ApplySacl(path)), null);
-        }
-
-        var (result, error) = await RunOnAgentAsync(server!, "applySacl", new JsonObject { ["path"] = path });
+        var (result, error) = await RunJobAsync(server, "applySacl", new JsonObject { ["path"] = path });
         if (error != null) return (new(0, []), error);
         if (result!["exists"]?.GetValue<bool>() != true)
             return (new(0, []), BadRequest(new { error = Messages.Get("path.notFound", path) }));
         return (SaclResult.From(result), null);
+    }
+
+    // A job on this machine (CheckServerAsync has made sure it collects) or on the agent's server
+    private async Task<(JsonObject? Result, IActionResult? Error)> RunJobAsync(string? server, string type, JsonObject args)
+    {
+        if (!ServerConfigService.IsLocal(server)) return await RunOnAgentAsync(server!, type, args);
+        if (_local == null) return (null, BadRequest(new { error = Messages.Get("local.notCollecting") }));
+        var result = await Task.Run(() => _local.RunJob(new AgentJob("local", type, args), HttpContext.RequestAborted));
+        if (result["error"]?.GetValue<string>() is { } message) return (null, BadRequest(new { error = message }));
+        return (result, null);
     }
 
     private async Task<(JsonObject? Result, IActionResult? Error)> RunOnAgentAsync(string server, string type, JsonObject args)

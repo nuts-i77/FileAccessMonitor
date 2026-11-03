@@ -133,14 +133,14 @@ public class AgentTests : IDisposable
     public async Task Outbox_keeps_batches_in_order_across_restarts()
     {
         var sink = new RemoteRecordSink(new AgentOutbox(_dir), NullLogger<RemoteRecordSink>.Instance);
-        Assert.True(await sink.SaveAsync([Rec("a.txt"), Rec("b.txt")], 100));
-        Assert.True(await sink.SaveAsync([], 120)); // position only
+        Assert.True(await sink.SaveAsync([Rec("a.txt"), Rec("b.txt")], "100"));
+        Assert.True(await sink.SaveAsync([], "120")); // position only
         await sink.ReportGapAsync("missedRecords=1-2", "gap.overwritten", 2L, 1L, 2L);
-        Assert.True(await sink.SaveAsync([Rec("c.txt")], 130));
+        Assert.True(await sink.SaveAsync([Rec("c.txt")], "130"));
 
         var reopened = new AgentOutbox(_dir); // service restart
         Assert.Equal("130", reopened.Position);
-        Assert.Equal(130, await new RemoteRecordSink(reopened, NullLogger<RemoteRecordSink>.Instance).LoadPositionAsync());
+        Assert.Equal("130", await new RemoteRecordSink(reopened, NullLogger<RemoteRecordSink>.Instance).LoadPositionAsync());
         Assert.Equal(3, reopened.Count);
 
         var first = reopened.Oldest()!.Value;

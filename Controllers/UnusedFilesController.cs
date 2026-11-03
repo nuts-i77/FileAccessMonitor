@@ -45,6 +45,7 @@ public class UnusedFilesController : ControllerBase
         folder = PathText.Normalize(folder);
 
         var local = ServerConfigService.IsLocal(server);
+        if (local && !ServerConfigService.LocalCollects) return BadRequest(new { error = Messages.Get("local.notCollecting") });
         var agent = local ? null : await _servers.FindAgentAsync(server!);
         if (!local && agent == null) return NotFound(new { error = Messages.Get("agents.notFound") });
         var serverName = agent?.Name ?? ServerConfigService.LocalName;

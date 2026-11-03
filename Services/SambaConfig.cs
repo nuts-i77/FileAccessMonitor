@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace FileAccessMonitor.Agent.Linux;
+namespace FileAccessMonitor.Services;
 
 // Turns Samba's full_audit module on and off for shares, by editing smb.conf. The lines the agent
 // adds are kept between marker comments, and lines it replaces (an existing "vfs objects" or

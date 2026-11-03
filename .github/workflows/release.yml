@@ -92,12 +92,22 @@ jobs:
           Compress-Archive -Path publish, install-service.ps1, setup-audit.ps1, restore-audit.ps1, LICENSE, README.md, README.ja.md `
                            -DestinationPath "dist/FileAccessMonitor-$v-win-x64.zip"
           # Linux agent (Samba): one self-contained file, its systemd unit and installer
-          $linux = "FileAccessMonitor-$v-linux-x64"
+          $agent = "FileAccessMonitor-$v-linux-x64-agent"
           dotnet publish linux-agent/FileAccessMonitor.Agent.Linux.csproj -c Release -r linux-x64 --self-contained true `
-            -o "linux-dist/$linux" /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None /p:Version=$v
+            -o "linux-dist/$agent" /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None /p:Version=$v
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          Copy-Item linux-agent/install.sh, linux-agent/fileaccessmonitor-agent.service, LICENSE, README.md, README.ja.md "linux-dist/$linux/"
-          tar -czf "dist/$linux.tar.gz" -C linux-dist $linux
+          Copy-Item linux-agent/install.sh, linux-agent/fileaccessmonitor-agent.service, LICENSE, README.md, README.ja.md "linux-dist/$agent/"
+          tar -czf "dist/$agent.tar.gz" -C linux-dist $agent
+          # Linux monitoring server: the same app as on Windows, with its web GUI files, unit and installer.
+          # Culture data is not needed (formatting is culture-invariant), so it runs without libicu.
+          $server = "FileAccessMonitor-$v-linux-x64-server"
+          dotnet publish FileAccessMonitor.csproj -c Release -r linux-x64 --self-contained true -o "linux-dist/$server" `
+            /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true /p:DebugType=None /p:IsTransformWebConfigDisabled=true `
+            /p:InvariantGlobalization=true /p:PredefinedCulturesOnly=false /p:Version=$v
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Remove-Item "linux-dist/$server/*.a"
+          Copy-Item linux-server/install.sh, linux-server/fileaccessmonitor.service, LICENSE, README.md, README.ja.md "linux-dist/$server/"
+          tar -czf "dist/$server.tar.gz" -C linux-dist $server
           Get-ChildItem dist -File | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content dist/SHA256SUMS.txt -Encoding ascii

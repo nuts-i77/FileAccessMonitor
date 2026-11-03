@@ -638,6 +638,8 @@
           <div class="card-body small">
             <div class="mb-2"><span class="text-muted" data-i18n="app.version">バージョン:</span> <strong id="appVersion">-</strong></div>
             <div class="mb-2"><span class="text-muted" data-i18n="app.latest">最新版:</span> <span id="appLatest">-</span></div>
+            <div class="mb-2"><span class="text-muted" data-i18n="app.localCollection">このサーバーでの収集:</span> <span id="appLocalCollection">-</span>
+              <div class="form-text" data-i18n="app.localHint">切り替えるには、サーバーで FileAccessMonitor local-collection on（または off）を実行し、サービスを再起動します。</div></div>
             <div class="form-check form-switch mb-1">
               <input class="form-check-input" type="checkbox" id="appUpdateCheck" onchange="saveUpdateCheck(this.checked)">
               <label class="form-check-label" for="appUpdateCheck" data-i18n="app.updateCheck">更新を確認する</label>

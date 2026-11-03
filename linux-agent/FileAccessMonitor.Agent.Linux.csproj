@@ -24,6 +24,9 @@
     <Compile Include="..\Services\AppPaths.cs" Link="Shared\AppPaths.cs" />
     <Compile Include="..\Services\RecordingRules.cs" Link="Shared\RecordingRules.cs" />
     <Compile Include="..\Services\SettingsStore.cs" Link="Shared\SettingsStore.cs" />
+    <Compile Include="..\Services\SambaAudit.cs" Link="Shared\SambaAudit.cs" />
+    <Compile Include="..\Services\SambaConfig.cs" Link="Shared\SambaConfig.cs" />
+    <Compile Include="..\Services\SambaPlatform.cs" Link="Shared\SambaPlatform.cs" />
     <InternalsVisibleTo Include="FileAccessMonitor.Agent.Linux.Tests" />
   </ItemGroup>
 

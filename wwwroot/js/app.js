@@ -1019,6 +1019,8 @@ async function loadAppInfo() {
   document.getElementById('appVersion').textContent =
     appInfo.version === '0.0.0' ? t('app.devBuild') : `v${appInfo.version}`;
   document.getElementById('appUpdateCheck').checked = appInfo.updateCheck;
+  document.getElementById('appLocalCollection').textContent =
+    `${t(appInfo.localCollection ? 'app.localOn' : 'app.localOff')} — ${appInfo.os || ''}`;
   showLatest(readStore(UPDATE_CACHE_KEY));
 }
 
@@ -1416,6 +1418,13 @@ async function loadSettings() {
 
 // Monitored folders and recording rules of the server picked in the settings tab
 async function loadServerSettings() {
+  // A monitoring-only server with no agents yet has no file server to set up
+  if (isAdmin() && serverList && !serverList.local && !settingsServer()) {
+    document.getElementById('monitoredPathsList').innerHTML =
+      `<div class="alert alert-info small mb-0">${t('settings.monitorOnly')}</div>`;
+    try { document.getElementById('dnsServerInput').value = (await api('/api/settings')).dnsServer || ''; } catch { }
+    return;
+  }
   try {
     const d = await api(withSettingsServer('/api/settings'));
     // Support both new pathConfigs and legacy monitoredPaths response

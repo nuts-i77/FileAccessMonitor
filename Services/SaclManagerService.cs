@@ -4,6 +4,7 @@ using System.Security.Principal;
 
 namespace FileAccessMonitor.Services;
 
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public class SaclManagerService
 {
     private readonly ILogger<SaclManagerService> _logger;

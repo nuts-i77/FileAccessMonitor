@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>FileAccessMonitor</RootNamespace>
@@ -10,9 +10,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="tests/**;linux-agent/**" />
-    <Content Remove="tests/**;linux-agent/**" />
-    <None Remove="tests/**;linux-agent/**" />
+    <Compile Remove="tests/**;linux-agent/**;linux-server/**;publish/**;dist/**;linux-dist/**" />
+    <Content Remove="tests/**;linux-agent/**;linux-server/**;publish/**;dist/**;linux-dist/**" />
+    <None Remove="tests/**;linux-agent/**;linux-server/**;publish/**;dist/**;linux-dist/**" />
     <InternalsVisibleTo Include="FileAccessMonitor.Tests" />
   </ItemGroup>
 
@@ -20,6 +20,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />

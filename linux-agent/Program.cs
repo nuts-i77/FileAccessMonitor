@@ -1,4 +1,3 @@
-using FileAccessMonitor.Agent.Linux;
 using FileAccessMonitor.Services;
 
 [assembly: System.Runtime.Versioning.SupportedOSPlatform("linux")]
@@ -26,7 +25,8 @@ builder.Logging.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat =
 var config = AgentConfig.Load();
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton(new AgentOutbox());
-builder.Services.AddSingleton<IAgentPlatform, LinuxAgentPlatform>();
+builder.Services.AddSingleton<IRecordSink, RemoteRecordSink>();
+builder.Services.AddSingleton<IAgentPlatform, SambaPlatform>();
 builder.Services.AddHostedService<AgentSender>();
 builder.Services.AddHostedService<AgentJobRunner>();
 builder.Services.AddHostedService<SambaAuditCollector>();

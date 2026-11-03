@@ -1,14 +1,14 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using FileAccessMonitor.Services;
 
-namespace FileAccessMonitor.Agent.Linux;
+namespace FileAccessMonitor.Services;
 
 // Jobs from the monitoring server on a Samba file server. "applySacl" / "removeSacl" turn Samba's
 // audit module on or off for the shares that hold the folder (the job names come from Windows,
 // where they set the folder's SACL).
-public class LinuxAgentPlatform(ILogger<LinuxAgentPlatform> logger) : IAgentPlatform
+[System.Runtime.Versioning.SupportedOSPlatform("linux")]
+public class SambaPlatform(ILogger<SambaPlatform> logger) : IAgentPlatform
 {
     private static readonly object Gate = new();
 

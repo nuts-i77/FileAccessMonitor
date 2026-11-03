@@ -1,0 +1,18 @@
+[Unit]
+Description=FileAccessMonitor monitoring server (web GUI and agent endpoint)
+After=network-online.target smbd.service smb.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/opt/fileaccessmonitor/FileAccessMonitor
+WorkingDirectory=/opt/fileaccessmonitor
+# Set by install.sh: fileaccessmonitor (monitoring only) or root (also collecting Samba accesses)
+User=fileaccessmonitor
+Restart=always
+RestartSec=10
+# Stop the server first; it ends the journalctl it reads from itself
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
