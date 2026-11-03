@@ -294,7 +294,7 @@ public class PermissionReportService : IPermissionReports
         return Path.Combine(_dir, $"{safeServer.ToLowerInvariant()}__{hash}.json");
     }
 
-    private async Task WriteAsync(StoredPermissionReport report, CancellationToken ct)
+    internal async Task WriteAsync(StoredPermissionReport report, CancellationToken ct)
     {
         Directory.CreateDirectory(_dir);
         var file = FileOf(report.Server, report.Root);
