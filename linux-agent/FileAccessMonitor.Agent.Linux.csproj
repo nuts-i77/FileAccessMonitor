@@ -29,6 +29,8 @@
     <Compile Include="..\Services\SambaAudit.cs" Link="Shared\SambaAudit.cs" />
     <Compile Include="..\Services\SambaConfig.cs" Link="Shared\SambaConfig.cs" />
     <Compile Include="..\Services\SambaPlatform.cs" Link="Shared\SambaPlatform.cs" />
+    <Compile Include="..\Services\PermissionContract.cs" Link="Shared\PermissionContract.cs" />
+    <Compile Include="..\Services\PermissionScanLinux.cs" Link="Shared\PermissionScanLinux.cs" />
     <InternalsVisibleTo Include="FileAccessMonitor.Agent.Linux.Tests" />
   </ItemGroup>
 

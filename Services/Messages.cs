@@ -231,15 +231,31 @@ public static class Messages
 
     public static bool IsJapanese => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ja";
 
-    public static string Get(string key, params object?[] args) => Format(IsJapanese ? Ja : En, key, args);
+    // These tables plus one per feature (MessagesPermissions, ...), each with its own key prefix
+    private static readonly Lazy<IReadOnlyDictionary<string, string>> AllEnLazy = new(() => Merge(
+        En, MessagesPermissions.En, MessagesHistory.En, MessagesReports.En, MessagesIntegrity.En));
+    private static readonly Lazy<IReadOnlyDictionary<string, string>> AllJaLazy = new(() => Merge(
+        Ja, MessagesPermissions.Ja, MessagesHistory.Ja, MessagesReports.Ja, MessagesIntegrity.Ja));
+    public static IReadOnlyDictionary<string, string> AllEn => AllEnLazy.Value;
+    public static IReadOnlyDictionary<string, string> AllJa => AllJaLazy.Value;
+
+    private static Dictionary<string, string> Merge(params IReadOnlyDictionary<string, string>[] tables)
+    {
+        var all = new Dictionary<string, string>();
+        foreach (var table in tables)
+            foreach (var (key, value) in table) all.Add(key, value);   // a key in two tables is a bug
+        return all;
+    }
+
+    public static string Get(string key, params object?[] args) => Format(IsJapanese ? AllJa : AllEn, key, args);
 
     // For text not tied to a request, e.g. alert notifications in the configured language.
     public static string GetIn(string language, string key, params object?[] args) =>
-        Format(language.StartsWith("ja", StringComparison.OrdinalIgnoreCase) ? Ja : En, key, args);
+        Format(language.StartsWith("ja", StringComparison.OrdinalIgnoreCase) ? AllJa : AllEn, key, args);
 
     private static string Format(IReadOnlyDictionary<string, string> dict, string key, object?[] args)
     {
-        var format = dict.TryGetValue(key, out var s) ? s : En.GetValueOrDefault(key, key);
+        var format = dict.TryGetValue(key, out var s) ? s : AllEn.GetValueOrDefault(key, key);
         return args.Length == 0 ? format : string.Format(CultureInfo.InvariantCulture, format, args);
     }
 

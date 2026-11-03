@@ -14,6 +14,8 @@ public class AccessDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<UserScope> UserScopes { get; set; }
     public DbSet<Agent> Agents { get; set; }
     public DbSet<AgentEnrollment> AgentEnrollments { get; set; }
+    public DbSet<ChainHead> ChainHeads { get; set; }
+    public DbSet<ChainCheckpoint> ChainCheckpoints { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

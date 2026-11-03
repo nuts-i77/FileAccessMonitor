@@ -124,8 +124,10 @@ var agentPort = AgentEndpoint.Port(builder.Configuration);
 if (AgentEndpoint.Enabled(builder.Configuration) && AgentEndpoint.Initialize(Log.Logger) is { } agentCert)
     builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(agentPort, listen => listen.UseHttps(agentCert)));
 
-builder.Services.AddDbContext<AccessDbContext>(options =>
-    options.UseSqlite($"Data Source={dbPath}"));
+// Tamper detection: new records and operation-log entries get their place in the hash chain on save
+builder.Services.AddSingleton<ChainInterceptor>();
+builder.Services.AddDbContext<AccessDbContext>((sp, options) =>
+    options.UseSqlite($"Data Source={dbPath}").AddInterceptors(sp.GetRequiredService<ChainInterceptor>()));
 
 // Identity
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
@@ -227,6 +229,15 @@ else if (ServerConfigService.LocalCollects && OperatingSystem.IsLinux())
 builder.Services.AddHostedService<AgentMonitorService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RetentionService>());
+// 1.10: tamper detection, permissions report, scheduled report
+builder.Services.AddSingleton<IntegrityService>();
+builder.Services.AddSingleton<IIntegrityStatus>(sp => sp.GetRequiredService<IntegrityService>());
+builder.Services.AddHostedService<IntegrityBackgroundService>();
+builder.Services.AddSingleton<PermissionReportService>();
+builder.Services.AddSingleton<IPermissionReports>(sp => sp.GetRequiredService<PermissionReportService>());
+builder.Services.AddSingleton<ReportBuilder>();
+builder.Services.AddSingleton<ScheduledReportService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ScheduledReportService>());
 builder.Services.AddControllers();
 
 var app = builder.Build();
@@ -362,6 +373,8 @@ CREATE TABLE IF NOT EXISTS ""AgentEnrollments"" (
         await db.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Agents"" ADD COLUMN ""Os"" TEXT NULL");
     // v11: denied accesses, rename destinations, permission change details
     await SchemaV19.ApplyAsync(db);
+    // v12: tamper detection, report opt-out, file history indexes
+    await SchemaV110.ApplyAsync(db);
 
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     foreach (var role in new[] { "Admin", "Viewer" })

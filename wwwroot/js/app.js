@@ -158,7 +158,12 @@ function recordNameHtml(r) {
   const title = r.newPath ? `${r.filePath} -> ${r.newPath}` : r.filePath;
   const moved = r.newPath
     ? `<div class="small text-muted text-nowrap"><i class="bi bi-arrow-return-right me-1"></i>${esc(r.newPath)}</div>` : '';
-  return `<span title="${esc(title)}">${itemIcon(r.isFolder)}${esc(r.fileName)}</span>${moved}`;
+  return `<span title="${esc(title)}">${itemIcon(r.isFolder)}${esc(r.fileName)}</span>${historyBtn(r)}${moved}`;
+}
+
+// The file history button (js/history.js); r: { filePath, serverName, accessTime?, isFolder? }
+function historyBtn(r) {
+  return typeof historyButtonHtml === 'function' ? historyButtonHtml(r) : '';
 }
 
 function rowClass(r) {
@@ -342,7 +347,7 @@ async function loadFiles() {
       <td class="text-end" style="color:#fd7e14">${fmtNum(f.rename)}</td>
       <td>${fmtDate(f.lastAccess)}</td>
       <td><span class="text-truncate d-inline-block" style="max-width:120px" title="${esc(f.topUser || '')}">${esc(f.topUser || '-')}</span></td>
-      <td><button class="btn btn-sm btn-outline-secondary py-0" data-path="${esc(f.filePath)}" data-server="${esc(f.serverName || '')}" onclick="showFileDetail(this.dataset.path, this.dataset.server)">${t('btn.detail')}</button></td>
+      <td class="text-nowrap"><button class="btn btn-sm btn-outline-secondary py-0" data-path="${esc(f.filePath)}" data-server="${esc(f.serverName || '')}" onclick="showFileDetail(this.dataset.path, this.dataset.server)">${t('btn.detail')}</button>${historyBtn({ filePath: f.filePath, serverName: f.serverName || '' })}</td>
     </tr>`).join('');
 }
 
@@ -757,6 +762,7 @@ function detailServerParam(server) {
 async function showFileDetail(path, server = '') {
   const modal = new bootstrap.Modal(document.getElementById('detailModal'));
   document.getElementById('detailModalTitle').textContent = t('detail.fileDetail') + serverPath({ serverName: server }, path);
+  document.getElementById('detailModalTitle').insertAdjacentHTML('beforeend', historyBtn({ filePath: path, serverName: server }));
   document.getElementById('detailModalBody').innerHTML =
     '<div class="text-center py-4"><div class="spinner-border"></div></div>';
   modal.show();
@@ -769,6 +775,7 @@ async function showFileDetail(path, server = '') {
 async function showFolderDetail(path, server = '') {
   const modal = new bootstrap.Modal(document.getElementById('detailModal'));
   document.getElementById('detailModalTitle').textContent = t('detail.folderDetail') + serverPath({ serverName: server }, path);
+  document.getElementById('detailModalTitle').insertAdjacentHTML('beforeend', historyBtn({ filePath: path, serverName: server, isFolder: true }));
   document.getElementById('detailModalBody').innerHTML =
     '<div class="text-center py-4"><div class="spinner-border"></div></div>';
   modal.show();
@@ -1429,6 +1436,7 @@ function loadTabData(tab) {
     case 'search':    /* search is user-driven; keep last results */ break;
     case 'unused':    loadUnusedTab(); break;
     case 'settings':  loadSettings(); break;
+    default:          window.TabHooks?.[tab]?.(); break;   // tabs of feature scripts (js/permissions.js)
   }
 }
 
@@ -1524,8 +1532,11 @@ async function loadSettings() {
   await loadServerSettings();
   loadRetentionPolicy();
   if (isAdmin()) {
-    ['usermgmtSettingsSection', 'agentsSection', 'appInfoSection', 'recordingSettingsSection', 'alertsSettingsSection', 'auditLogSection']
+    ['usermgmtSettingsSection', 'agentsSection', 'appInfoSection', 'recordingSettingsSection', 'alertsSettingsSection',
+      'reportsSettingsSection', 'integritySettingsSection', 'auditLogSection']
       .forEach(id => document.getElementById(id)?.classList.remove('d-none'));
+    // Settings cards of feature scripts (js/reports.js, js/integrity.js)
+    Object.values(window.SettingsHooks || {}).forEach(load => load());
     loadUsersMgmt();
     loadAgents();
     loadAppInfo();
@@ -1897,6 +1908,7 @@ function showScopeEditor(id) {
   (u.scopePaths || []).map(parseScopeEntry).forEach(e => addScopeRow(e.server, e.path));
   if (!u.scopePaths?.length) addScopeRow();
   document.getElementById('scopeNotifyEmail').value = u.notifyEmail || '';
+  document.getElementById('scopeSendReport').checked = u.sendReport !== false;
   document.getElementById('scopeError').classList.add('d-none');
   bootstrap.Modal.getOrCreateInstance(document.getElementById('scopeModal')).show();
 }
@@ -1913,7 +1925,8 @@ async function saveScope() {
           .map(row => ({ server: row.querySelector('select').value, path: row.querySelector('input').value.trim() }))
           .filter(e => e.path)
           .map(e => e.server ? `${e.server}|${e.path}` : e.path),
-        notifyEmail: document.getElementById('scopeNotifyEmail').value.trim()
+        notifyEmail: document.getElementById('scopeNotifyEmail').value.trim(),
+        sendReport: document.getElementById('scopeSendReport').checked
       })
     });
     bootstrap.Modal.getInstance(modal)?.hide();
@@ -2384,9 +2397,12 @@ let myScope = [];
   const VALID_TABS = ['dashboard', 'files', 'folders', 'users', 'recent', 'search', 'settings'];
   if (isAdmin() || myScope.length) {
     document.getElementById('navUnused')?.classList.remove('d-none');
-    VALID_TABS.push('unused');
+    document.getElementById('navPermissions')?.classList.remove('d-none');
+    VALID_TABS.push('unused', 'permissions');
   }
   if (isAdmin()) { checkForUpdate(); checkAgentVersions(); showHttpWarning(); }
+  // Banners of feature scripts (js/integrity.js: the record chain is broken)
+  Object.values(window.StartupHooks || {}).forEach(start => start());
   const hashTab = location.hash.slice(1);
   const startTab = VALID_TABS.includes(hashTab) ? hashTab : 'dashboard';
   const startLink = document.querySelector(`[data-tab="${startTab}"]`);

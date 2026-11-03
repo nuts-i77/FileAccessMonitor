@@ -65,6 +65,8 @@
   <div id="httpWarning"></div>
   <div id="updateBanner"></div>
   <div id="agentUpdateBanner"></div>
+  <!-- Filled by js/integrity.js when the record chain is broken -->
+  <div id="integrityBanner" class="d-none"></div>
 
   <!-- Summary Cards -->
   <div class="row g-3 mb-3" id="summaryCards">
@@ -146,6 +148,11 @@
     <li class="nav-item d-none" id="navUnused">
       <a class="nav-link" href="#" data-tab="unused" onclick="switchTab('unused', this)">
         <i class="bi bi-hourglass-split me-1"></i><span data-i18n="tab.unused">未使用ファイル</span>
+      </a>
+    </li>
+    <li class="nav-item d-none" id="navPermissions">
+      <a class="nav-link" href="#" data-tab="permissions" onclick="switchTab('permissions', this)">
+        <i class="bi bi-shield-lock me-1"></i><span data-i18n="tab.permissions">アクセス権</span>
       </a>
     </li>
     <li class="nav-item ms-auto">
@@ -472,6 +479,11 @@
       </div>
     </div>
     <div id="unusedResults"></div>
+  </div>
+
+  <!-- Permissions Tab (Admin, and Viewers with a folder scope); built by js/permissions.js -->
+  <div id="tab-permissions" class="d-none">
+    <div id="permissionsRoot"></div>
   </div>
 
   <!-- Settings Tab -->
@@ -887,6 +899,12 @@
         </div>
       </div>
 
+      <!-- Scheduled report (Admin only); built by js/reports.js -->
+      <div class="col-12 d-none" id="reportsSettingsSection"></div>
+
+      <!-- Tamper detection (Admin only); built by js/integrity.js -->
+      <div class="col-12 d-none" id="integritySettingsSection"></div>
+
       <!-- Operation log (Admin only) -->
       <div class="col-12 d-none" id="auditLogSection">
         <div class="card">
@@ -1017,6 +1035,10 @@
           <label class="form-label small" for="scopeNotifyEmail" data-i18n="scope.email">通知先メールアドレス（任意）</label>
           <input type="email" id="scopeNotifyEmail" class="form-control form-control-sm">
           <div class="form-text" data-i18n="scope.emailHint">指定すると、範囲内のフォルダで大量削除などを検知したときにこのアドレスにもメールします（通知が有効で、SMTP が設定されている場合）。しきい値は通知設定と同じです。</div>
+          <div class="form-check mt-1">
+            <input class="form-check-input" type="checkbox" id="scopeSendReport" checked>
+            <label class="form-check-label small" for="scopeSendReport" data-i18n="scope.sendReport">定期レポート（範囲内のみ）もこのアドレスに送る</label>
+          </div>
         </div>
         <div id="scopeError" class="d-none text-danger small mt-2"></div>
       </div>
@@ -1128,10 +1150,33 @@
   </div>
 </div>
 
+<!-- File History Modal (js/history.js) -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="historyModalTitle" data-i18n="hist.title">ファイルの履歴</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="historyModalBody"></div>
+    </div>
+  </div>
+</div>
+
 <script src="lib/bootstrap/bootstrap.bundle.min.js"></script>
 <script src="lib/chartjs/chart.umd.min.js"></script>
 <script src="lang/ja.js"></script>
 <script src="lang/en.js"></script>
+<!-- Each feature adds its texts to I18N_JA / I18N_EN -->
+<script src="lang/permissions.js"></script>
+<script src="lang/history.js"></script>
+<script src="lang/reports.js"></script>
+<script src="lang/integrity.js"></script>
+<!-- Feature scripts: functions and hook registrations only (TabHooks, SettingsHooks, StartupHooks); app.js calls them -->
+<script src="js/permissions.js"></script>
+<script src="js/history.js"></script>
+<script src="js/reports.js"></script>
+<script src="js/integrity.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

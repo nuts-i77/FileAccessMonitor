@@ -15,4 +15,7 @@ public class UserScope
     // Alerts about files in the scope are also mailed here (null = none)
     [MaxLength(256)]
     public string? NotifyEmail { get; set; }
+
+    // The scheduled report, limited to the scope, is mailed to NotifyEmail too
+    public bool SendReport { get; set; } = true;
 }

@@ -43,7 +43,7 @@ public class UsersController : ControllerBase
             result.Add(new
             {
                 id = u.Id, username = u.UserName, displayName = u.DisplayName, email = u.Email, roles,
-                scopePaths = AccessScope.Parse(scope?.Paths).Select(e => e.ToString()), notifyEmail = scope?.NotifyEmail,
+                scopePaths = AccessScope.Parse(scope?.Paths).Select(e => e.ToString()), notifyEmail = scope?.NotifyEmail, sendReport = scope?.SendReport ?? true,
             });
         }
         return Ok(result);
@@ -137,12 +137,13 @@ public class UsersController : ControllerBase
             if (row == null) _db.UserScopes.Add(row = new UserScope { UserId = id });
             row.Paths = string.Join('\n', paths);
             row.NotifyEmail = email;
+            row.SendReport = req.SendReport ?? true;
         }
         await _db.SaveChangesAsync();
         _alerts.ReloadRecipients();
 
         await _audit.WriteAsync(HttpContext, "user.scope",
-            $"user={user.UserName}, paths=[{string.Join(", ", paths)}], notifyEmail={email ?? "-"}");
+            $"user={user.UserName}, paths=[{string.Join(", ", paths)}], notifyEmail={email ?? "-"}, sendReport={req.SendReport ?? true}");
         return Ok(new { message = Messages.Get("scope.saved") });
     }
 
@@ -193,4 +194,4 @@ public class UsersController : ControllerBase
 public record CreateUserRequest(string Username, string? DisplayName, string? Email, string? Password, string? Role);
 public record ChangeRoleRequest(string Role);
 public record ResetPasswordRequest(string NewPassword);
-public record ScopeRequest(string[]? Paths, string? NotifyEmail);
+public record ScopeRequest(string[]? Paths, string? NotifyEmail, bool? SendReport);

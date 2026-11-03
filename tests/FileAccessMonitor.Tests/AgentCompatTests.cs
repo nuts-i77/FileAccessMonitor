@@ -158,6 +158,8 @@ public class AgentCompatTests : IDisposable
 
         await SchemaV19.ApplyAsync(db);
         await SchemaV19.ApplyAsync(db); // idempotent
+        await SchemaV110.ApplyAsync(db);   // the model also has the 1.10 columns
+        await SchemaV110.ApplyAsync(db);
 
         var columns = await db.Database.SqlQueryRaw<string>(@"SELECT ""name"" AS ""Value"" FROM pragma_table_info('AccessRecords')").ToListAsync();
         Assert.Contains("Denied", columns);

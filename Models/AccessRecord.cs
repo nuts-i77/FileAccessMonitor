@@ -49,4 +49,9 @@ public class AccessRecord
     // Permission: the change, before and after; null otherwise
     [MaxLength(2000)]
     public string? Detail { get; set; }
+
+    // Tamper detection (1.10): position in the chain and the HMAC over the previous hash and this
+    // row; null for records made before 1.10
+    public long? ChainSeq { get; set; }
+    public byte[]? ChainHash { get; set; }
 }

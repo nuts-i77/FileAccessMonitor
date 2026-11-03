@@ -24,4 +24,8 @@ public class AuditLogEntry
 
     [MaxLength(100)]
     public string? ClientIp { get; set; }
+
+    // Tamper detection (1.10), a chain of its own; null for entries made before 1.10
+    public long? ChainSeq { get; set; }
+    public byte[]? ChainHash { get; set; }
 }

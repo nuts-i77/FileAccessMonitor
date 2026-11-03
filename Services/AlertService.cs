@@ -69,6 +69,8 @@ public sealed record AlertRecipient(string UserName, IReadOnlyList<ScopeEntry> P
 
 public record ChannelResult(string Channel, bool Ok, string? Error);
 
+public record MailAttachmentData(string FileName, byte[] Content, string ContentType);
+
 public class AlertService
 {
     private const string SettingsKey = "Alerts";
@@ -220,6 +222,43 @@ public class AlertService
             $"type={(offline ? "agentOffline" : "agentOnline")}, server={agentName}, channels=[{channels}]");
     }
 
+    // A notification of a feature (e.g. type "Integrity" when the record chain is broken) to the main
+    // channels in the configured language. Sent whenever notifications are enabled.
+    public async Task<List<ChannelResult>> NotifyAsync(string type, string titleKey, string bodyKey, bool high, params object[] args)
+    {
+        var s = _settings;
+        if (!s.Enabled || (!s.HasWebhook && !s.HasMail)) return [];
+
+        var prefix = high ? Messages.GetIn(s.Language, "alert.highPriority") + " " : "";
+        var title = $"{prefix}[FileAccessMonitor] " + Messages.GetIn(s.Language, titleKey, args);
+        var body = Messages.GetIn(s.Language, bodyKey, args);
+        var results = new List<ChannelResult>();
+        if (s.HasWebhook) results.Add(await TrySend("webhook", () => SendWebhookAsync(s, title, body, null, high)));
+        if (s.HasMail) results.Add(await TrySend("email", () => SendMailAsync(s, title, body, high)));
+        var channels = string.Join(", ", results.Select(r => $"{r.Channel}={(r.Ok ? "ok" : "failed")}"));
+        await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent", $"type={type}, channels=[{channels}]");
+        return results;
+    }
+
+    // An HTML mail with a plain-text alternative and attachments (scheduled report) to the given
+    // addresses, with the SMTP settings of s. Throws when sending fails.
+    public static async Task SendHtmlMailAsync(AlertSettings s, string to, string subject, string textBody, string htmlBody,
+        IReadOnlyList<MailAttachmentData> attachments)
+    {
+        using var message = NewMessage(s, to, subject);
+        message.Body = textBody;
+        message.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(htmlBody, Encoding.UTF8, "text/html"));
+        foreach (var a in attachments)
+            message.Attachments.Add(new Attachment(new MemoryStream(a.Content), a.FileName, a.ContentType));
+
+        using var smtp = NewSmtpClient(s, attachments.Count > 0 ? 60000 : 15000);
+        await smtp.SendMailAsync(message);
+    }
+
+    // A text message to the webhook (scheduled report summary); never throws
+    public Task<ChannelResult> SendWebhookTextAsync(AlertSettings s, string title, string body) =>
+        TrySend("webhook", () => SendWebhookAsync(s, title, body, null));
+
     // recipient: the folder recipient's user name, or null for the main notification channels
     private async Task SendAlertAsync(Alert alert, AlertSettings s, string? recipient = null)
     {
@@ -284,8 +323,9 @@ public class AlertService
         }
     }
 
-    private async Task SendWebhookAsync(AlertSettings s, string title, string body, Alert? alert)
+    private async Task SendWebhookAsync(AlertSettings s, string title, string body, Alert? alert, bool high = false)
     {
+        var priority = alert?.Priority == "High" || high ? "high" : "normal";
         object payload = s.WebhookFormat switch
         {
             // Teams "Workflows" webhook (Post to a channel when a webhook request is received)
@@ -311,7 +351,7 @@ public class AlertService
                     },
                 },
             },
-            "generic" => new { title, text = body, priority = alert?.Priority == "High" ? "high" : "normal", alert },
+            "generic" => new { title, text = body, priority, alert },
             _ => new { text = $"*{title}*\n{body}" },   // Slack incoming webhook
         };
 
@@ -331,23 +371,36 @@ public class AlertService
 
     private static async Task SendMailAsync(AlertSettings s, string title, string body, bool highPriority = false)
     {
-        using var message = new MailMessage
+        using var message = NewMessage(s, s.MailTo!, title);
+        message.Body = body;
+        // High sets the X-Priority: 1, Priority and Importance headers
+        if (highPriority) message.Priority = MailPriority.High;
+
+        using var smtp = NewSmtpClient(s, 15000);
+        await smtp.SendMailAsync(message);
+    }
+
+    // to: comma or semicolon separated
+    private static MailMessage NewMessage(AlertSettings s, string to, string subject)
+    {
+        var message = new MailMessage
         {
             From = new MailAddress(string.IsNullOrWhiteSpace(s.MailFrom) ? $"filemonitor@{Environment.MachineName}" : s.MailFrom),
-            Subject = title,
-            Body = body,
+            Subject = subject,
             BodyEncoding = Encoding.UTF8,
             SubjectEncoding = Encoding.UTF8,
         };
-        // High sets the X-Priority: 1, Priority and Importance headers
-        if (highPriority) message.Priority = MailPriority.High;
-        foreach (var to in s.MailTo!.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            message.To.Add(to);
+        foreach (var address in to.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            message.To.Add(address);
+        return message;
+    }
 
-        using var smtp = new SmtpClient(s.SmtpHost, s.SmtpPort) { EnableSsl = s.SmtpUseSsl, Timeout = 15000 };
+    private static SmtpClient NewSmtpClient(AlertSettings s, int timeoutMs)
+    {
+        var smtp = new SmtpClient(s.SmtpHost, s.SmtpPort) { EnableSsl = s.SmtpUseSsl, Timeout = timeoutMs };
         if (!string.IsNullOrWhiteSpace(s.SmtpUser))
             smtp.Credentials = new NetworkCredential(s.SmtpUser, s.SmtpPassword);
-        await smtp.SendMailAsync(message);
+        return smtp;
     }
 
     private string? Protect(string? value) =>

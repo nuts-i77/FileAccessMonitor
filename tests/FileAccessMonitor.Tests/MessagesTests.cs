@@ -8,7 +8,7 @@ public class MessagesTests
 {
     [Fact]
     public void Japanese_and_English_have_the_same_keys() =>
-        Assert.Equal(Messages.En.Keys.Order(), Messages.Ja.Keys.Order());
+        Assert.Equal(Messages.AllEn.Keys.Order(), Messages.AllJa.Keys.Order());
 
     [Fact]
     public void Japanese_and_English_use_the_same_placeholders()
@@ -16,8 +16,23 @@ public class MessagesTests
         static string[] Placeholders(string s) =>
             Regex.Matches(s, @"\{(\d+)").Select(m => m.Groups[1].Value).Distinct().Order().ToArray();
 
-        foreach (var (key, en) in Messages.En)
-            Assert.True(Placeholders(en).SequenceEqual(Placeholders(Messages.Ja[key])), key);
+        foreach (var (key, en) in Messages.AllEn)
+            Assert.True(Placeholders(en).SequenceEqual(Placeholders(Messages.AllJa[key])), key);
+    }
+
+    // Each feature table uses its own key prefix
+    [Theory]
+    [InlineData(typeof(MessagesPermissions), "perm.")]
+    [InlineData(typeof(MessagesHistory), "hist.")]
+    [InlineData(typeof(MessagesReports), "report.")]
+    [InlineData(typeof(MessagesIntegrity), "integrity.")]
+    public void Feature_tables_use_their_prefix(Type table, string prefix)
+    {
+        foreach (var name in new[] { "En", "Ja" })
+        {
+            var dict = (IReadOnlyDictionary<string, string>)table.GetField(name)!.GetValue(null)!;
+            Assert.All(dict.Keys, key => Assert.StartsWith(prefix, key));
+        }
     }
 
     [Theory]
