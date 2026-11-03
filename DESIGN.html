@@ -303,7 +303,7 @@ tbody tr:hover td { background: var(--surface2); }
   <div class="topbar">
     <span class="topbar-badge">設計書</span>
     <span class="topbar-title">FileAccessMonitor</span>
-    <span class="topbar-sub">v1.5 · 2026-11-01 · net10.0-windows</span>
+    <span class="topbar-sub">v1.9 · 2026-11-03 · net10.0-windows</span>
   </div>
 
   <nav>
@@ -319,6 +319,7 @@ tbody tr:hover td { background: var(--surface2); }
       <a class="nav-link" href="#events">イベント処理</a>
       <a class="nav-link" href="#delete">削除・名前変更・フォルダ</a>
       <a class="nav-link" href="#rules">記録ルール</a>
+      <a class="nav-link" href="#v19-record">拒否・権限・作成・USN</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">エージェント</div>
@@ -334,6 +335,7 @@ tbody tr:hover td { background: var(--surface2); }
       <a class="nav-link" href="#api">APIエンドポイント</a>
       <a class="nav-link" href="#config">設定ファイル</a>
       <a class="nav-link" href="#alerts">通知</a>
+      <a class="nav-link" href="#https">Web GUI の HTTPS</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">フロントエンド</div>
@@ -438,14 +440,18 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <div class="field"><span class="field-name">FileName</span><span class="field-desc">string(500) — ファイル名のみ</span></div>
           <div class="field"><span class="field-name">FolderPath</span><span class="field-desc">string(2000) — 親フォルダ</span></div>
           <div class="field"><span class="field-name">UserName</span><span class="field-desc">string(200) — <code>DOMAIN\user</code></span></div>
-          <div class="field"><span class="field-name">AccessType</span><span class="field-desc">string(20) — <code>Read</code> | <code>Write</code> | <code>Delete</code> | <code>Rename</code>（名前変更・移動。記録されるのは変更前のパス）</span></div>
+          <div class="field"><span class="field-name">AccessType</span><span class="field-desc">string(20) — <code>Read</code> | <code>Write</code> | <code>Create</code> | <code>Delete</code> | <code>Rename</code>（名前変更・移動。<code>FilePath</code> は変更前のパス、変更後は <code>NewPath</code>）| <code>Permission</code>（権限・所有者の変更）。定数は <code>Models/AccessTypes.cs</code>。拒否は種別ではなく <code>Denied</code></span></div>
+          <div class="field"><span class="field-name">Denied</span><span class="field-desc">bool — アクセスが拒否された記録。<code>AccessType</code> は拒否された操作（Read / Write / Delete、Linux は Rename も）。統計・上位一覧・未使用ファイル・読取書込削除のしきい値には数えない（<code>!r.Denied</code>）。部分インデックス <code>IX_AccessRecords_Denied</code></span></div>
+          <div class="field"><span class="field-name">NewPath</span><span class="field-desc">string(2000)? — Rename の移動先のフルパス。不明なら null。閲覧範囲が限られた Viewer には、範囲外の移動先を隠す</span></div>
+          <div class="field"><span class="field-name">Detail</span><span class="field-desc">string(2000)? — Permission の変更内容（言語に依存しない短い文）。Windows は <code>owner: A -&gt; B</code>、<code>+ allow DOMAIN\user: Modify</code>、<code>inheritance: disabled</code> など。Linux は変更前後がなく null か <code>mode 0644</code> など。それ以外は null</span></div>
           <div class="field"><span class="field-name">AccessTime</span><span class="field-desc">DateTime UTC — イベント発生時刻（そのファイルサーバーの時計）</span></div>
           <div class="field"><span class="field-name">ClientIp / ClientMachine</span><span class="field-desc">string? — 接続元 IP と端末名</span></div>
           <div class="field"><span class="field-name">IsFolder</span><span class="field-desc">bool — フォルダの記録（削除・名前変更のときだけ記録される）</span></div>
           <div class="field"><span class="field-name">ServerName</span><span class="field-desc">string(255) — アクセスが発生したファイルサーバー。ローカル収集では <code>Environment.MachineName</code>、エージェントの記録では登録名（エージェントの申告ではなくサーバー側で付ける）</span></div>
         </div>
       </div>
-      <p>インデックス: <code>FilePath</code>, <code>FolderPath</code>, <code>AccessTime</code>, <code>UserName</code>, <code>ServerName</code>, <code>(FilePath, AccessTime)</code>。</p>
+      <p>インデックス: <code>FilePath</code>, <code>FolderPath</code>, <code>AccessTime</code>, <code>UserName</code>, <code>ServerName</code>, <code>(FilePath, AccessTime)</code>、<code>AccessTime</code>（<code>Denied = 1</code> のものだけの部分インデックス）。</p>
+      <p>種別と、フォルダごとの記録種別（<code>MonitoredPaths</code> の種類）の対応は <code>AccessTypes.EventTypeOf</code>: Create は <strong style="color:var(--fg)">Write</strong> に、Rename は <strong style="color:var(--fg)">Delete</strong> に含まれ、Read / Write / Delete / Permission はそのまま。新しい監視フォルダの既定は <code>Read,Write,Delete,Permission</code>、既存のフォルダは管理者が選ぶまで変わらない。</p>
 
       <h3>その他のテーブル</h3>
       <div class="table-wrap">
@@ -467,6 +473,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li><code>IsFolder</code> 追加時 — 他の記録が親フォルダとして持つパスを <code>IsFolder = 1</code> にする</li>
         <li><code>ServerName</code> 追加時 — 既存の記録すべてにこのマシンの名前を入れる</li>
+        <li>v1.9 (<code>Data/SchemaV19.cs</code>) — <code>Denied INTEGER NOT NULL DEFAULT 0</code>、<code>NewPath</code>、<code>Detail</code> の列と部分インデックスを、無ければ追加（何度実行しても同じ。データ移行はなし）</li>
       </ul>
     </section>
 
@@ -474,7 +481,9 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
     <section id="events">
       <h2>イベント処理パイプライン</h2>
       <p><code>EventLogCollectorService</code> が次の XPath で Security ログを購読します（1 台構成・監視サーバー・エージェント共通）。</p>
-      <pre><code>*[System[(EventID=4663) or (EventID=4659) or (EventID=4660) or (EventID=4624) or (EventID=5140)]]</code></pre>
+      <pre><code>*[System[(EventID=4663) or (EventID=4659) or (EventID=4660) or (EventID=4670)
+  or (EventID=4656 and band(Keywords,4503599627370496)) or (EventID=4624) or (EventID=5140)]]</code></pre>
+      <p><code>4503599627370496</code> は <code>0x10000000000000</code>（Audit Failure）。成功の 4656 は読まないので、既存の成功監査による負荷は増えない。</p>
 
       <div class="table-wrap">
         <table>
@@ -483,6 +492,8 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
             <tr><td>4663</td><td>オブジェクトへのアクセス</td><td>AccessMask から種別を判定。削除権限を含むものは <code>DeleteTracker</code> で保留</td></tr>
             <tr><td>4659</td><td>削除目的のハンドル要求</td><td>常に <code>Delete</code></td></tr>
             <tr><td>4660</td><td>オブジェクトの削除</td><td>同じ (ProcessId, HandleId) の保留中アクセスを <code>Delete</code> と確定</td></tr>
+            <tr><td>4656（失敗）</td><td>オブジェクトのハンドル要求が拒否された（Audit Failure）</td><td>要求マスクから種別を判定して <code>Denied</code> の記録（下記）</td></tr>
+            <tr><td>4670</td><td>オブジェクトの権限の変更</td><td><code>OldSd</code> / <code>NewSd</code>（SDDL）の差から <code>Permission</code> の記録（下記）</td></tr>
             <tr><td>4624</td><td>ログオン</td><td>ログオン ID → (IP, 端末名) をキャッシュ</td></tr>
             <tr><td>5140</td><td>共有へのアクセス</td><td>ログオン ID → IP をキャッシュ</td></tr>
             <tr><td>1102</td><td>監査ログの消去</td><td>ログ消去を検知したとき、消去したユーザーを調べるためだけに参照</td></tr>
@@ -522,8 +533,9 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <li>記録ルールの除外（ファイル名・ユーザー・プロセス）</li>
         <li>フォルダごとの記録種別（名前変更は「削除」の設定に従う）</li>
         <li>フォルダへのアクセスは、削除権限のもの以外は除外</li>
-        <li>連続した読取のまとめ（<code>ReadMerger</code>）</li>
+        <li>連続した読取のまとめ（<code>ReadMerger</code>）。拒否の記録は別の <code>DeniedMerger</code>（ユーザー・パス・種別ごとに 60 秒、ReadMerger と混ぜない）</li>
       </ol>
+      <p>権限の変更（4670）と拒否（4656 失敗）も同じフィルタ（監視フォルダ、システムアカウント・除外、記録ルール、フォルダごとの記録種別）を通ります。ただし拒否はフォルダも記録し（入れないフォルダの一覧表示など）、<code>DeleteTracker</code> や 4660 は使わず、拒否された削除は Delete + Denied としてすぐ記録します（拒否された名前変更も Delete + Denied。区別できない）。</p>
 
       <h3>接続元 IP / 端末名</h3>
       <p>ログオン ID → (IP, 端末名) のキャッシュ（起動時に過去 30 日分の 4624/5140 を先読み）と、<code>NetSessionEnum</code> で 30 秒ごとに更新する SMB セッション一覧（ユーザー名 → IP）を使います。端末名が分からなければ、逆引き DNS サーバーが設定されている場合だけ <code>DnsResolverService</code> で PTR を引きます（成功 1 時間・失敗 5 分キャッシュ）。逆引き DNS は監視サーバーの設定だけで、エージェントの記録は監視サーバーが受け取ったときに解決します（エージェントでは引かない）。</p>
@@ -547,6 +559,8 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       </div>
       <p>保留の期限は、新しいイベントの時刻（停止中の分を読み直しているとき）か実時間のどちらかで 2 秒を過ぎたときです。キューが空でも保留があれば、待機を 2 秒で切り上げて判定します。</p>
 
+      <p>名前変更の移動先（<code>NewPath</code>）と、書込が作成だったか（<code>Create</code>）は、Security ログにないため USN ジャーナルから補います（次の「拒否・権限変更・作成・USN」）。<code>DeleteTracker</code> が判定した後の Write と Rename が、突き合わせのために少しだけ保留されます。</p>
+
       <h3>フォルダの判定</h3>
       <p>イベントにはファイルかフォルダかの区別がないため、処理時点で <code>Directory.Exists</code> を確認し、さらに最近見たフォルダ（記録の親フォルダ、存在したフォルダ）を <code>RecentFolders</code> に覚えておきます。フォルダを削除すると中身が先に削除されるので、フォルダ自体が消えていても判定できます。空のフォルダで処理時点にすでに消えているものは判定できず、ファイルとして記録されます。</p>
     </section>
@@ -560,6 +574,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <div class="field"><span class="field-name">ExcludeFilePatterns</span><span class="field-desc">ファイル名のパターン（<code>*</code> <code>?</code>、大文字小文字を区別しない）。既定 <code>Thumbs.db</code>, <code>desktop.ini</code>, <code>~$*</code>, <code>*.tmp</code></span></div>
           <div class="field"><span class="field-name">ExcludeUsers</span><span class="field-desc"><code>DOMAIN\user</code>、またはユーザー名のみ（全ドメインに一致）</span></div>
           <div class="field"><span class="field-name">ExcludeProcesses</span><span class="field-desc">プロセス名。共有経由のアクセスにはプロセス名がないため、サーバー上で開いたものにだけ効く</span></div>
+          <div class="field"><span class="field-name">RecordDenied</span><span class="field-desc">既定 true。拒否されたアクセスも記録する（Linux は再適用でエージェントの <code>full_audit:failure</code> が変わる）</span></div>
           <div class="field"><span class="field-name">MergeReadMinutes</span><span class="field-desc">既定 5。同じユーザー・同じファイルの読取は、前回の読取からこの時間内なら記録しない（時間は読取のたびに数え直す。0 = すべて記録）</span></div>
         </div>
       </div>
@@ -652,11 +667,92 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <li>配置: <code>/opt/fileaccessmonitor</code>、systemd のサービス <code>fileaccessmonitor</code>（<code>Type=notify</code>、<code>WorkingDirectory</code> で Web のファイルの場所を指定、既定は専用ユーザー <code>fileaccessmonitor</code>）</li>
         <li><code>fileaccessmonitor-server</code>（<code>linux-server/</code> のシェルスクリプト）: モードとポートの表示・変更。<code>--collect</code> は drop-in <code>collect.conf</code>（<code>User=root</code>）と smbd の journald 設定を書いて <code>local-collection on</code>、<code>--monitor-only</code> はその逆、<code>--port</code> は drop-in <code>port.conf</code>（<code>Kestrel__Endpoints__Http__Url</code> の環境変数）。drop-in は <code>/etc/systemd/system/fileaccessmonitor.service.d</code> にあるので更新で消えない。データフォルダの所有者を動作アカウントに合わせる</li>
         <li>配布: deb / rpm（<code>packaging/nfpm-*.yaml</code>、nfpm で作成）と tar.gz（<code>linux-server/install.sh</code>）。パッケージの postinstall は、新規なら監視専用で起動、更新ならモードを保って再起動。tar.gz の collect 環境から移った場合は <code>collect.conf</code> を作って引き継ぐ。エージェントから置き換えた場合は <code>agent.json</code> を退避して監視専用で始める。<code>remove</code> ではデータを残し、<code>purge</code>（deb）で削除（もう一方のパッケージが入っていれば残す）</li>
-        <li>エージェントと同じ機械には入れない: パッケージは互いに <code>Conflicts</code>、tar.gz のインストーラーは相手を見つけると拒否。Linux エージェントも同じく deb / rpm（<code>fileaccessmonitor-agent</code>。<code>/usr/bin/fileaccessmonitor-agent</code>、smbd 用の journald 設定は <code>/usr/lib/systemd/system/smbd.service.d</code> と <code>smb.service.d</code>）</li>
+        <li>エージェントと同じマシンには入れない: パッケージは互いに <code>Conflicts</code>、tar.gz のインストーラーは相手を見つけると拒否。Linux エージェントも同じく deb / rpm（<code>fileaccessmonitor-agent</code>。<code>/usr/bin/fileaccessmonitor-agent</code>、smbd 用の journald 設定は <code>/usr/lib/systemd/system/smbd.service.d</code> と <code>smb.service.d</code>）</li>
         <li>リリース: <code>release.yml</code> の Linux のジョブ（ubuntu-latest）で、両方の tar.gz・deb・rpm を作り（nfpm はチェックサムを固定して取得）、Windows のジョブがリリースに加える</li>
         <li>OS による違い: <code>UseSystemd()</code>（Windows では何もしない）、エージェント用の証明書は <code>agent-endpoint.pfx</code>（600）、鍵や初期パスワードは 600 で作成、Data Protection の鍵は DPAPI を使わずフォルダの権限（700）で保護</li>
         <li><code>enroll</code> / <code>agent.json</code> は Windows 版のみ（Linux では Linux エージェントのパッケージを案内）</li>
       </ul>
+    </section>
+
+    <!-- v1.9 の記録拡張 -->
+    <section id="v19-record">
+      <h2>拒否・権限変更・作成・USN（v1.9）</h2>
+
+      <h3>監査ポリシーと SACL（Windows）</h3>
+      <p><code>SaclManagerService.EnableAuditPolicy()</code> が次のサブカテゴリを <code>auditpol</code> で有効にします（<code>setup-audit.ps1</code> も同じ。<code>restore-audit.ps1</code> はハンドル操作の失敗を無効に戻す）。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>サブカテゴリ</th><th>GUID</th><th>設定</th><th>理由</th></tr></thead>
+          <tbody>
+            <tr><td>ファイル システム</td><td><code>{0CCE921D-…}</code></td><td>成功 + 失敗</td><td>SACL のエントリが記録を出す条件</td></tr>
+            <tr><td>ハンドル操作</td><td><code>{0CCE9223-…}</code></td><td><strong style="color:var(--fg)">失敗のみ</strong></td><td>Windows 11 で確認: これがないと拒否された操作の 4656（失敗）が記録されない。成功は雑音になるので有効にしない</td></tr>
+            <tr><td>承認ポリシーの変更</td><td><code>{0CCE9231-…}</code></td><td>成功</td><td>4670（権限の変更）のため</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>監査エントリ（SACL）は 1 つの規則に <code>Success | Failure</code> を付け、権利は ReadData・WriteData・AppendData・Delete に <code>ChangePermissions | TakeOwnership</code> を加えたもの（<code>ReplaceAuditRule</code> が Everyone のエントリを置き換えるので、再適用で旧 SACL が更新される）。フォルダをたどる際、サービスが開けないフォルダは飛ばして続けます。</p>
+
+      <h3>拒否の記録</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>4656 の Audit Failure。使う欄: <code>SubjectUserName/DomainName/LogonId</code>、<code>ObjectType</code>（File）、<code>ObjectName</code>、<code>AccessMask</code>、<code>ProcessName</code>。<code>Status</code> 欄があり <code>0xC0000022</code> 以外なら無視</li>
+        <li>種別（<code>ParseDeniedType</code>）: DELETE ビット → Delete、WriteData / AppendData / 汎用書込 → Write、ReadData / 汎用読取 → Read、それ以外（属性だけの要求など）は記録しない</li>
+        <li><code>DeniedMerger</code>: 同じ (ユーザー, パス, 種別) は 60 秒（スライディング）で 1 件。辞書は上限付き</li>
+        <li>Linux（<code>SambaAudit.cs</code>）: <code>full_audit:failure</code> に <code>create_file unlinkat renameat</code>（4.14 より前は <code>create_file unlink rename rmdir</code>）を追加（<code>RecordDenied</code> が false なら <code>none</code>）。行の状態欄は <code>ok</code> または <code>fail (strerror)</code>。失敗行は、<code>SambaErrno</code> の表の「Permission denied」「Operation not permitted」（日本語 glibc の文言も）なら拒否。<strong style="color:var(--fg)">「No such file or directory」は、そのパスが実在するときだけ拒否</strong>（Samba は独自の NT アクセス判定で拒否し、古い errno が残るため。<code>AuditAccess.OnlyIfExists</code>、収集側が <code>Exists</code> を確認）。実在しないパスの失敗（クライアントの探索）や busy などは捨てる。同じ (ユーザー, パス, 種別) は 60 秒で 1 件（<code>Services/DeniedMerger.cs</code>）。失敗の監査は存在しないパスの試行も journald に出すため、ジャーナルの量が増える</li>
+      </ul>
+
+      <h3>権限変更</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>Windows: 4670 の <code>OldSd</code> / <code>NewSd</code>（SDDL）を <code>PermissionChange.Describe</code>（純粋関数）で比べ、所有者の変更、明示的な ACE の追加・削除（権利は FullControl / Modify / ReadAndExecute / Read / Write、他は <code>0x…</code>）、継承の有効・無効を短い文にする（2000 文字で省略）。継承による変更だけなら <code>inherited permissions changed</code>。差がなければ記録しない。4663 の WRITE_DAC / WRITE_OWNER は種別なし（無視）</li>
+        <li>雑音対策（<code>PermissionMerger</code>）: 同じ (ユーザー, パス) は 2 秒で 1 件。同じログオンの祖先のパスに 10 秒以内に記録済みなら、明示的な ACE の差がない子は捨てる</li>
+        <li>Linux: Samba の <code>fset_nt_acl</code> を成功操作に加える（<code>SambaOps.Available</code> が <code>full_audit</code> のモジュール内の操作名を調べ、無ければ権限変更は記録しない。未知の操作名はすべてを記録させてしまうため）。引数のパス末尾の ACL 文（<code>path []</code>）は除く。<code>Detail</code> は null（fchmod / fchown は解釈できるが既定では監査しない）。同じ (ユーザー, パス) は 3 秒で 1 件。変更前後は分からない</li>
+        <li>コピー: Windows はコピー時に新しいファイルのセキュリティ情報を設定するため、Permission が 1 件記録されることがある（既知の制限）</li>
+      </ul>
+
+      <h3>USN ジャーナル（Create と NewPath、Windows）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li><code>UsnJournalReader</code>: 監視フォルダのあるボリュームのうち NTFS / ReFS（<code>DriveInfo.DriveFormat</code>）が対象。<code>FSCTL_QUERY_USN_JOURNAL</code> でジャーナル ID と位置を得て、500 ミリ秒ごとに <code>FSCTL_READ_USN_JOURNAL</code>（理由: FILE_CREATE、RENAME_OLD_NAME、RENAME_NEW_NAME。V2 / V3 の記録）。親の参照番号から <code>OpenFileById</code> + <code>GetFinalPathNameByHandle</code> でパスを求め（LRU キャッシュ）、監視フォルダの配下だけ解決する。<strong style="color:var(--fg)">ジャーナルは作らない</strong>（所有者の決定）: 無い（エラー 1179）・FAT / exFAT / ネットワーク・開けないボリュームは「使えない」とし、情報ログを 1 回出して従来の動作（Write、変更前のパスのみの Rename）。10 分ごとに再確認。ログの案内は <code>fsutil usn createjournal m=33554432 a=…</code></li>
+        <li>位置は <code>usn-position.json</code>（ボリューム → ジャーナル ID と次の USN）に Security の位置と一緒に保存し、再起動で古い Security イベントを読み直すときに合う範囲を読み直す。<code>Recording.UsnCorrelation</code>（settings.json、既定 true）で全体を切れる</li>
+        <li><code>UsnCorrelator</code>（純粋、時刻は注入）: 作成と名前変更の事実を大文字小文字を区別せず保持（10 分、上限 10 万）。<code>DeleteTracker</code> の後の Write と Rename は保留し、ジャーナルが追いついた（<code>CaughtUpUtc</code> ≥ アクセス時刻 + 3 秒）、実時間で 10 秒、停止時のいずれかで解放。Write は <code>creates[パス]</code> が (−30 秒, +2 秒) にあれば Create に（1 回だけ消費）。Rename は <code>renames[旧パス]</code> が (−1 秒, +10 秒) にあれば <code>NewPath</code> を付ける。拒否と権限変更の記録は保留しない。使えないボリュームは素通し</li>
+        <li>制限: ジャーナルにユーザーがないので、Security ログに記録のない作成・名前変更は記録しない。ジャンクション・シンボリックリンク・8.3 名は解決しない。長い停止のあとはジャーナルが範囲を持っている場合だけ補える。監視フォルダ外からの移動は記録されない</li>
+        <li>Linux: <code>create_file</code> の引数 <code>アクセスマスク|file/dir|disposition|パス</code> のうち、disposition が <code>create</code> かつ file なら Create。<code>open_if</code> / <code>overwrite_if</code> / <code>supersede</code> は区別できないので Write（Create は下限値）。<code>renameat</code> / <code>rename</code> の <code>旧|新</code> から <code>NewPath</code></li>
+      </ul>
+
+      <h3>エージェント通信のバージョン（protocol 2）</h3>
+      <p><code>AgentRecord</code> に <code>Denied</code>、<code>NewPath</code>、<code>Detail</code> を追加。<code>AgentProtocol.Version = 2</code> で、heartbeat の応答の <code>protocol</code> に入れる。<code>AgentSender</code> は応答の <code>protocol</code> が 2 未満（または未確認。最初のバッチの前に heartbeat を送る）なら、送信時に <code>AgentProtocol.ForServer</code> で、拒否・Permission の記録を落とし、Create を Write にし、<code>NewPath</code> / <code>Detail</code> を外す。送信待ちのファイルは書き換えないので、サーバーを更新すれば完全な内容が届く。1.8 のエージェントが送るとき、欠けた項目は既定値（false / null）になり、古いサーバーは未知のプロパティを無視する。</p>
+
+      <h3>ランサムウェアに似た動きの検知</h3>
+      <p><code>AlertDetector</code>（監視サーバー側。Windows・Linux・エージェントの記録に共通）。(サーバー名, ユーザー) ごとに、拒否でないファイルの Write / Create / Rename を<strong style="color:var(--fg)">イベント時刻</strong>で窓（<code>RansomwareRules</code>: 2 分）に入れる。3 つのルールで <code>Alert</code>（<code>AccessType = "Ransomware"</code>、<code>Rule</code>、<code>Detail</code>、<code>Priority = "High"</code>）を出す。再通知までの間隔は (サーバー, ユーザー, ルール) ごとに 30 分。自動対応はしない。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ルール</th><th>条件（既定）</th></tr></thead>
+          <tbody>
+            <tr><td><code>extension</code></td><td>同じ新しい拡張子への Rename が 20 件以上（<code>NewPath</code> が必要。元と同じ拡張子、無害な拡張子（tmp、bak、old、part、crdownload、同系統の文書など）は数えない）</td></tr>
+            <tr><td><code>burst</code></td><td>(Write + Create) ≥ 100 かつ Rename ≥ 50</td></tr>
+            <tr><td><code>note</code></td><td>身代金要求文のファイル名（<code>RansomwareNotes</code> の正規表現と拡張子 txt / html / htm / hta / url / rtf）の Create / Write が 3 つ以上のフォルダ</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>通知は高優先度: メールは <code>MailPriority.High</code>（X-Priority: 1）と件名の印（「[HIGH PRIORITY]」/「【緊急】」）、Slack / Teams は本文の先頭に同じ印、汎用 Webhook は <code>priority: "high"</code>。しきい値の既定は <code>AlertSettings</code>（<code>RansomwareEnabled</code> は GUI、数値は settings.json の <code>Alerts</code> のみ）。拒否の連続（<code>DeniedThreshold</code>、既定 20 件・集計時間は <code>WindowMinutes</code>）は通常の優先度。拒否は従来のしきい値に数えず、Create は書込のしきい値に数える。</p>
+
+      <h3>再適用の通知（AuditApplied）</h3>
+      <p>サーバー側の <code>settings.json</code> の <code>AuditApplied</code>（<code>"サーバー|パス"</code> → 版、現在は <code>19</code>）。<code>SettingsController</code> が、監視フォルダの追加時と applySacl の成功時に書き、削除時に消す。版が低い監視フォルダは一覧に「SACL の再適用が必要」（Linux は「再適用が必要」）を出し、設定画面に件数の帯を出す。再適用が必要なのは、新しい SACL（失敗・権限）と Samba の監査ブロックを、既存フォルダには管理者が押すまで反映しないため（所有者の決定）。</p>
+    </section>
+
+    <!-- Web GUI の HTTPS -->
+    <section id="https">
+      <h2>Web GUI の HTTPS（v1.9）</h2>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>設定: <code>settings.json</code> の <code>Web:Https</code>（<code>WebTlsSettings</code>: <code>Enabled</code>、<code>Mode</code> = <code>SelfSigned</code> / <code>Pfx</code>、<code>PfxFile</code>、<code>PfxPassword</code>（Data Protection で <code>enc:</code> 付きに暗号化。purpose <code>FileAccessMonitor.WebTls</code>）、<code>RedirectPort</code>）。ポートは従来の Web GUI のポートのまま。保存する URL は <code>http://</code> のままにして、起動時に <code>Program.cs</code> がメモリ上の設定でスキームだけ <code>https</code> に置き換える（インストーラーと <code>--port</code> の書き込みを変えないため）</li>
+        <li>自己署名の Web 証明書（<code>WebTls</code> / <code>SelfSignedCertificate</code>）: 件名 <code>CN=FileAccessMonitor Web GUI</code>、RSA 2048 / SHA-256、10 年、サーバー認証の EKU。SAN はマシン名、FQDN、<code>localhost</code>、稼働中のインターフェイスの IPv4 / IPv6（リンクローカルと、Windows の一時 IPv6 は除く）、<code>127.0.0.1</code>、<code>::1</code>。起動のたびに保存済み証明書の SAN と今の名前・アドレスを比べ、足りなければ作り直して指紋をログに出す（有効期限 30 日未満、秘密鍵なしも作り直し）。保存先は Windows が <code>LocalMachine\My</code>、Linux が <code>web-https.pfx</code>（<code>SecretStore.WriteProtected</code>）。エージェント用ポートの証明書（<code>AgentEndpoint</code>）は同じ共通部分を使うが、件名・動作は変えない（エージェントが指紋で固定しているため）</li>
+        <li>自分の PFX: <code>web-https on --pfx f --pfx-password p</code>（Linux は <code>--pfx-password-file</code>）が、ファイルを <code>web-user.pfx</code>（保護付き）にコピーし、パスワードを暗号化して保存する。秘密鍵がある・期限切れでないことを確認し、件名・SAN・期限・指紋を表示（マシン名が SAN に合わなければ警告）。<code>--pfx</code> なしの <code>on</code> は自己署名に戻し、保存済みの PFX を消す</li>
+        <li>Kestrel（<code>Program.cs</code>）: 有効なら <code>WebTls.Initialize</code> で証明書を得て <code>ConfigureHttpsDefaults</code> に設定。<strong style="color:var(--fg)">読み込めなければ警告ログを出して HTTP のまま起動する</strong>（GUI に届かなくならないように）。<code>RedirectPort</code> &gt; 0 なら追加の HTTP リスナーを開き、そのポートへの要求だけに <code>308</code> で HTTPS のポートへ転送（ミドルウェア）。TLS ポートで HTTP を見分けることはしないので、切り替え後の古い <code>http://host:8080</code> は TLS エラーになる（転送用ポートがある理由）。HSTS は付けない（自己署名で締め出されないため）。エージェント用の 8443 は独立</li>
+        <li>コマンド: <code>FileAccessMonitor.exe web-https on|off|status [--pfx f --pfx-password p] [--redirect-port n]</code>（<code>status</code> は <code>on</code> / <code>off</code> と方式を表示）。Linux は <code>fileaccessmonitor-server --https on|off [--pfx f] [--pfx-password-file f] [--redirect-port n]</code>。反映はサービスの再起動後</li>
+        <li>既定: 新規インストールはオン（自己署名）。Windows のインストーラーは「安全な接続」ページ（フルのロールのみ。新規は既定でチェック、1.9 より前からの更新は未チェック。<code>SetPreviousData('Https')</code> で記憶、サイレントは <code>/HTTPS=1|0</code>）で、サービス登録の前に <code>web-https on|off</code> を実行。Linux のパッケージの postinstall と <code>install.sh</code> は新規のときだけ <code>on</code>。更新では変えない</li>
+      </ul>
+      <div class="card">
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/web-tls</span><span class="endpoint-desc">Admin 専用・読み取りのみ（<code>WebTlsController</code>）。<code>{https, mode: "selfSigned"|"pfx"|null, subject, names[], fingerprint, notAfter, redirectPort, requestIsHttps, configured}</code>。秘密情報は返さない。切り替えは再起動が必要で、誤ると届かなくなるため、GUI からは行わずインストーラーかコマンドで行う</span></div>
+      </div>
+      <p>GUI: 設定ページの読み取り専用のカード「Web GUI の接続（HTTPS）」。HTTP で開いた Admin には、閉じられる警告（<code>sessionStorage</code> に記憶）を出す。</p>
     </section>
 
     <!-- サービス -->

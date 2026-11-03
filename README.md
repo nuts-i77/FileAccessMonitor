@@ -2,7 +2,7 @@
 
 English | [日本語](README.ja.md)
 
-FileAccessMonitor records file access (read, write, delete) on file servers' shared folders and shows it in a web GUI: from the Windows Security audit log on Windows file servers, and from Samba's audit log on Linux file servers that share folders with Samba. Agents bring the records of several file servers to one monitoring server, which runs on Windows or Linux and stores them in SQLite.
+FileAccessMonitor records file access (read, write, create, delete, rename, permission changes, and refused attempts) on file servers' shared folders and shows it in a web GUI: from the Windows Security audit log on Windows file servers, and from Samba's audit log on Linux file servers that share folders with Samba. Agents bring the records of several file servers to one monitoring server, which runs on Windows or Linux and stores them in SQLite.
 
 ![Dashboard](docs/images/dashboard-en.png)
 
@@ -78,7 +78,7 @@ If WinRM is available, you can build and deploy from your development PC in one 
 
 ### 3. First sign-in
 
-Open `http://<server>:8080` in a browser and sign in with:
+Open `https://<server>:8080` in a browser (a new install uses HTTPS with a self-signed certificate, so the browser warns once; an install upgraded from before 1.9 stays on `http://` until you switch, see [Transport encryption](#security)) and sign in with:
 
 - User name: `admin`
 - Password: generated at random on first start and saved on the server in this file, which only SYSTEM and Administrators can read:
@@ -93,12 +93,26 @@ After you sign in, open the user menu (top right) → **Change password** and se
 
 On the **Settings** tab, add a folder to monitor, for example `D:\Share`. When you add it, the tool does two things automatically:
 
-- Enables the **File System** audit policy
-- Sets audit entries (SACLs) on the folder and everything under it
+- Enables the audit policies **File System** (success and failure), **Handle Manipulation** (failure only; without it refused opens are not logged) and **Authorization Policy Change** (success; permission changes)
+- Sets audit entries (SACLs) on the folder and everything under it, for successful and refused reads, writes and deletes and for permission and owner changes
+
+After upgrading from before 1.9, press **Re-apply SACL** once for each existing monitored folder (on Linux shares the same button re-applies the Samba auditing): until then refused access and permission changes are not recorded. The Settings page shows which folders still need it.
 
 The **File Share** audit policy, used to find the client IP address, is enabled automatically when the service starts.
 
-To configure auditing with scripts instead, run `setup-audit.ps1 -SharePaths "D:\Share"`. To undo it, run `restore-audit.ps1 -SharePaths "D:\Share"`.
+To configure auditing with scripts instead, run `setup-audit.ps1 -SharePaths "D:\Share"`. To undo it, run `restore-audit.ps1 -SharePaths "D:\Share"` (it also turns Handle Manipulation auditing off).
+
+#### Create and renames on Windows (USN journal)
+
+The Security log has neither the creation of a file nor the new name after a rename. FileAccessMonitor reads them from the NTFS change journal (USN journal) of the volume that holds a monitored folder: a file created by an access is then recorded as **Create** instead of Write, and a rename or move shows the new path. FileAccessMonitor does **not** create the journal. On a volume without one (and on FAT, exFAT and network paths) everything works as before: Write, and Rename with the old path only; the service log says so once per volume. Records are saved a few seconds later than before because they are matched with the journal first.
+
+To check a volume and, if you want these records, enable the journal (elevated PowerShell; this is a system change that uses up to 32 MB):
+
+```powershell
+fsutil usn queryjournal D:
+fsutil usn createjournal m=33554432 a=8388608 D:
+```
+
 
 ### 5. Enlarge the Security log (recommended)
 
@@ -130,6 +144,7 @@ To switch an existing monitoring server between recording accesses on itself and
 
 How it works and limits:
 
+- A 1.8 agent works with a 1.9 monitoring server. A 1.9 agent that talks to a 1.8 server sends records without the new data (refused access and permission changes are not sent, Create is sent as Write, no new paths); records waiting in the outbox are not rewritten, so they arrive in full once the server is upgraded.
 - Agents connect to the monitoring server; the monitoring server never connects to them. The connection uses HTTPS with a certificate the monitoring server creates itself; agents trust exactly that certificate (its fingerprint is in the connection string), so no certificate authority is needed.
 - Records are kept in a local outbox on the agent (`C:\ProgramData\FileAccessMonitor\outbox`, up to 2 GB) until the monitoring server has saved them, so nothing is lost while it is unreachable.
 - When records come from more than one server, a server filter appears at the top of the web GUI, and lists get a **Server** column.
@@ -177,7 +192,7 @@ How it differs from Windows:
 - Adding a folder turns on auditing for the Samba shares that hold it (or are inside it), by editing `smb.conf`: the agent checks the new configuration with `testparm`, keeps a backup (`smb.conf.fam-backup-<time>`), and reloads Samba. Its lines sit between `# FileAccessMonitor begin` and `# FileAccessMonitor end`; lines it replaced (a share's own `vfs objects` or `full_audit` settings) are kept as comments and come back when the folder is removed with **Stop monitoring + remove SACL**. Shares defined in included files or in the registry are not changed.
 - Auditing starts with new connections to the share; clients that are already connected are recorded after they reconnect.
 - Paths are case-sensitive. User names are those Samba logs in (`DOMAIN\user` on domain members); the client machine name comes from the SMB connection.
-- Reads and writes are the access the client asked for when opening a file, as on Windows; deletions and renames are recorded when they happen.
+- Reads and writes are the access the client asked for when opening a file, as on Windows; deletions and renames are recorded when they happen. Refused access, permission changes, creation and the new path of renames are recorded too (see [Access type classification](#access-type-classification-accessmask)). Shares that were set up by an earlier version need **Re-apply SACL** (the same button) once to get the failure and permission auditing; Samba then logs every failed open, so the journal grows faster. Turn off **Also record refused access** under Settings → Recording and re-apply to avoid that.
 - To remove the agent: remove its folders on the monitoring server first, then `sudo dnf remove fileaccessmonitor-agent` or `sudo apt remove fileaccessmonitor-agent` (`apt purge` also deletes its registration and waiting records). With the tar.gz, run `sudo sh install.sh --uninstall` in the unpacked folder (add `--purge` to delete its data too).
 
 ### 8. Monitoring server on Linux
@@ -198,12 +213,13 @@ fileaccessmonitor-server                        # mode, port and service state
 sudo fileaccessmonitor-server --collect         # also record this machine's Samba accesses (runs as root)
 sudo fileaccessmonitor-server --monitor-only    # back to monitoring only
 sudo fileaccessmonitor-server --port 8090       # web GUI port (default 8080)
+sudo fileaccessmonitor-server --https on|off    # HTTPS for the web GUI (see Security)
 ```
 
-Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar.gz`: unpack it and run `sudo sh install.sh` (options: `--collect`, `--monitor-only`, `--port <number>`).
+Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar.gz`: unpack it and run `sudo sh install.sh` (options: `--collect`, `--monitor-only`, `--port <number>`, `--https on|off`).
 
 - The server is installed to `/opt/fileaccessmonitor` and runs as the systemd service `fileaccessmonitor` (log: `journalctl -u fileaccessmonitor`). Records and settings are in `/var/lib/fileaccessmonitor`, readable by the service account only.
-- Sign in at `http://<server>:8080` as `admin`; the initial password is in `/var/lib/fileaccessmonitor/initial-admin-password.txt` (`sudo cat` it).
+- Sign in at `https://<server>:8080` as `admin` (a new install uses HTTPS with a self-signed certificate; the browser warns once); the initial password is in `/var/lib/fileaccessmonitor/initial-admin-password.txt` (`sudo cat` it).
 - Open TCP 8080 and 8443 in the firewall if it is on, for example `firewall-cmd --permanent --add-port=8080/tcp --add-port=8443/tcp && firewall-cmd --reload` or `ufw allow 8080/tcp && ufw allow 8443/tcp`. The packages do not change the firewall.
 - Upgrades (installing a newer package, or running `install.sh` again) keep the mode and port.
 - With `--collect`, add the machine's own folders on the **Settings** tab (it appears as a server like the agents) and auditing is set up the same way as on a [Linux agent](#7-linux-file-servers-samba-agent). A machine runs either the monitoring server or the agent, not both; installing one package replaces the other.
@@ -218,7 +234,19 @@ Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar
 - **Sign-in sessions**: a sign-in stays valid for `Jwt:ExpiresHours` (default 24 hours), but ends immediately when the user is deleted, their role changes, or their password is changed or reset.
 - **Operation log**: sign-ins (including failures), user management, setting changes, CSV exports, and notifications sent are recorded and shown under **Settings → Operation Log** (Admin only).
 - **Notification secrets**: the webhook URL and SMTP password are stored encrypted (ASP.NET Core Data Protection with machine DPAPI; keys in `C:\ProgramData\FileAccessMonitor\keys\`).
-- **Transport encryption**: the default is plain HTTP. To use HTTPS, either add an HTTPS endpoint and certificate under `Kestrel.Endpoints`, or put the app behind a reverse proxy such as IIS, nginx, or Caddy. See [docs/https.md](docs/https.md) for sample configurations. Do this if the GUI is reachable from outside your LAN, or if passwords must not travel in clear text.
+- **Transport encryption**: the web GUI serves HTTPS itself, on the same port as before. A **new install** has it on, with a self-signed certificate that the server creates (it covers the machine name, its addresses and `localhost`, and is made again if one is missing); browsers warn about it once. An install upgraded from before 1.9 stays on HTTP until you switch (the Windows installer asks; silent installs use `/HTTPS=1` or `/HTTPS=0`). Switch with these commands, then restart the service; `status` shows the current setting:
+
+  ```powershell
+  # Windows, in C:\Program Files\FileAccessMonitor
+  .\FileAccessMonitor.exe web-https on|off|status
+  ```
+
+  ```sh
+  # Linux
+  sudo fileaccessmonitor-server --https on|off
+  ```
+
+  To use your own certificate instead, give a PFX file: `FileAccessMonitor.exe web-https on --pfx cert.pfx --pfx-password <password>` (Linux: `sudo fileaccessmonitor-server --https on --pfx cert.pfx --pfx-password-file pw.txt`). The certificate needs a private key; a warning is printed if it does not match the machine name. `--redirect-port 8081` also opens a plain HTTP port that redirects browsers to the HTTPS port. After switching, old `http://` bookmarks stop working unless you use the redirect port. If the certificate cannot be loaded, the web GUI starts on HTTP and the log says why. **Settings** shows the certificate in use (read-only), and an Admin who opens the GUI over plain HTTP sees a warning. The agent port 8443 has its own certificate and is not affected. There is no HSTS header, so you can always accept the self-signed certificate. Behind a reverse proxy you can leave HTTPS off (see [docs/https.md](docs/https.md)).
 - **Roles**: `Admin` can change settings and manage users. `Viewer` can only view.
 
 To report a vulnerability, please follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
@@ -241,7 +269,8 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 
 | File | Contents |
 |---|---|
-| `settings.json` | Monitored folders, recorded access types, reverse-DNS server, retention, notifications (edited from the GUI); whether this server records accesses on itself (`LocalCollection`) |
+| `settings.json` | Monitored folders, recorded access types, reverse-DNS server, retention, notifications (edited from the GUI); whether this server records accesses on itself (`LocalCollection`); HTTPS for the web GUI (`Web:Https`, written by `web-https`) |
+| `web-https.pfx` / `web-user.pfx` | The web GUI certificate (self-signed on Linux; the certificate you gave with `--pfx`). The self-signed one on Windows is kept in the machine certificate store |
 | `fileaccess.db` | Access records (SQLite) |
 | `logs\app-YYYYMMDD.log` | Application log (kept for 14 days) |
 | `jwt.key` | JWT signing key |
@@ -250,14 +279,16 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 
 | Tab | Contents |
 |---|---|
-| Dashboard | Access trend chart, breakdown by type, top files and folders |
+| Dashboard | Access trend chart, breakdown by type, a count of refused attempts, top files and folders |
 | Files / Folders / Users | Rankings with detail dialogs |
-| Recent | Access log with client IP and machine name |
+| Recent | Access log with client IP and machine name. Refused attempts have a red **Denied** mark and can be shown or hidden with the Result filter; a renamed file shows its new path; permission changes have an info button with what changed |
 | Search | Search by keyword, period, type, or IP; export the results as CSV (up to 200,000 rows, opens in Excel) |
 | Unused Files | Files in a monitored folder that nobody read (or accessed) in a period, found by scanning the folder, with their size totaled per subfolder (Admin only; up to 100,000 files per scan) |
 | Settings | Monitored folders, users, recording rules (exclusions and merging of repeated reads), reverse DNS, data retention, notifications, operation log |
 
-Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it); on Linux servers, journald dropped audit lines or the journal no longer had them. Agents that stop reporting are notified too. If the internet is reached through a proxy, set it in the notification settings (webhooks only; the service runs as SYSTEM, so the Windows proxy setting does not apply).
+Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), when one user is refused access at least a set number of times (**denied burst**, 20 in 5 minutes by default), when a user's activity looks like ransomware (**high priority**, see below), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it); on Linux servers, journald dropped audit lines or the journal no longer had them. Agents that stop reporting are notified too. If the internet is reached through a proxy, set it in the notification settings (webhooks only; the service runs as SYSTEM, so the Windows proxy setting does not apply).
+
+**Ransomware-like behaviour** is checked per user over 2 minutes, by three rules: at least 20 files renamed to the same new extension (not a harmless one such as `.tmp`; needs the new path, so on Windows the USN journal), at least 100 writes together with at least 50 renames, and a ransom-note file name (`README_DECRYPT.txt`, `HOW_TO_RECOVER_FILES.html` and similar) created in at least 3 folders. Such an alert is sent with high priority (a "[HIGH PRIORITY]" mark; high importance for mail) and names the rule and the files. Nothing is blocked or disconnected automatically. It is on by default and can be turned off in the alert settings; the numbers are in `settings.json` under `Alerts`. Alerts must be turned on, as for the other alerts.
 
 The GUI is available in English and Japanese. Switch languages at the top right; on first visit the GUI follows the browser's language. Messages returned by the API use the selected language too.
 
@@ -273,7 +304,7 @@ The screenshots use fictional sample data.
 
 ## How it works
 
-1. Subscribes to the Windows Security event log in real time (events 4663, 4659, and 4660).
+1. Subscribes to the Windows Security event log in real time (events 4663, 4659, 4660, 4670 for permission changes, and failed 4656 for refused opens), and reads the NTFS change journal for creations and new names.
 2. Finds the client IP address and machine name from logon (4624) and share access (5140) events and from the list of SMB sessions.
 3. Stores records in SQLite and aggregates them through an ASP.NET Core web API.
 4. Displays them in the browser with Bootstrap and Chart.js.
@@ -287,11 +318,18 @@ Agents on other Windows file servers do steps 1 and 2 and send the records to th
 | Read | `0x1` (ReadData) / `0x80000000` (GENERIC_READ) |
 | Write | `0x2` (WriteData) / `0x4` (AppendData) / `0x40000000` (GENERIC_WRITE) |
 | Delete | `0x10000` (DELETE) followed by event 4660 (object deleted) for the same handle, and event 4659 |
-| Rename | `0x10000` (DELETE) with no event 4660: the file was renamed or moved |
+| Rename | `0x10000` (DELETE) with no event 4660: the file was renamed or moved. The new path comes from the USN journal when available |
+| Create | A write that created the file, found through the USN journal (see [Create and renames on Windows](#create-and-renames-on-windows-usn-journal)); without the journal it is a Write |
+| Permission | Event 4670 (permissions or owner changed); the record shows the change (owner, added and removed entries, inheritance) |
+| Denied | Not a type of its own: a refused read, write or delete (event 4656 with Audit Failure) is a record of that type marked **Denied** |
 
-Renames and moves also open the file with DELETE access, so a DELETE access is held for up to 2 seconds until event 4660 shows whether the file was actually deleted. If it was not, and a file exists again at the same path (Office saves a document by renaming the old file away and a new file into its place), the access is recorded as a write. Renames are recorded for folders where Delete is selected.
+Refused access is recorded for files and for folders (opening or listing a forbidden folder), merged per user, path and type within 60 seconds. Denied records are not counted as accesses in rankings, statistics, unused-file detection or the read, write and delete alerts. They can be turned off under **Settings → Recording**. On Windows a refused rename shows as a refused Delete.
 
-Folders are recorded only when they are deleted or renamed, shown with a folder icon and marked in the CSV export. They are left out of the file ranking and of mass-deletion alerts, which already count the files inside. Opening a folder or adding files to it is not recorded.
+On Linux (Samba), a refused open is logged by Samba as a failed `create_file` and the same for delete and rename; to find refusals the agent records a failed open when the error is "Permission denied" or "Operation not permitted", and also when it says "No such file or directory" but the path exists (Samba checks access itself and leaves an old error code behind). A failed open of a path that does not exist is not recorded. Create is recorded only for create-only opens (clients that "create or open" are recorded as Write), a rename shows its new path, and a permission change (`fset_nt_acl`) is recorded without before/after details.
+
+Renames and moves also open the file with DELETE access, so a DELETE access is held for up to 2 seconds until event 4660 shows whether the file was actually deleted. A write or rename is then held a few more seconds while it is matched with the USN journal (see above). If it was not, and a file exists again at the same path (Office saves a document by renaming the old file away and a new file into its place), the access is recorded as a write. Renames are recorded for folders where Delete is selected; Create is recorded where Write is selected.
+
+Folders are recorded only when they are deleted, renamed or have their permissions changed (and, when refused, when opened), shown with a folder icon and marked in the CSV export. They are left out of the file ranking and of mass-deletion alerts, which already count the files inside. Opening a folder or adding files to it is not recorded.
 
 ### Recording rules
 
@@ -308,7 +346,9 @@ FileAccessMonitor aims at one job: letting a small team see who read, changed, o
 | Scope | File access on Windows file servers and Linux Samba file servers | File servers, NAS, Active Directory, Microsoft 365, and more | Security monitoring (SIEM/XDR) across many hosts |
 | Who **read** a file | Yes (Security log events 4663/4659; Samba's audit module on Linux) | Yes | File integrity monitoring covers changes only; reads need Security-log collection and your own rules |
 | Multiple servers in one view | Yes (agents send to one monitoring server) | Yes | Yes |
-| Alerts | Mass delete / change / read, and gaps in recording, to Teams, Slack, a webhook, or email | Many built-in rules | Flexible rules and automated responses |
+| Alerts | Mass delete / change / read, bursts of refused access, ransomware-like behaviour (high priority, no automatic response), and gaps in recording, to Teams, Slack, a webhook, or email | Many built-in rules | Flexible rules and automated responses |
+| Failed (refused) access | Yes (recorded as **Denied**) | Yes | Needs Security-log collection and your own rules |
+| Permission changes | Yes (Windows with details; Linux without before/after) | Yes | Needs Security-log collection and your own rules |
 | Reports | Search and CSV export | Built-in compliance and scheduled reports | Dashboards and compliance mappings |
 | Japanese UI | Yes | Varies by product | No |
 | Support | Community (GitHub Issues), no SLA | Vendor support | Community, or paid vendor support |
@@ -323,11 +363,13 @@ Product capabilities above are summarized from public information and may change
 
 ## Limitations
 
-- **Operations that do not open a file are not recorded.** This includes reading only attributes or timestamps (`0x80` ReadAttributes and similar) and listing folders. For example, when an incremental backup tool finds a file unchanged and skips copying it, that file is not recorded.
+- **Operations that do not open a file are not recorded.** This includes reading only attributes or timestamps (`0x80` ReadAttributes and similar) and listing folders (a refused listing of a folder is recorded). For example, when an incremental backup tool finds a file unchanged and skips copying it, that file is not recorded.
 - Events that occur while the service is stopped (for example during an upgrade or reboot) are collected when it starts again, as long as they are still in the Security log (the journal on Linux). If they are already gone, the gap is recorded in the operation log and notified.
 - Each file server needs FileAccessMonitor installed (standalone, or as an agent). Servers without it, and NAS appliances, cannot be monitored.
 - On Linux, only accesses through Samba (SMB) shares are recorded; NFS and changes made on the server itself are not.
-- For renames and moves, only the old path is recorded. The Windows Security log does not include the new path; Linux records the same way.
+- Renames and moves record the new path where it is available: on Windows from the NTFS USN journal (volumes without one, FAT, exFAT and network paths record only the old path), on Linux from Samba. A move into a monitored folder from outside it is not recorded, because the old path is not monitored; a move to another volume is a delete plus a create.
+- Create is recorded only with the USN journal on Windows, and only for create-only opens on Linux; otherwise it is a Write. Copying a file on Windows can record one Permission change for the new file, because Windows sets its security while copying. A refused rename on Windows is recorded as a refused Delete.
+- Ransomware-like detection uses fixed thresholds (in `settings.json`, `Alerts`) and takes no action: slow encryption below the window is missed, and a bulk move that changes many extensions can raise a false alert. Refused-access detection on Linux depends on Samba's error text and on its language (English and Japanese texts are known).
 - A folder that is deleted or renamed is recognized as a folder when it is still there as the event is processed, or when accesses to files inside it were seen recently. Otherwise (for example an empty folder) it is recorded as a file.
 - Times are stored in UTC. The GUI shows them, and groups them by day, in the browser's time zone.
 
