@@ -49,3 +49,30 @@ public class ChainCheckpoint
     // HMAC over this checkpoint and the previous one's Mac
     public byte[] Mac { get; set; } = [];
 }
+
+// One finding of a verification (kept in the integrity state until an admin accepts it); not a table
+public class IntegrityBreak
+{
+    // chain|kind|first seq (first Id for unchained rows): the same finding keeps the same id
+    public string Id { get; set; } = "";
+    public string Chain { get; set; } = "";
+
+    // altered | missing | truncatedTail | headMismatch | headRollback | unchained | checkpoint | keyChanged | duplicate
+    public string Kind { get; set; } = "";
+
+    public long FromSeq { get; set; }
+    public long ToSeq { get; set; }
+    public long? FromId { get; set; }
+    public long? ToId { get; set; }
+    public long Count { get; set; }
+
+    // Time of the last intact record before the finding and of the first one after it
+    public DateTime? TimeBefore { get; set; }
+    public DateTime? TimeAfter { get; set; }
+
+    public DateTime DetectedAt { get; set; }
+    public bool Accepted { get; set; }
+    public string? AcceptedBy { get; set; }
+    public DateTime? AcceptedAt { get; set; }
+    public string? Note { get; set; }
+}

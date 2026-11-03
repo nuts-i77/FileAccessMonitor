@@ -34,6 +34,31 @@ public static class SecretStore
         return key;
     }
 
+    private static readonly string ChainKeyFile = Path.Combine(DataDir, "chain.key");
+    private static byte[]? _chainKey;
+
+    // The HMAC key of the tamper-detection chains: 32 random bytes, kept outside the database.
+    // Back it up with the data folder; without it old records cannot be verified.
+    public static byte[] GetOrCreateChainKey()
+    {
+        if (_chainKey != null) return _chainKey;
+        if (File.Exists(ChainKeyFile))
+        {
+            byte[] existing;
+            try { existing = File.ReadAllBytes(ChainKeyFile); }
+            catch (UnauthorizedAccessException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot read {ChainKeyFile}. Run FileAccessMonitor as the Windows service (LocalSystem) or from an elevated (Administrator) prompt.", ex);
+            }
+            if (existing.Length == 32) return _chainKey = existing;
+        }
+
+        var key = RandomNumberGenerator.GetBytes(32);
+        WriteProtected(ChainKeyFile, key);
+        return _chainKey = key;
+    }
+
     public static string CreateInitialAdminPassword()
     {
         const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
