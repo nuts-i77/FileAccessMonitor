@@ -19,3 +19,4 @@ logs/
 dist/
 build/
 linux-dist/
+.claude/worktrees/
