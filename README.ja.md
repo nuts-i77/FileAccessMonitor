@@ -35,7 +35,7 @@ FileAccessMonitor は次の 2 つの役割で動きます。
 
 ### インストーラーで導入する（推奨）
 
-[Releases](https://github.com/nuts-i77/FileAccessMonitor/releases) から `FileAccessMonitor-Setup-<バージョン>.exe` をダウンロードし、Windows のファイルサーバー（監視サーバーを別の機械にする場合はその機械）で実行します。インストーラーは次の処理を行います。
+[Releases](https://github.com/nuts-i77/FileAccessMonitor/releases) から `FileAccessMonitor-Setup-<バージョン>.exe` をダウンロードし、Windows のファイルサーバー（監視サーバーを別のマシンにする場合はそのマシン）で実行します。インストーラーは次の処理を行います。
 
 - `C:\Program Files\FileAccessMonitor` にインストール
 - Windows サービス `FileAccessMonitor` を登録して起動
@@ -103,7 +103,7 @@ wevtutil sl Security /ms:1073741824   # 1GB
 
 ### 6. 複数のファイルサーバーから収集する（エージェント）
 
-1 つの画面で、複数のファイルサーバーの記録を見られます。Web GUI を表示するサーバー（監視サーバー）には通常どおりインストールし、他のファイルサーバーには **エージェント** としてインストールします（収集と送信のみを行います）。監視サーバーはファイルサーバーの 1 台でも、**監視サーバーのみ** としてインストールした別の機械（Windows または [Linux](#8-linux-の監視サーバー)）でも構いません。
+1 つの画面で、複数のファイルサーバーの記録を見られます。Web GUI を表示するサーバー（監視サーバー）には通常どおりインストールし、他のファイルサーバーには **エージェント** としてインストールします（収集と送信のみを行います）。監視サーバーはファイルサーバーの 1 台でも、**監視サーバーのみ** としてインストールした別のマシン（Windows または [Linux](#8-linux-の監視サーバー)）でも構いません。
 
 インストール済みの監視サーバーで、自分自身のアクセスを記録するか（監視専用にするか）を切り替えるには、管理者の PowerShell で `C:\Program Files\FileAccessMonitor` にある `FileAccessMonitor.exe local-collection off`（または `on`）を実行し、サービスを再起動します（Linux では `sudo fileaccessmonitor-server --collect` または `--monitor-only`）。今の状態は **設定 → アプリ情報** に表示されます。
 
@@ -188,7 +188,7 @@ sudo apt install ./fileaccessmonitor-server_<バージョン>-1_amd64.deb    # U
 
 ```sh
 fileaccessmonitor-server                        # モード、ポート、サービスの状態を表示
-sudo fileaccessmonitor-server --collect         # この機械の Samba のアクセスも記録（root で動きます）
+sudo fileaccessmonitor-server --collect         # このマシンの Samba のアクセスも記録（root で動きます）
 sudo fileaccessmonitor-server --monitor-only    # 監視専用に戻す
 sudo fileaccessmonitor-server --port 8090       # Web GUI のポート（既定は 8080）
 ```
@@ -199,7 +199,7 @@ sudo fileaccessmonitor-server --port 8090       # Web GUI のポート（既定�
 - `http://<サーバー>:8080` を開き、`admin` でログインします。初期パスワードは `/var/lib/fileaccessmonitor/initial-admin-password.txt` にあります（`sudo cat` で表示）
 - ファイアウォールが有効な場合は TCP 8080 と 8443 を開けてください（例: `firewall-cmd --permanent --add-port=8080/tcp --add-port=8443/tcp && firewall-cmd --reload`、`ufw allow 8080/tcp && ufw allow 8443/tcp`）。パッケージはファイアウォールを変更しません
 - 更新（新しいパッケージを入れる、または `install.sh` をもう一度実行）では、モードとポートを引き継ぎます
-- `--collect` の場合、この機械はエージェントと同じようにサーバーの一覧に出ます。**設定** タブで監視フォルダを追加すると、[Linux エージェント](#7-linux-のファイルサーバーsamba-エージェント)と同じ方法で監査を設定します。1 台の機械には、監視サーバーとエージェントのどちらか一方だけを入れます（一方のパッケージを入れると、もう一方は置き換えられます）
+- `--collect` の場合、このマシンはエージェントと同じようにサーバーの一覧に出ます。**設定** タブで監視フォルダを追加すると、[Linux エージェント](#7-linux-のファイルサーバーsamba-エージェント)と同じ方法で監査を設定します。1 台のマシンには、監視サーバーとエージェントのどちらか一方だけを入れます（一方のパッケージを入れると、もう一方は置き換えられます）
 - 通知の秘密情報（Webhook の URL、SMTP のパスワード）は `/var/lib/fileaccessmonitor/keys` の鍵で暗号化し、その鍵はフォルダの権限で保護します（Windows では、鍵自体もマシンの DPAPI で暗号化します）
 - 削除は `sudo dnf remove fileaccessmonitor-server` または `sudo apt remove fileaccessmonitor-server` です。記録と設定は残ります（`apt purge` では削除します）。tar.gz で導入した場合は、展開したフォルダで `sudo sh install.sh --uninstall` を実行します（`--purge` を付けると記録と設定も削除します）
 
