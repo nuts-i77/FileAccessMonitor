@@ -50,15 +50,21 @@ switch ($Action) {
         # One rule for the program, so the web GUI port and the agent port are both covered, also
         # after a port is changed. An upgrade keeps an earlier rule even when the task was not
         # ticked this time (silent upgrades only remember the tasks of the last install).
-        $old = Get-NetFirewallRule -DisplayName $OldRules -ErrorAction SilentlyContinue
-        $rule = Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue
-        if ($rule) {
-            $rule | Set-NetFirewallApplicationFilter -Program $ExePath   # the install folder may have changed
-        } elseif ($Firewall -or $old) {
-            New-NetFirewallRule -DisplayName $FirewallRule -Direction Inbound -Protocol TCP `
-                                -Program $ExePath -Action Allow -Profile Any | Out-Null
+        # A firewall problem must not keep the service from starting.
+        try {
+            $old = Get-NetFirewallRule -DisplayName $OldRules -ErrorAction SilentlyContinue
+            $rule = Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue
+            if ($rule) {
+                # the install folder may have changed
+                $rule | Get-NetFirewallApplicationFilter | Set-NetFirewallApplicationFilter -Program $ExePath
+            } elseif ($Firewall -or $old) {
+                New-NetFirewallRule -DisplayName $FirewallRule -Direction Inbound -Protocol TCP `
+                                    -Program $ExePath -Action Allow -Profile Any | Out-Null
+            }
+            if ($old) { $old | Remove-NetFirewallRule }
+        } catch {
+            Write-Warning "Could not update the firewall rule: $($_.Exception.Message)"
         }
-        if ($old) { $old | Remove-NetFirewallRule }
 
         Start-Service -Name $ServiceName
     }
