@@ -23,6 +23,8 @@ Write-Host "`n[1/3] Enabling File System audit policy..." -ForegroundColor Yello
 
 # Use GUID for "File System" subcategory to avoid locale-dependent name issues
 auditpol /set /subcategory:"{0CCE921D-69AE-11D9-BED3-505054503030}" /success:enable /failure:enable | Out-Null
+# Handle Manipulation, failure only: refused opens (event 4656) are logged only with this on
+auditpol /set /subcategory:"{0CCE9223-69AE-11D9-BED3-505054503030}" /failure:enable | Out-Null
 # Authorization Policy Change: event 4670 (permissions changed) may be logged under this one
 auditpol /set /subcategory:"{0CCE9231-69AE-11D9-BED3-505054503030}" /success:enable /failure:enable | Out-Null
 if ($LASTEXITCODE -ne 0) {

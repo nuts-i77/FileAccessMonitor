@@ -15,23 +15,25 @@ public class SaclManagerService
     }
 
     // File System: the SACL entries (success and failure) only produce events when this is on.
+    // Handle Manipulation, failure only: a refused open is logged (event 4656, Audit Failure) only
+    // when this is on too, as a test on Windows 11 showed; its successes would only add noise.
     // Authorization Policy Change: event 4670 (permissions changed) is documented under this
-    // subcategory, although File System auditing is said to log it for files too. Both are enabled
-    // until a test on a real machine shows which one is needed (VERIFY).
-    private static readonly string[] AuditSubcategories =
+    // subcategory, although File System auditing is said to log it for files too, so both are on.
+    private static readonly (string Subcategory, bool Success)[] AuditSubcategories =
     [
-        "{0CCE921D-69AE-11D9-BED3-505054503030}",
-        "{0CCE9231-69AE-11D9-BED3-505054503030}",
+        ("{0CCE921D-69AE-11D9-BED3-505054503030}", true),
+        ("{0CCE9223-69AE-11D9-BED3-505054503030}", false),
+        ("{0CCE9231-69AE-11D9-BED3-505054503030}", true),
     ];
 
     public void EnableAuditPolicy()
     {
-        foreach (var subcategory in AuditSubcategories)
+        foreach (var (subcategory, success) in AuditSubcategories)
         {
             try
             {
                 var psi = new ProcessStartInfo("auditpol.exe",
-                    $"/set /subcategory:\"{subcategory}\" /success:enable /failure:enable")
+                    $"/set /subcategory:\"{subcategory}\" {(success ? "/success:enable " : "")}/failure:enable")
                 {
                     UseShellExecute = false,
                     RedirectStandardOutput = true,

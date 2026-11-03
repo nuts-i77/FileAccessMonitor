@@ -68,6 +68,7 @@ if ($SharePaths.Count -gt 0) {
 Write-Host "`n[2/3] Disabling File System audit policy..." -ForegroundColor Yellow
 try {
     auditpol /set /subcategory:"{0CCE921D-69AE-11D9-BED3-505054503030}" /success:disable /failure:disable | Out-Null
+    auditpol /set /subcategory:"{0CCE9223-69AE-11D9-BED3-505054503030}" /failure:disable | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "auditpol returned exit code $LASTEXITCODE."
     } else {
