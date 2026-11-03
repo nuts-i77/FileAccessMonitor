@@ -73,6 +73,7 @@ window.I18N_EN = {
   'settings.monFolders': 'Monitored Folders',
   'settings.addFolder': 'Add Folder',
   'settings.pathLabel': 'Folder path (e.g. D:\\Share, or /srv/share on Linux)',
+  'settings.usnInfo': 'On Windows, file creations and rename/move destinations are recorded on drives whose change journal (USN journal) is on. On other drives they are recorded as Write and as Rename with the old path only (to turn it on: fsutil usn createjournal m=33554432 a=8388608 D:).',
   'settings.pathPh': 'D:\\Share',
   'settings.saclInfo': 'Audit policy and SACL are automatically configured on add.',
   'settings.userMgmt': 'User Management',

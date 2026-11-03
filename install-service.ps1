@@ -74,3 +74,4 @@ if (-not $fwRule) {
 Write-Host "`n=== Installation complete ===" -ForegroundColor Cyan
 Write-Host "Web GUI: http://localhost:8080"
 Write-Host "Remote:  http://<server-ip>:8080"
+Write-Host "To use HTTPS: .\publish\FileAccessMonitor.exe web-https on, then Restart-Service FileAccessMonitor"

@@ -73,6 +73,7 @@ window.I18N_JA = {
   'settings.monFolders': '監視対象フォルダ',
   'settings.addFolder': 'フォルダを追加',
   'settings.pathLabel': 'フォルダパス (例: D:\\Share、Linux では /srv/share)',
+  'settings.usnInfo': 'Windows では、ファイルの作成と名前変更・移動先は、変更ジャーナル（USN ジャーナル）が有効なドライブで記録します。無効なドライブでは「書込」と「名前変更（変更前のパスのみ）」になります（有効化: fsutil usn createjournal m=33554432 a=8388608 D:）。',
   'settings.pathPh': 'D:\\Share',
   'settings.saclInfo': '追加時に監査ポリシーと SACL が自動設定されます。',
   'settings.userMgmt': 'ユーザー管理',

@@ -30,6 +30,11 @@ public class StatsController : ControllerBase
     private IQueryable<Models.AccessRecord> FilterServer(IQueryable<Models.AccessRecord> query) =>
         Request.Query["server"].ToString() is { Length: > 0 } server ? query.Where(r => r.ServerName == server) : query;
 
+    // A rename's destination is shown only when it is inside the user's folders too (or the user
+    // has no folder limit): a file moved out of their scope must not reveal where it went
+    private string? VisibleNewPath(string? newPath, string server) =>
+        newPath == null || _scopes.Get(User) is not { } scope || AccessScope.Contains(scope, server, newPath) ? newPath : null;
+
     // GET /api/stats/servers  — file servers with records the user may see
     [HttpGet("servers")]
     public async Task<IActionResult> Servers() =>
@@ -157,10 +162,14 @@ public class StatsController : ControllerBase
         var recent = await q
             .OrderByDescending(r => r.AccessTime)
             .Take(50)
-            .Select(r => new { r.AccessTime, r.UserName, r.AccessType, r.NewPath, r.Detail })
+            .Select(r => new { r.AccessTime, r.UserName, r.AccessType, r.NewPath, r.Detail, r.ServerName })
             .ToListAsync();
 
-        return Ok(new { path, byUser, byType, timeline, recent });
+        return Ok(new
+        {
+            path, byUser, byType, timeline,
+            recent = recent.Select(r => new { r.AccessTime, r.UserName, r.AccessType, NewPath = VisibleNewPath(r.NewPath, r.ServerName), r.Detail }),
+        });
     }
 
     // GET /api/stats/folder-detail?path=...&days=7
@@ -315,7 +324,11 @@ public class StatsController : ControllerBase
             .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType, r.IsFolder, r.ServerName, r.NewPath, r.Detail })
             .ToListAsync();
 
-        return Ok(new { user, byType, byServer, topFiles, timeline, recent });
+        return Ok(new
+        {
+            user, byType, byServer, topFiles, timeline,
+            recent = recent.Select(r => r with { NewPath = VisibleNewPath(r.NewPath, r.ServerName) }),
+        });
     }
 
     // GET /api/stats/recent?page=1&pageSize=50
@@ -340,7 +353,7 @@ public class StatsController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(new { total, page, pageSize, items });
+        return Ok(new { total, page, pageSize, items = items.Select(r => r with { NewPath = VisibleNewPath(r.NewPath, r.ServerName) }) });
     }
 
     // GET /api/stats/search?q=kw1&q=kw2&days=7&dateFrom=&dateTo=&type=&page=1&pageSize=50
@@ -365,7 +378,7 @@ public class StatsController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(new { total, page, pageSize, items });
+        return Ok(new { total, page, pageSize, items = items.Select(r => r with { NewPath = VisibleNewPath(r.NewPath, r.ServerName) }) });
     }
 
     // GET /api/stats/search/export?(same filters)&tzOffsetMinutes=540
@@ -401,7 +414,7 @@ public class StatsController : ControllerBase
             await writer.WriteLineAsync(CsvLine(
                 utc.Add(offset).ToString("yyyy-MM-dd HH:mm:ss"), utc.ToString("yyyy-MM-ddTHH:mm:ssZ"), r.UserName,
                 r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine, r.ServerName,
-                r.Denied ? resultDenied : resultOk, r.NewPath, r.Detail));
+                r.Denied ? resultDenied : resultOk, VisibleNewPath(r.NewPath, r.ServerName), r.Detail));
             rows++;
         }
         await writer.FlushAsync();
