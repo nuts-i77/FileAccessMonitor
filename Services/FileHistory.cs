@@ -108,6 +108,8 @@ public class FileHistory(IHistorySource source, Func<DateTime> utcNow)
     public const int FetchLimit = 20000;
     private const int LookupLimit = 200;
     private static readonly TimeSpan ReadGap = TimeSpan.FromMinutes(10);
+    // How long after a permission record a Create of the same file still belongs to it
+    private static readonly TimeSpan CreateAfter = TimeSpan.FromSeconds(60);
 
     private sealed class Seg
     {
@@ -169,6 +171,17 @@ public class FileHistory(IHistorySource source, Func<DateTime> utcNow)
             if (into == null)
             {
                 origin = "unknown";
+                if (cur == seg0)
+                {
+                    // A copy sets the permissions of the new file before the first write, which is the Create
+                    // record: the history of the earlier permission record starts at that Create
+                    var after = await source.BoundaryAsync(server, path, new HistoryKey(anchor.Time + CreateAfter, long.MaxValue), anchor.Time);
+                    if (after is { Type: "Create", Denied: false })
+                    {
+                        origin = "created";
+                        cur.Start = new HistoryKey(after.Time - CreateAfter, 0);
+                    }
+                }
                 break;
             }
             cur.BeganByRename = true;
@@ -277,8 +290,10 @@ public class FileHistory(IHistorySource source, Func<DateTime> utcNow)
             result.Paths.Add(new HistoryPath(seg.Path, seg.Start?.Time, seg.End?.Time, true));
             if (i == 0 && origin == "unknown") steps.Add(Gap("unknownOrigin"));
 
+            var first = steps.Count;
             foreach (var r in seg.Records)
                 steps.Add(StepOf(r, Shown));
+            if (i == 0) CreateFirst(steps, first);
             if (seg.EndVia != null && seg.EndRec is { } viaRec && !seg.Records.Any(r => r.Id == viaRec.Id))
             {
                 // the file itself has no record: its parent folder was renamed or deleted
@@ -304,6 +319,18 @@ public class FileHistory(IHistorySource source, Func<DateTime> utcNow)
         }
         result.Steps = steps;
         return new HistoryOutcome(HistoryStatus.Ok, result);
+    }
+
+    // Permission steps within a minute before the create step are the permissions set while the file was
+    // made (a copy): the create comes first
+    private static void CreateFirst(List<HistoryStep> steps, int from)
+    {
+        var c = steps.FindIndex(from, s => s.Kind != "permission");
+        if (c <= from || c < 0 || steps[c].Kind != "create") return;
+        var create = steps[c];
+        if (steps.Skip(from).Take(c - from).Any(s => create.Time - s.Time > CreateAfter)) return;
+        steps.RemoveAt(c);
+        steps.Insert(from, create);
     }
 
     private static HistoryStep Gap(string reason) => new() { Kind = "gap", Gap = new HistoryGap(reason) };
