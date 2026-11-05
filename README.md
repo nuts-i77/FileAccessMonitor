@@ -218,7 +218,7 @@ sudo fileaccessmonitor-server --https on|off    # HTTPS for the web GUI (see Sec
 
 Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar.gz`: unpack it and run `sudo sh install.sh` (options: `--collect`, `--monitor-only`, `--port <number>`, `--https on|off`).
 
-- The server is installed to `/opt/fileaccessmonitor` and runs as the systemd service `fileaccessmonitor` (log: `journalctl -u fileaccessmonitor`). Records and settings are in `/var/lib/fileaccessmonitor`, readable by the service account only.
+- The server is installed to `/opt/fileaccessmonitor` and runs as the systemd service `fileaccessmonitor` (log: `journalctl -u fileaccessmonitor`). Records and settings are in `/var/lib/fileaccessmonitor`, readable by the service account only. The tamper-detection key `chain.key` and `chain-head.json` are there too: back them up with the database.
 - Sign in at `https://<server>:8080` as `admin` (a new install uses HTTPS with a self-signed certificate; the browser warns once); the initial password is in `/var/lib/fileaccessmonitor/initial-admin-password.txt` (`sudo cat` it).
 - Open TCP 8080 and 8443 in the firewall if it is on, for example `firewall-cmd --permanent --add-port=8080/tcp --add-port=8443/tcp && firewall-cmd --reload` or `ufw allow 8080/tcp && ufw allow 8443/tcp`. The packages do not change the firewall.
 - Upgrades (installing a newer package, or running `install.sh` again) keep the mode and port.
@@ -234,6 +234,7 @@ Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar
 - **Sign-in sessions**: a sign-in stays valid for `Jwt:ExpiresHours` (default 24 hours), but ends immediately when the user is deleted, their role changes, or their password is changed or reset.
 - **Operation log**: sign-ins (including failures), user management, setting changes, CSV exports, and notifications sent are recorded and shown under **Settings → Operation Log** (Admin only).
 - **Notification secrets**: the webhook URL and SMTP password are stored encrypted (ASP.NET Core Data Protection with machine DPAPI; keys in `C:\ProgramData\FileAccessMonitor\keys\`).
+- **Tamper detection**: records changed, deleted or added outside the program are detected with the key in `chain.key` (and `chain-head.json`) in the data folder. Back both up with the database. Records saved before 1.10 are not protected, and restoring an older database shows as a finding to accept after checking it. Someone with administrator rights on the server who also has the key can rebuild the chain; copies of the daily anchors kept elsewhere (the report mail, a downloaded anchor file, a forwarded event log) show that. See **Settings → Tamper detection**.
 - **Transport encryption**: the web GUI serves HTTPS itself, on the same port as before. A **new install** has it on, with a self-signed certificate that the server creates (it covers the machine name, its addresses and `localhost`, and is made again if one is missing); browsers warn about it once. An install upgraded from before 1.9 stays on HTTP until you switch (the Windows installer asks; silent installs use `/HTTPS=1` or `/HTTPS=0`). Switch with these commands, then restart the service; `status` shows the current setting:
 
   ```powershell
@@ -274,6 +275,9 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | `fileaccess.db` | Access records (SQLite) |
 | `logs\app-YYYYMMDD.log` | Application log (kept for 14 days) |
 | `jwt.key` | JWT signing key |
+| `chain.key` | Key of the tamper-detection chains. Back it up with `fileaccess.db`; without it the old records cannot be verified |
+| `chain-head.json` | Last verified end of each chain (tamper detection). Back it up with `fileaccess.db` |
+| `permission-reports\` | Latest permission scan of each monitored folder (**Permissions** tab) |
 
 ## Web GUI
 
@@ -281,14 +285,23 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 |---|---|
 | Dashboard | Access trend chart, breakdown by type, a count of refused attempts, top files and folders |
 | Files / Folders / Users | Rankings with detail dialogs |
-| Recent | Access log with client IP and machine name. Refused attempts have a red **Denied** mark and can be shown or hidden with the Result filter; a renamed file shows its new path; permission changes have an info button with what changed |
+| Recent | Access log with client IP and machine name. Refused attempts have a red **Denied** mark and can be shown or hidden with the Result filter; a renamed file shows its new path; permission changes have an info button with what changed. Each file name has a clock button that opens its history (see below) |
 | Search | Search by keyword, period, type, or IP; export the results as CSV (up to 200,000 rows, opens in Excel) |
 | Unused Files | Files in a monitored folder that nobody read (or accessed) in a period, found by scanning the folder, with their size totaled per subfolder (Admin only; up to 100,000 files per scan) |
-| Settings | Monitored folders, users, recording rules (exclusions and merging of repeated reads), reverse DNS, data retention, notifications, operation log |
+| Permissions | Who may do what in a monitored folder as of the last scan: entries that are not simply inherited, broad access (Everyone, Authenticated Users, ...) and folders that do not inherit. Scans are started by Admins only; a Viewer with a folder scope sees the stored result for their folders |
+| Settings | Monitored folders, users, recording rules (exclusions and merging of repeated reads), reverse DNS, data retention, notifications, scheduled report, tamper detection, operation log |
 
 Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), when one user is refused access at least a set number of times (**denied burst**, 20 in 5 minutes by default), when a user's activity looks like ransomware (**high priority**, see below), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it); on Linux servers, journald dropped audit lines or the journal no longer had them. Agents that stop reporting are notified too. If the internet is reached through a proxy, set it in the notification settings (webhooks only; the service runs as SYSTEM, so the Windows proxy setting does not apply).
 
 **Ransomware-like behaviour** is checked per user over 2 minutes, by three rules: at least 20 files renamed to the same new extension (not a harmless one such as `.tmp`; needs the new path, so on Windows the USN journal), at least 100 writes together with at least 50 renames, and a ransom-note file name (`README_DECRYPT.txt`, `HOW_TO_RECOVER_FILES.html` and similar) created in at least 3 folders. Such an alert is sent with high priority (a "[HIGH PRIORITY]" mark; high importance for mail) and names the rule and the files. Nothing is blocked or disconnected automatically. It is on by default and can be turned off in the alert settings; the numbers are in `settings.json` under `Alerts`. Alerts must be turned on, as for the other alerts.
+
+**File history.** The clock button next to a file name (in the Recent log, in search results, and in the file and folder detail dialogs) opens the history of that file or folder: how it came to be where it is, and what happened to it since, following renames and moves. Folder renames and moves are followed too, but a rename is recorded together with the Delete access type, so Delete must be monitored for that folder. Viewers see only the steps inside their folders; other steps are shown as a gap. The history can be exported as CSV.
+
+**Permissions report.** The **Permissions** tab shows the permissions of a monitored folder and below it as of the last scan: entries that are not simply inherited, broad access (recognized by SID, so it works in any Windows language) and folders that do not inherit their permissions. Admins start a scan with **Scan now**. On Linux the report also shows the POSIX permissions and the Samba share settings (`guest ok`, `read only`, `valid users`, `write list`). NT ACLs of shares that use `acl_xattr` or `acl_tdb` are not read, and the report warns about them. A scan stops at its limits (5,000 folders and 50,000 files by default; 20,000 rows in the result) and says which one. The permissions job needs agents of version 1.10 or later.
+
+**Scheduled report e-mail.** Off by default. Under **Settings → Notifications**, the **Scheduled report** card sends a summary by e-mail daily, weekly or monthly, at the server's local time. It covers accesses, refused attempts, permission changes, the top files, folders and users, and the broad permissions of the last stored scans (the report never starts a scan). Admins also get alerts, the agents' state and the tamper-detection state. CSV attachments are optional. Each Viewer with a notification address gets a report limited to their folders, unless the **Also send the scheduled report** box in their scope dialog is unticked. E-mail must be set up first. **Send a test report now** sends one without changing the schedule.
+
+**Tamper detection.** Each new access record and operation-log entry is chained to the one before it with a keyed hash. Records that are changed, deleted, added or reordered outside the program are found by verification (every 15 minutes, and in full every night) and raise a high-priority alert. The **Tamper detection** card in Settings shows the state, lets you verify now, download a signed anchor and accept a finding after checking it. Every day the end of each chain is written to the Windows event log (source `FileAccessMonitor`, event 1100) or to syslog (tag `fileaccessmonitor`), and it is included in the scheduled report. The key is `chain.key` in the data folder: back it up with the database. Records saved before 1.10 are not protected.
 
 The GUI is available in English and Japanese. Switch languages at the top right; on first visit the GUI follows the browser's language. Messages returned by the API use the selected language too.
 
@@ -369,6 +382,8 @@ Product capabilities above are summarized from public information and may change
 - On Linux, only accesses through Samba (SMB) shares are recorded; NFS and changes made on the server itself are not.
 - Renames and moves record the new path where it is available: on Windows from the NTFS USN journal (volumes without one, FAT, exFAT and network paths record only the old path), on Linux from Samba. A move into a monitored folder from outside it is not recorded, because the old path is not monitored; a move to another volume is a delete plus a create.
 - Create is recorded only with the USN journal on Windows, and only for create-only opens on Linux; otherwise it is a Write. Copying a file on Windows can record one Permission change for the new file, because Windows sets its security while copying. A refused rename on Windows is recorded as a refused Delete.
+- Tamper detection cannot vouch for records saved before 1.10, and cannot stop an administrator who also has `chain.key`; only anchors kept off the server show that.
+- Permission reports show the POSIX view on Linux and do not read Samba NT ACLs (shares that use `acl_xattr` or `acl_tdb` get a warning). Groups are not expanded, and a scan is a snapshot as of its date.
 - Ransomware-like detection uses fixed thresholds (in `settings.json`, `Alerts`) and takes no action: slow encryption below the window is missed, and a bulk move that changes many extensions can raise a false alert. Refused-access detection on Linux depends on Samba's error text and on its language (English and Japanese texts are known).
 - A folder that is deleted or renamed is recognized as a folder when it is still there as the event is processed, or when accesses to files inside it were seen recently. Otherwise (for example an empty folder) it is recorded as a file.
 - Times are stored in UTC. The GUI shows them, and groups them by day, in the browser's time zone.

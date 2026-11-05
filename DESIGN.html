@@ -303,7 +303,7 @@ tbody tr:hover td { background: var(--surface2); }
   <div class="topbar">
     <span class="topbar-badge">設計書</span>
     <span class="topbar-title">FileAccessMonitor</span>
-    <span class="topbar-sub">v1.9 · 2026-11-03 · net10.0-windows</span>
+    <span class="topbar-sub">v1.10.0 · 2026-11-05 · net10.0-windows</span>
   </div>
 
   <nav>
@@ -336,6 +336,7 @@ tbody tr:hover td { background: var(--surface2); }
       <a class="nav-link" href="#config">設定ファイル</a>
       <a class="nav-link" href="#alerts">通知</a>
       <a class="nav-link" href="#https">Web GUI の HTTPS</a>
+      <a class="nav-link" href="#v110">v1.10 の追加</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">フロントエンド</div>
@@ -444,6 +445,8 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <div class="field"><span class="field-name">Denied</span><span class="field-desc">bool — アクセスが拒否された記録。<code>AccessType</code> は拒否された操作（Read / Write / Delete、Linux は Rename も）。統計・上位一覧・未使用ファイル・読取書込削除のしきい値には数えない（<code>!r.Denied</code>）。部分インデックス <code>IX_AccessRecords_Denied</code></span></div>
           <div class="field"><span class="field-name">NewPath</span><span class="field-desc">string(2000)? — Rename の移動先のフルパス。不明なら null。閲覧範囲が限られた Viewer には、範囲外の移動先を隠す</span></div>
           <div class="field"><span class="field-name">Detail</span><span class="field-desc">string(2000)? — Permission の変更内容（言語に依存しない短い文）。Windows は <code>owner: A -&gt; B</code>、<code>+ allow DOMAIN\user: Modify</code>、<code>inheritance: disabled</code> など。Linux は変更前後がなく null か <code>mode 0644</code> など。それ以外は null</span></div>
+          <div class="field"><span class="field-name">ChainSeq</span><span class="field-desc">long? — 改ざん検知のチェーン上の位置（1 から連番、欠番なし）。1.10 より前の行は null で検証の対象外。一意インデックス <code>IX_AccessRecords_ChainSeq</code>（v1.10）</span></div>
+          <div class="field"><span class="field-name">ChainHash</span><span class="field-desc">byte[32]? — <code>HMAC-SHA256(chain.key, 前のハッシュ || 正準形式)</code>。正準形式は <code>Services/ChainHash.cs</code>（v1.10）</span></div>
           <div class="field"><span class="field-name">AccessTime</span><span class="field-desc">DateTime UTC — イベント発生時刻（そのファイルサーバーの時計）</span></div>
           <div class="field"><span class="field-name">ClientIp / ClientMachine</span><span class="field-desc">string? — 接続元 IP と端末名</span></div>
           <div class="field"><span class="field-name">IsFolder</span><span class="field-desc">bool — フォルダの記録（削除・名前変更のときだけ記録される）</span></div>
@@ -460,7 +463,9 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <tbody>
             <tr><td>AuditLogs</td><td>操作ログ（Time, UserName, Action, Detail, ClientIp）。ログイン、設定変更、CSV 出力、通知の送信、エージェントの登録・無応答など。Time にインデックス</td></tr>
             <tr><td>CollectorStates</td><td>キー/値。<code>LastRecordId</code> = ローカル収集の Security ログ読み取り位置</td></tr>
-            <tr><td>UserScopes</td><td>Viewer の閲覧範囲（UserId, Paths, NotifyEmail）。Paths は 1 行 1 件で <code>SERVER|D:\Share</code> または <code>D:\Share</code>（全サーバー）</td></tr>
+            <tr><td>UserScopes</td><td>Viewer の閲覧範囲（UserId, Paths, NotifyEmail, SendReport（v1.10。範囲つきの定期レポートを送るか。既定 1））。Paths は 1 行 1 件で <code>SERVER|D:\Share</code> または <code>D:\Share</code>（全サーバー）</td></tr>
+            <tr><td>ChainHeads</td><td>改ざん検知のチェーンごとの末尾（Chain = access | audit、Seq、Hash、UpdatedAt）、旧データの件数（LegacyMaxId、LegacyCount、StartedAt）、検証済みの位置（VerifiedSeq、VerifiedHash、VerifiedAt）（v1.10）</td></tr>
+            <tr><td>ChainCheckpoints</td><td>保持期間の削除と承認の位置（Chain、UpToSeq、Hash、DeletedRows、CreatedAt、Reason = genesis | retention | accepted、Note、KeyId、Mac。Mac は前の checkpoint の Mac を含む HMAC）（v1.10）</td></tr>
             <tr><td>Agents</td><td>エージェント（Id, Name, KeyHash, CreatedAt, LastSeenAt, Version, LastBatchSeq, Disabled, Config, ConfigVersion, OutboxCount, AuditPolicyOk, Os）</td></tr>
             <tr><td>AgentEnrollments</td><td>未使用の登録コード（CodeHash, ExpiresAt）。使うと削除</td></tr>
             <tr><td>AspNet*</td><td>ASP.NET Identity（ユーザー、ロール Admin / Viewer ほか）</td></tr>
@@ -474,6 +479,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <li><code>IsFolder</code> 追加時 — 他の記録が親フォルダとして持つパスを <code>IsFolder = 1</code> にする</li>
         <li><code>ServerName</code> 追加時 — 既存の記録すべてにこのマシンの名前を入れる</li>
         <li>v1.9 (<code>Data/SchemaV19.cs</code>) — <code>Denied INTEGER NOT NULL DEFAULT 0</code>、<code>NewPath</code>、<code>Detail</code> の列と部分インデックスを、無ければ追加（何度実行しても同じ。データ移行はなし）</li>
+        <li>v1.10 (<code>Data/SchemaV110.cs</code>) — <code>AccessRecords</code> と <code>AuditLogs</code> に <code>ChainSeq</code>、<code>ChainHash</code>、<code>UserScopes</code> に <code>SendReport</code> を追加。<code>SchemaV110History.cs</code> は <code>NewPath</code> の部分インデックス、<code>SchemaV110Integrity.cs</code> は <code>ChainHeads</code>、<code>ChainCheckpoints</code>、一意インデックス、genesis（既存の行は計算しない）を作る。何度実行しても同じ</li>
       </ul>
     </section>
 
@@ -628,6 +634,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <tbody>
             <tr><td>applySacl</td><td>フォルダの存在確認、監査ポリシーの有効化、SACL の設定</td><td>15 分</td></tr>
             <tr><td>removeSacl</td><td>SACL の削除</td><td>15 分</td></tr>
+            <tr><td>permissions</td><td>フォルダ以下の権限を読み、結果を最新 1 回分として保存（v1.10）。Windows は DACL・継承・所有者、Linux はモード・POSIX ACL・Samba の共有設定。行は最大 20,000、上限で打ち切る。1.10 以上のエージェントだけが実行する</td><td>制限時間 + 60 秒（既定 6 分）</td></tr>
             <tr><td>scan</td><td>未使用ファイル用のフォルダ一覧（最大 10 万件、<code>[パス, サイズ, 更新日時]</code>）。記録との照合は監視サーバーで行う</td><td>10 分</td></tr>
           </tbody>
         </table>
@@ -755,6 +762,73 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <p>GUI: 設定ページの読み取り専用のカード「Web GUI の接続（HTTPS）」。HTTP で開いた Admin には、閉じられる警告（<code>sessionStorage</code> に記憶）を出す。</p>
     </section>
 
+    <!-- v1.10 の追加 -->
+    <section id="v110">
+      <h2>v1.10 の追加（ファイルの履歴・アクセス権・定期レポート・改ざん検知）</h2>
+      <p>1.10 は 4 つの機能を追加します。下の記述は実装（コードが正）に合わせてあります。各機能の詳細な契約は、そのクラスのコメントを参照してください。</p>
+
+      <h3>ファイルの履歴（<code>FileHistory</code>、<code>history.js</code>）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>入口: 最新アクセス・検索結果のファイル名（<code>recordNameHtml</code> → <code>historyButtonHtml</code>）、ファイル・フォルダの詳細ダイアログのタイトル、アクセス権タブの行。ダイアログは <code>#historyModal</code>。</li>
+        <li>アルゴリズム（<code>Services/FileHistory.cs</code>、<code>IHistorySource</code> を介した純粋な処理。DB なしで試験できる）: 起点（サーバー、パス、<code>at</code> の時刻）から、後ろ向きには「移動先が今のパスの名前変更」（ファイル）と「祖先フォルダの名前変更」を、前向きには「移動元が今のパスの名前変更」「祖先フォルダの名前変更・削除」「ファイルの削除」をたどる。区間ごとに記録を取り、同じ秒の並びは <code>Id</code> で決める。</li>
+        <li>上限: 区間は最大 50（<code>MaxHops</code>）、祖先は 32 階層まで、既定 500 ステップ（要求で最大 2,000）。上限に当たったら <code>truncated</code> を立て、<code>end</code> は <code>hopLimit</code> または <code>windowLimit</code>。</li>
+        <li>範囲: たどる処理は範囲に関係なく全件で行い、出力は範囲内だけ。範囲外の区間は <code>gap(outOfScope)</code> にまとめ、パスは出さない。移動先が範囲外なら <code>move</code> として表示し、<code>newPath</code> は null。</li>
+        <li>索引: 既存の <code>(FilePath, AccessTime)</code> と、<code>NewPath</code> の部分インデックス（<code>COLLATE NOCASE</code>）。索引で候補を取り、比較は OS の規則で行う（Windows のパスは大文字小文字を区別しない）。</li>
+        <li>制限: フォルダの名前変更・移動は、そのフォルダで「削除」を監視しているときだけ記録される（名前変更は削除の種類と一緒に記録されるため）。画面の説明文にもその旨を書いてある。</li>
+      </ul>
+
+      <h3>アクセス権レポート（<code>PermissionScanWindows</code>、<code>PermissionScanLinux</code>、<code>PermissionAnalysis</code>、<code>PermissionReportService</code>、<code>PermissionsController</code>、<code>permissions.js</code>）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>収集（Windows）: 各フォルダで <code>DirectoryInfo.GetAccessControl</code>（Access と Owner）。<code>AreAccessRulesProtected</code> で継承の中断を判定する。再解析点（ジャンクション、シンボリックリンク）はたどらない。SID は名前に 1 回だけ変換し、全体で 5 秒の予算を超えたら SID のまま。読めないフォルダは「読めない」の行。権限は <code>Read=1, Write=2, Delete=4, Perm=8, Exec=16</code> のビット。</li>
+        <li>収集（Linux）: モードビットと所有者・グループ（libc を P/Invoke し、名前は <code>getpwuid_r</code> / <code>getgrgid_r</code> で解決）。POSIX ACL は <code>getxattr("system.posix_acl_access")</code> と <code>system.posix_acl_default</code> をバイナリとして解析する（<code>getfacl</code> は使わない。ツールがないマシンがあるため）。共有は <code>testparm -s</code> から、<code>guest ok</code>、<code>read only</code>、<code>valid users</code>、<code>write list</code>、<code>vfs objects</code> に <code>acl_xattr</code> / <code>acl_tdb</code> があるか（NT ACL 警告の判定）を読む。</li>
+        <li>分類（<code>PermissionAnalysis</code>、サーバー側。エージェントを更新せずに規則を変えられる）: 広い主体は SID で判定する（Everyone <code>S-1-1-0</code>、Authenticated Users <code>S-1-5-11</code>、BUILTIN\Users <code>S-1-5-32-545</code>、Guests <code>S-1-5-32-546</code>、Anonymous <code>S-1-5-7</code>、Network <code>S-1-5-2</code>、Interactive <code>S-1-5-4</code>、ドメインの Users・Guests・Computers は <code>-513</code>・<code>-514</code>・<code>-515</code>）。名前は表示用で、判定には使わない（表示言語で変わるため）。Linux は <code>other</code> と広いグループ名、<code>settings.json</code> の <code>Permissions:BroadPrincipals</code>（追加の名前、大文字小文字を区別しない）。</li>
+        <li>重要度: 変更・削除・権限変更を許す（Write、Delete、Perm のいずれか）= <code>high</code>、読取りだけ = <code>medium</code>。拒否のエントリは警告にせず一覧に出すだけ。共有は <code>guestOk</code> かつ書込可 = <code>high</code>、<code>guestOk</code> かつ読取専用 = <code>medium</code>。</li>
+        <li>結果（<code>Services/PermissionContract.cs</code>、ジョブ <code>permissions</code>）: 引数は <code>{ path, maxFolders, maxFiles, maxDepth, includeFiles, timeLimitSeconds }</code>。既定と上限は、フォルダ 5,000 / 20,000、ファイル 50,000 / 200,000、深さ 8 / 32、時間 300 / 900 秒（エージェントが上限に丸める）。行は最大 20,000（<code>MaxRows</code>）、エラーは最大 100。行のフラグ: 1 フォルダ、2 継承の中断、4 読めない、8 明示のエントリあり、16 POSIX ACL、32 既定の ACL、64 所有者が親と違う。打ち切りは <code>limit</code>（<code>folders</code>、<code>files</code>、<code>time</code>、<code>depth</code>、<code>rows</code>）で示す。</li>
+        <li>保存: <code>&lt;データフォルダ&gt;/permission-reports/&lt;サーバー&gt;__&lt;root の SHA-1&gt;.json</code>。最新 1 回だけ。一時ファイルを経て置き換える。ジョブのタイムアウトは <code>timeLimitSeconds + 60</code> 秒（超えると 504 <code>agents.noAnswer</code>）。</li>
+        <li>権限変更の印: 結果の各行について、同じサーバーの <code>AccessType = Permission</code>（拒否ではない）の最新の記録（時刻、ユーザー、記録 Id）を引く。スキャン時刻より新しければ <code>changedSinceScan</code>（「スキャン後に変更」）。</li>
+        <li>権限の範囲: 閲覧は Admin と範囲を持つ Viewer。スキャンは Admin のみ（実行に時間がかかり、エージェントの他のジョブを待たせるため）。</li>
+        <li>互換: 1.10 未満のエージェントには送らず 409 <code>perm.agentTooOld</code>。ジョブの応答が <code>Unknown job</code> で始まる場合も同じ扱い。</li>
+      </ul>
+
+      <h3>定期レポート（<code>ReportSettings</code>、<code>ReportSchedule</code>、<code>ScheduledReportService</code>、<code>ReportBuilder</code>、<code>ReportHtml</code>、<code>ReportsController</code>）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>設定: settings.json の <code>Reports</code>（既定 <code>Enabled = false</code>、<code>Frequency = weekly</code>、<code>DayOfWeek = 1</code>（月曜）、<code>DayOfMonth = 1</code>（1〜28）、<code>Time = 09:00</code>（サーバーのローカル時刻）、<code>Csv = true</code>、<code>ScopedViewers = true</code>、<code>Webhook = false</code>、<code>TopN = 10</code>（1〜50））。SMTP と言語は通知設定（<code>AlertSettings</code>）から取り、SMTP がなければ有効にできない。</li>
+        <li>スケジュール（<code>ReportSchedule</code>、純粋関数）: 期間は直前の 1 日・1 週・1 か月。キャッチアップは日次 6 時間、週次 24 時間、月次 48 時間で、それを過ぎた枠は送らず <code>report.skipped</code>（<code>reason=missed</code>）。存在しない時刻（夏時間の切替え）は隙間の分だけ進め、重複する時刻は初回を使う。</li>
+        <li>状態（<code>CollectorStates</code>）: <code>Report.LastSlot</code>（処理した最後の枠）、<code>Report.Attempts</code>（枠・回数・UTC）、<code>Report.LastSent</code>。有効にした時、または頻度・曜日・時刻を変えた時は、<code>LastSlot</code> を直前の枠に合わせ、すぐには送らない。テスト送信は <code>LastSlot</code> に触れない。</li>
+        <li>再試行と同時実行: 送信の失敗は 15 分ごとに 3 回まで（<code>MaxAttempts = 4</code>）、その後は <code>report.skipped</code>（<code>reason=failed</code>）。送信は <code>SemaphoreSlim(1)</code> で 1 件ずつ。テスト送信は実行中なら 409 <code>report.busy</code>。</li>
+        <li>宛先: 主な宛先は <code>AlertSettings.MailTo</code> で、全サーバーの範囲なしの内容。範囲つきの宛先は <code>UserScopes</code> のうち <code>NotifyEmail</code> があり、<code>SendReport</code> が true、Paths がある Viewer（1 回最大 50 通。超えた分は本文と操作ログに残す）。範囲つきには、アラート・エージェント・改ざん検知を入れず、権限は範囲内の行だけ。</li>
+        <li>内容（<code>ReportBuilder</code>）: 種別ごとの件数と前の期間との差、拒否（別に数える）、権限変更（最新 20 件）、上位のファイル・フォルダ・ユーザー、保存済みスキャンの広いアクセス（高・中の件数、高の上位 20 件、14 日より古いスキャンは「古い」、未スキャンのルートは「未スキャン」。レポートはスキャンを開始しない）。管理者だけ: 送信したアラート（<code>alert.sent</code> を種別ごと）、エージェントの状態、改ざん検知の状態と <code>FAM-ANCHOR</code> の行。</li>
+        <li>添付: <code>broad-permissions.csv</code>、<code>permission-changes.csv</code>、<code>denied.csv</code>、<code>top-files.csv</code>、<code>top-users.csv</code>。1 ファイル最大 20,000 行、合計 8 MB。超えたら大きいものから外し、本文にその旨を書く。CSV は UTF-8（BOM 付き）で、数式の先頭文字を無効化する。</li>
+        <li>HTML: インラインの CSS とテーブルだけ（画像・外部リソースなし、最大幅 720 px）。値はすべて HTML エンコードする（ファイル名は利用者が決められるため）。テキスト版は同じモデルから作る。</li>
+        <li>Webhook: 主な宛先の数値の要約だけ（期間、件数、拒否、権限変更、高の広いアクセス、改ざん検知の状態。ファイル名は入れない）。範囲つきには送らない。</li>
+        <li>操作ログ: <code>report.settings</code>、<code>report.test</code>、<code>report.sent</code>（<code>recipients, scoped, failed, slot</code>）、<code>report.skipped</code>。</li>
+      </ul>
+
+      <h3>改ざん検知（<code>ChainInterceptor</code>、<code>ChainHash</code>、<code>IntegrityService</code>、<code>IntegrityBackgroundService</code>、<code>RetentionService</code>、<code>AnchorLog</code>、<code>SecretStore</code>）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>鍵: <code>chain.key</code>（データフォルダ、32 バイトの乱数、<code>SecretStore.GetOrCreateChainKey()</code>）。Windows は SYSTEM / Administrators のみ読み取り可、Linux は所有者だけ読み書き可。<code>KeyId</code> は鍵の SHA-256 の先頭 8 桁（checkpoint に保存）。</li>
+        <li>チェーン: 2 本（<code>access</code> = AccessRecords、<code>audit</code> = AuditLogs）。<code>ChainHash = HMAC-SHA256(鍵, 前のハッシュ || 正準形式)</code>。正準形式は、チェーン名、<code>ChainSeq</code>、サーバー名、UTC の ticks、種別、Denied、IsFolder、ユーザー、パス、ファイル名、フォルダ、IP、端末名、NewPath、Detail（audit は Time、ユーザー、Action、Detail、IP）を、フィールドごとに長さ（4 バイト）と UTF-8 の値で連ねたもの（null は長さ -1）。<code>Id</code> は含まない（DB が後で振るため）。</li>
+        <li>書込み（<code>ChainInterceptor</code>、<code>SaveChangesInterceptor</code>）: 追加された行があると、プロセス内のロック（<code>SemaphoreSlim</code>）を取り、連番を振ってヘッドの更新を同じ SaveChanges（同じトランザクション）に入れる。ロックは完了・失敗・キャンセルで解放し、30 秒のウォッチドッグで必ず解放する。失敗時はヘッドを DB から読み直す。チェーンの順は挿入の順で、AccessTime の順ではない（エージェントの遅れた送信のため。だから保持期間の削除も先頭からの接頭辞になる）。</li>
+        <li>検証（<code>IntegrityService</code>）: 増分は 15 分ごとに、前回の検証位置から。全件は毎日 03:30（ローカル時刻）と、手動（<code>POST verify</code>）。どちらも短いページ単位で読む（SQLite のロールバックジャーナルは長い読取りで書込みを止めるため）。検出の種類: <code>altered</code>、<code>missing</code>、<code>truncatedTail</code>、<code>headMismatch</code>、<code>headRollback</code>、<code>unchained</code>、<code>checkpoint</code>、<code>keyChanged</code>、<code>duplicate</code>。1 か所の改変は 1 件として報告し、以後の行は保存されたハッシュを前として続ける。</li>
+        <li><code>chain-head.json</code>（データフォルダ、SYSTEM / Administrators のみ）: 確認済みの各チェーンの末尾（Seq、Hash、keyId）。古い DB に戻されたこと（<code>headRollback</code>）を見つけるために使う。中身が改ざんされていれば無視して警告を出す。</li>
+        <li>保持期間（<code>RetentionService.CleanupAsync</code>）: 鍵があるとき、チェーンの先頭から、保持期間内で最初に残す記録の直前までを削除し、<code>ChainCheckpoint</code>（reason <code>retention</code>、<code>Mac = HMAC(鍵, chain, UpToSeq, Hash, KeyId, 前の Mac)</code>）を書く。ChainSeq が null で <code>Id ≤ LegacyMaxId</code> の旧行は、従来どおり時刻で削除。遅れて届いた古い日付の記録は、前の記録が消えるまで残る。</li>
+        <li>初回起動（<code>SchemaV110Integrity</code>）: 既存の行は計算しない。<code>LegacyMaxId</code> と <code>LegacyCount</code> を記録し、genesis の checkpoint とヘッド（Seq 0）を作る。新しい DB は件数 0。</li>
+        <li>承認（<code>POST accept</code>）: 現在の検証済みの位置に、reason <code>accepted</code> の checkpoint を書く。検出は一覧に残る（承認済み）。</li>
+        <li>アンカー: 毎日 00:05（ローカル時刻）に 1 回。起動が遅れても、その日のうちに 1 回書く。行の形式は <code>FAM-ANCHOR v1 server=… chain=access seq=… hash=… time=… audit-seq=… audit-hash=…</code>。書込み先は、Windows はアプリケーションログのソース <code>FileAccessMonitor</code> のイベント 1100（ソースがなければ作成を試み、作れなければ Application ソースを使う）、Linux は <code>syslog</code>（facility local5、タグ <code>fileaccessmonitor</code>）、そして操作ログ <code>integrity.anchor</code>。<code>Integrity.AnchorNotify</code>（settings.json の <code>"Integrity": { "AnchorNotify": true }</code>、既定 false）がオンなら通知にも送る。定期レポートの本文にも入る。</li>
+        <li>取り出しと照合: <code>GET anchor</code> は署名付き JSON（<code>format: fam-anchor-v1</code>、<code>mac</code> は鍵による署名）。<code>POST check-anchor</code> は行または JSON を受け、同じ seq の ChainHash と比べる。その位置が保持期間で消えていれば checkpoint と比べる。</li>
+        <li>通知: 新しい検出（チェーン・種別・最初の seq で識別）は <code>NotifyAsync</code>（種別 <code>Integrity</code>、高優先度。通知が有効なときだけ）と、操作ログ <code>integrity.break</code>。未承認の間は 24 時間ごとに再通知（<code>Integrity.AlertedSignature</code>、<code>Integrity.AlertedAt</code>）。</li>
+        <li>画面: 設定の「改ざん検知」カード（<code>#integritySettingsSection</code>、Admin）と、未承認の検出がある間の上部の赤い帯（<code>#integrityBanner</code>、全ての管理者画面）。</li>
+      </ul>
+
+      <h3>定期レポートと画面の入口（まとめ）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>タブ <code>permissions</code>（<code>#navPermissions</code>、Admin と範囲を持つ Viewer）。<code>window.TabHooks.permissions()</code> で描画する。</li>
+        <li>設定カード: <code>#reportsSettingsSection</code>（定期レポート）と <code>#integritySettingsSection</code>（改ざん検知）。<code>window.SettingsHooks</code> で描画する（Admin のみ）。閲覧範囲の画面のチェックボックス <code>#scopeSendReport</code> は <code>UserScope.SendReport</code> を読み書きする。</li>
+        <li>言語: <code>wwwroot/lang/permissions.js</code>、<code>history.js</code>、<code>reports.js</code>、<code>integrity.js</code>（接頭辞 <code>perm.</code>、<code>hist.</code>、<code>report.</code>、<code>integrity.</code>）。サーバーのメッセージは <code>MessagesPermissions</code>、<code>MessagesHistory</code>、<code>MessagesReports</code>、<code>MessagesIntegrity</code>（英語と日本語）。</li>
+        <li>エージェントの互換: 1.10 のサーバーは 1.9 のエージェントの記録をそのまま受け取る。権限のジョブだけが 1.9 のエージェントでは使えない（上の 409）。1.10 のエージェントは 1.9 のサーバーに対して変わらない（サーバーがジョブを送らないため）。</li>
+      </ul>
+    </section>
+
     <!-- サービス -->
     <section id="services">
       <h2>サービス</h2>
@@ -842,6 +916,40 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/agent/jobs</span><span class="endpoint-desc">long poll（204 = 指示なし）。結果は POST /api/agent/jobs/{id}</span></div>
       </div>
 
+      <h3>履歴 — <code>FileHistoryController</code> <span class="badge badge-tag">認証済み・範囲で絞る</span></h3>
+      <div class="card">
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/file-history?server=&amp;path=&amp;at=&amp;days=0&amp;collapse=true&amp;maxEvents=500</span><span class="endpoint-desc">{server, path, anchorTime, origin, end, truncated, paths[], steps[]}。<code>path</code> 必須（400 <code>hist.pathRequired</code>）、範囲外の起点は 403 <code>scope.outside</code>、記録なしは 404 <code>hist.none</code></span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/file-history/export?…&amp;tzOffsetMinutes=</span><span class="endpoint-desc">同じ内容の CSV（UTF-8 BOM、時刻は現地と UTC）。操作ログ <code>export.csv</code></span></div>
+      </div>
+
+      <h3>アクセス権 — <code>PermissionsController</code> <span class="badge badge-tag">Admin / 範囲を持つ Viewer</span></h3>
+      <div class="card">
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/permissions/servers</span><span class="endpoint-desc">閲覧できるサーバー（範囲つきは範囲内のサーバー）</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/permissions/roots?server=</span><span class="endpoint-desc">監視フォルダと、保存結果の日時・件数・打ち切りの有無</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/permissions/scan</span><span class="endpoint-desc"><span class="badge badge-admin">Admin</span> {server, folder, maxFolders?, maxFiles?, maxDepth?, includeFiles?}。監視フォルダ配下か（<code>path.notMonitored</code>）、エージェントの版（1.9 以前は 409 <code>perm.agentTooOld</code>）、同じフォルダの実行中は 409 <code>perm.running</code>。結果を保存して返す。操作ログ <code>permissions.scan</code></span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/permissions?server=&amp;folder=&amp;broadOnly=&amp;brokenOnly=&amp;q=&amp;page=&amp;pageSize=</span><span class="endpoint-desc">保存結果の行（重要度・主体の解決・<code>lastChange</code> と <code>changedSinceScan</code> つき）と、ヘッダー（件数、共有、エラー、打ち切り）。最大 1,000 件/頁</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/permissions/export?…</span><span class="endpoint-desc">CSV（1 行 1 エントリ、最大 20 万行）。操作ログ <code>permissions.export</code></span></div>
+      </div>
+      <p>範囲を持つ Viewer は保存結果だけを読み、範囲外の行は返さない（<code>AccessScope.Contains</code>）。範囲を持たない Viewer は 403 <code>perm.noAccess</code>。</p>
+
+      <h3>定期レポート — <code>ReportsController</code> <span class="badge badge-admin">Admin 専用</span></h3>
+      <div class="card">
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/reports/settings</span><span class="endpoint-desc">設定と <code>lastSlot</code>、<code>lastSentAt</code>、<code>nextSlot</code>、<code>smtpReady</code></span></div>
+        <div class="endpoint"><span class="badge badge-put">PUT</span><span class="endpoint-path">/api/reports/settings</span><span class="endpoint-desc">検証（頻度、曜日・日、<code>HH:mm</code>、上位件数。有効にするには SMTP が必要）して保存。操作ログ <code>report.settings</code></span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/reports/test</span><span class="endpoint-desc">前の期間のレポートを主な宛先だけに送る（件名に <code>[TEST]</code>）。<code>{scopedViewer}</code> を付けるとその Viewer の内容を管理者本人に送る。スケジュールは変えない。送信中は 409 <code>report.busy</code>。操作ログ <code>report.test</code></span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/reports/preview</span><span class="endpoint-desc">本文の HTML（画面のプレビュー用）</span></div>
+      </div>
+
+      <h3>改ざん検知 — <code>IntegrityController</code> <span class="badge badge-admin">Admin 専用</span></h3>
+      <div class="card">
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/integrity/status</span><span class="endpoint-desc">状態、チェーンごとのヘッド・検出・checkpoint の一覧、実行中の検証、<code>AnchorNotify</code> の設定</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/integrity/verify</span><span class="endpoint-desc">全件の検証を開始（202 と <code>id</code>。実行中ならそれを返す）</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/integrity/verify/{id}</span><span class="endpoint-desc">進捗（処理した行数・全体）と結果</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/integrity/accept</span><span class="endpoint-desc">{chain, breakId, note}。検出を承認し、現在の位置に <code>accepted</code> の checkpoint を書く。操作ログ <code>integrity.accept</code></span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/integrity/anchor</span><span class="endpoint-desc">両チェーンの末尾を書いた署名付き JSON（<code>format: fam-anchor-v1</code>、<code>line</code>、<code>keyId</code>、<code>mac</code>）をダウンロード。操作ログ <code>integrity.anchor</code></span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/integrity/check-anchor</span><span class="endpoint-desc">{text}（<code>FAM-ANCHOR</code> の行または JSON）を記録と照合。結果は一致・不一致・保持期間で削除済み・記録より新しい、のいずれか</span></div>
+      </div>
+
       <h3>その他</h3>
       <div class="card">
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/retention</span><span class="endpoint-desc">保持ポリシーと件数（範囲内）。PUT と POST cleanup は Admin</span></div>
@@ -873,6 +981,9 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
             <tr><td>settings.json</td><td>GUI で変更する設定: <code>MonitoredPaths</code>, <code>Recording</code>, <code>DnsServer</code>, <code>RetentionDays</code>, <code>Alerts</code>（Webhook URL、SMTP とプロキシのパスワードは暗号化）, <code>UpdateCheck</code>, <code>Agents</code>（Enabled, Port）。キー単位で読み書き</td></tr>
             <tr><td>fileaccess.db</td><td>SQLite</td></tr>
             <tr><td>jwt.key · initial-admin-password.txt</td><td>SYSTEM / Administrators のみ読み取り可</td></tr>
+            <tr><td>chain.key</td><td>改ざん検知の鍵（32 バイト）（v1.10）。データベースと一緒にバックアップする。なければ古い記録は検証できない（<code>keyChanged</code>）。SYSTEM / Administrators のみ読み取り可</td></tr>
+            <tr><td>chain-head.json</td><td>改ざん検知が確認した各チェーンの末尾（Seq、Hash、keyId）（v1.10）。古い DB への巻き戻しを見つけるために使う。バックアップ対象</td></tr>
+            <tr><td>permission-reports\</td><td>権限スキャンの最新結果（フォルダごとに 1 ファイルの JSON、v1.10）</td></tr>
             <tr><td>keys\</td><td>Data Protection の鍵（マシン DPAPI で保護）</td></tr>
             <tr><td>logs\app-YYYYMMDD.log</td><td>アプリケーションログ（14 日）</td></tr>
             <tr><td>agent.json · outbox\ · agent-*.txt</td><td>エージェントのみ: 接続先とキー、送信待ち、読み取り位置・通し番号・適用済みの設定の版</td></tr>
@@ -892,6 +1003,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
             <tr><td>大量の削除・書込・読取</td><td>1 人のユーザーが集計時間（既定 5 分）内にしきい値以上（削除の既定 100、書込・読取は 0 = オフ）。読取はまとめた後の件数。フォルダは数えない。再通知までの間隔あり。通知にはサーバー名を含める</td></tr>
             <tr><td>記録の途切れ</td><td>Security ログの消去、または収集前の上書き</td></tr>
             <tr><td>エージェントの無応答・復旧</td><td>既定 15 分以上接続がない（<code>AgentOfflineMinutes</code>、0 = オフ）／再び接続した</td></tr>
+            <tr><td>改ざん検知</td><td>新しい検出（チェーン・種別・最初の位置）。緊急（高優先度）として送り、未承認の間は 24 時間ごとに再通知（v1.10）。<code>alert.sent</code> の種別は <code>Integrity</code></td></tr>
             <tr><td>フォルダごとの通知先</td><td>閲覧範囲と通知先メールを持つ Viewer には、範囲内の記録だけで別途検知した大量操作をメールで送る（しきい値は共通）</td></tr>
           </tbody>
         </table>
@@ -910,6 +1022,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
             <tr><td>files / folders / users</td><td>ランキングと詳細モーダル。ファイル・フォルダの一覧とユーザー詳細（ファイル一覧・最新アクセス）にサーバー列、ユーザー詳細にサーバー別の件数</td></tr>
             <tr><td>recent</td><td>最新アクセス（50 件ずつ）。フォルダはアイコンで表示</td></tr>
             <tr><td>search</td><td>複数キーワード・期間・種別の横断検索と CSV 出力</td></tr>
+            <tr><td>permissions</td><td>アクセス権（v1.10。Admin と範囲を持つ Viewer）。サーバーと監視フォルダの選択、保存結果の年齢、スキャン（Admin）、広いアクセス・継承の中断の絞り込み、CSV。範囲を持つ Viewer には「範囲のフォルダだけを表示」の注記</td></tr>
             <tr><td>unused</td><td>未使用ファイル（Admin、範囲を持つ Viewer）。対象サーバー、フォルダ別集計、掘り下げ</td></tr>
             <tr><td>settings</td><td>「サーバーごとの設定」（対象サーバー、監視フォルダ、記録ルール）と「全体の設定」（ユーザー・閲覧範囲、エージェント、アプリ情報、逆引き DNS、保持、通知、操作ログ）。設定タブを開いている間は自動更新しない</td></tr>
           </tbody>

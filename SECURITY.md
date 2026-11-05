@@ -23,7 +23,7 @@ You can expect an initial response within 7 days. Once a fix is available, we wi
 In scope:
 
 - The web API and web GUI (authentication, authorization, input handling)
-- Handling of the secrets in `C:\ProgramData\FileAccessMonitor\` (`jwt.key`, `initial-admin-password.txt`)
+- Handling of the secrets in `C:\ProgramData\FileAccessMonitor\` (`jwt.key`, `initial-admin-password.txt`, and `chain.key`, the key of the tamper-detection chains; on Linux the same files are in `/var/lib/fileaccessmonitor/`)
 - The PowerShell scripts in this repository
 
 Out of scope:
