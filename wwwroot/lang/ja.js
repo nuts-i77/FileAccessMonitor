@@ -366,6 +366,8 @@ window.I18N_JA = {
   'type.permissionChanges': '権限変更',
   'type.writeCreate': '書込・作成',
   'badge.denied': '拒否',
+  'badge.atCreation': '作成時の設定',
+  'badge.atCreationTip': '新しいファイルの作成時（コピーなど）に Windows が設定した権限です。利用者による変更ではありません。',
   'filter.result': '結果',
   'filter.resultAll': 'すべて（拒否を含む）',
   'filter.deniedOnly': '拒否のみ',

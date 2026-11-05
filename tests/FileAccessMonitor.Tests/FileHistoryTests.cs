@@ -387,4 +387,43 @@ public class FileHistoryTests
         var deep = "/" + string.Join("/", Enumerable.Repeat("d", 100)) + "/f";
         Assert.Equal(FileHistory.MaxDepth, FileHistory.Ancestors(deep).Count);
     }
+
+    // A copy: the permissions are set (4670) a moment before the first write, which becomes the Create
+    private static Mem Copy(double permissionMinutes, double createMinutes) => new Mem()
+        .Add(permissionMinutes, "Permission", @"C:\s\a.txt")
+        .Add(createMinutes, "Create", @"C:\s\a.txt")
+        .Add(createMinutes + 0.1, "Write", @"C:\s\a.txt")
+        .Add(createMinutes + 1, "Read", @"C:\s\a.txt");
+
+    [Fact]
+    public async Task Permission_record_of_a_copied_file_starts_at_the_create_after_it()
+    {
+        var r = Ok(await Run(Copy(0, 0.05), @"C:\s\a.txt", T0));
+        Assert.Equal("created", r.Origin);
+        Assert.DoesNotContain(r.Steps, s => s.Gap?.Reason == "unknownOrigin");
+        Assert.Equal(["create", "permission", "write", "read"], Kinds(r));
+    }
+
+    [Fact]
+    public async Task History_from_the_create_record_of_a_copied_file_is_unchanged()
+    {
+        var r = Ok(await Run(Copy(0, 0.05), @"C:\s\a.txt", T0.AddSeconds(3)));
+        Assert.Equal("created", r.Origin);
+        Assert.Equal(["create", "write", "read"], Kinds(r));
+    }
+
+    [Fact]
+    public async Task Permission_without_a_create_within_a_minute_stays_unknown()
+    {
+        var r = Ok(await Run(new Mem().Add(0, "Permission", @"C:\s\a.txt"), @"C:\s\a.txt", T0));
+        Assert.Equal("unknown", r.Origin);
+        Assert.Contains(r.Steps, s => s.Gap?.Reason == "unknownOrigin");
+    }
+
+    [Fact]
+    public async Task A_create_two_minutes_after_the_permission_is_not_used()
+    {
+        var r = Ok(await Run(Copy(0, 2), @"C:\s\a.txt", T0));
+        Assert.Equal("unknown", r.Origin);
+    }
 }

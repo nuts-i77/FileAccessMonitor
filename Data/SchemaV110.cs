@@ -11,6 +11,7 @@ public static class SchemaV110
         {
             ["ChainSeq"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""ChainSeq"" INTEGER NULL",
             ["ChainHash"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""ChainHash"" BLOB NULL",
+            ["AtCreation"] = @"ALTER TABLE ""AccessRecords"" ADD COLUMN ""AtCreation"" INTEGER NOT NULL DEFAULT 0",
         });
         await AddColumnsAsync(db, "AuditLogs", new()
         {

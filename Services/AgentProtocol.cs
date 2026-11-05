@@ -29,13 +29,15 @@ public class AgentRecord
     public bool Denied { get; set; }
     public string? NewPath { get; set; }
     public string? Detail { get; set; }
+    // From 1.10.2: a Permission record made while its file was created; older agents omit it, older servers ignore it
+    public bool AtCreation { get; set; }
 
     public static AgentRecord From(AccessRecord r) => new()
     {
         FilePath = r.FilePath, FileName = r.FileName, FolderPath = r.FolderPath, UserName = r.UserName,
         AccessType = r.AccessType, AccessTime = r.AccessTime, ClientIp = r.ClientIp,
         ClientMachine = r.ClientMachine, IsFolder = r.IsFolder,
-        Denied = r.Denied, NewPath = r.NewPath, Detail = r.Detail,
+        Denied = r.Denied, NewPath = r.NewPath, Detail = r.Detail, AtCreation = r.AtCreation,
     };
 
     // The server name comes from the agent's registration, not from what the agent says
@@ -50,6 +52,7 @@ public class AgentRecord
         Denied = Denied,
         NewPath = NewPath == null ? null : Limit(NewPath, 2000),
         Detail = Detail == null ? null : Limit(Detail, 2000),
+        AtCreation = AtCreation,
     };
 
     private static string Limit(string s, int max) => s.Length <= max ? s : s[..max];

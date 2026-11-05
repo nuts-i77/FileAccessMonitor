@@ -18,7 +18,7 @@ public readonly record struct HistoryKey(DateTime Time, long Id) : IComparable<H
 
 // The part of an AccessRecord the history needs
 public sealed record HistoryRecord(long Id, DateTime Time, string Type, bool Denied, bool IsFolder, string User,
-    string Path, string? NewPath, string? Detail, string? ClientIp, string? ClientMachine)
+    string Path, string? NewPath, string? Detail, string? ClientIp, string? ClientMachine, bool AtCreation = false)
 {
     public HistoryKey Key => new(Time, Id);
 }
@@ -81,6 +81,7 @@ public class HistoryStep
     public string? Path { get; set; }
     public string? NewPath { get; set; }
     public string? Detail { get; set; }
+    public bool AtCreation { get; set; }   // a permission step made while the file was created
     public string? ViaFolder { get; set; }
     public long? RecordId { get; set; }
     public string? ClientIp { get; set; }
@@ -351,7 +352,7 @@ public class FileHistory(IHistorySource source, Func<DateTime> utcNow)
         return new HistoryStep
         {
             Kind = kind, Time = Utc(r.Time), User = r.User, Type = r.Type, Denied = r.Denied, Path = r.Path,
-            NewPath = shown(r.NewPath), Detail = r.Detail, RecordId = r.Id, ClientIp = r.ClientIp, ClientMachine = r.ClientMachine,
+            NewPath = shown(r.NewPath), Detail = r.Detail, AtCreation = r.AtCreation, RecordId = r.Id, ClientIp = r.ClientIp, ClientMachine = r.ClientMachine,
         };
     }
 
@@ -443,7 +444,7 @@ public class EfHistorySource(AccessDbContext db) : IHistorySource
         .Distinct().ToList();
 
     private static HistoryRecord Map(AccessRecord r) => new(r.Id, r.AccessTime, r.AccessType, r.Denied, r.IsFolder, r.UserName,
-        r.FilePath, r.NewPath, r.Detail, r.ClientIp, r.ClientMachine);
+        r.FilePath, r.NewPath, r.Detail, r.ClientIp, r.ClientMachine, r.AtCreation);
 
     public async Task<HistoryRecord?> AnchorAsync(string server, string path, DateTime? at)
     {

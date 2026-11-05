@@ -95,11 +95,12 @@ public class ReportBuilder(IServiceScopeFactory scopeFactory, IPermissionReports
         sum.UniqueFiles = await ok.Where(r => !r.IsFolder).Select(r => r.ServerName + ":" + r.FilePath).Distinct().CountAsync(ct);
         sum.ActiveUsers = await ok.Select(r => r.UserName).Distinct().CountAsync(ct);
         sum.Denied = await inPeriod.CountAsync(r => r.Denied, ct);
-        sum.PermissionChanges = await ok.CountAsync(r => r.AccessType == "Permission", ct);
+        // Permissions Windows set while a file was created (a copy) are not changes by a user: left out of the count and the lists
+        sum.PermissionChanges = await ok.CountAsync(r => r.AccessType == "Permission" && !r.AtCreation, ct);
         sum.PreviousTotal = await before.CountAsync(r => !r.Denied, ct);
         sum.PreviousDenied = await before.CountAsync(r => r.Denied, ct);
-        sum.PreviousPermissionChanges = await before.CountAsync(r => !r.Denied && r.AccessType == "Permission", ct);
-        sum.Changes = (await ok.Where(r => r.AccessType == "Permission").OrderByDescending(r => r.AccessTime).ThenByDescending(r => r.Id)
+        sum.PreviousPermissionChanges = await before.CountAsync(r => !r.Denied && r.AccessType == "Permission" && !r.AtCreation, ct);
+        sum.Changes = (await ok.Where(r => r.AccessType == "Permission" && !r.AtCreation).OrderByDescending(r => r.AccessTime).ThenByDescending(r => r.Id)
                 .Take(ListRows).Select(r => new { r.AccessTime, r.UserName, r.ServerName, r.FilePath }).ToListAsync(ct))
             .Select(r => new ReportChange(Utc(r.AccessTime), r.UserName, r.ServerName, r.FilePath)).ToList();
 
@@ -307,7 +308,7 @@ public class ReportBuilder(IServiceScopeFactory scopeFactory, IPermissionReports
                 perm.All.Select(r => new string?[] { r.Server, r.Root, r.Path, r.Principal, r.Kind, r.Level, r.Severity,
                     r.InheritanceBroken ? L("report.yes") : "" }));
 
-        var changes = await inPeriod.Where(r => !r.Denied && r.AccessType == "Permission").OrderBy(r => r.AccessTime)
+        var changes = await inPeriod.Where(r => !r.Denied && r.AccessType == "Permission" && !r.AtCreation).OrderBy(r => r.AccessTime)
             .Take(MaxCsvRows + 1).Select(r => new { r.AccessTime, r.UserName, r.ServerName, r.FilePath, r.Detail }).ToListAsync(ct);
         if (changes.Count > 0)
             Add("permission-changes.csv",

@@ -157,7 +157,34 @@ public class UsnCorrelatorTests
         Assert.False(UsnCorrelator.NeedsCorrelation(Rec("Write", "C:\\a", 0, denied: true)));
         Assert.False(UsnCorrelator.NeedsCorrelation(Rec("Read", "C:\\a", 0)));
         Assert.False(UsnCorrelator.NeedsCorrelation(Rec("Delete", "C:\\a", 0)));
-        Assert.False(UsnCorrelator.NeedsCorrelation(Rec("Permission", "C:\\a", 0)));
+        Assert.True(UsnCorrelator.NeedsCorrelation(Rec("Permission", "C:\\a", 0)));
+        Assert.False(UsnCorrelator.NeedsCorrelation(Rec("Permission", "C:\\a", 0, folder: true)));
+        Assert.False(UsnCorrelator.NeedsCorrelation(Rec("Permission", "C:\\a", 0, denied: true)));
+    }
+
+    [Fact]
+    public void Permission_then_write_of_a_created_file_marks_the_permission_and_creates()
+    {
+        var c = new UsnCorrelator();
+        c.AddCreate(@"C:\d\a.txt", T.AddSeconds(1));
+        var perm = Rec("Permission", @"C:\d\a.txt", 2);
+        var write = Rec("Write", @"C:\d\a.txt", 4);
+        c.Hold(perm, T);
+        c.Hold(write, T);
+        c.CaughtUpUtc = T.AddSeconds(100);
+        var released = c.Release(T.AddSeconds(1));
+        Assert.Equal([perm, write], released);
+        Assert.True(perm.AtCreation);
+        Assert.Equal("Permission", perm.AccessType);
+        Assert.Equal("Create", write.AccessType);
+    }
+
+    [Fact]
+    public void Permission_without_a_create_fact_is_not_marked()
+    {
+        var c = new UsnCorrelator();
+        var r = Assert.Single(HoldAndRelease(c, Rec("Permission", @"C:\d\a.txt", 2)));
+        Assert.False(r.AtCreation);
     }
 
     [Fact]
