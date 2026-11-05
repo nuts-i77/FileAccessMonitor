@@ -365,4 +365,42 @@ public class PermissionApiTests : IDisposable
         var missing = await Assert.ThrowsAsync<PermissionScanException>(() => third);
         Assert.Equal(400, missing.Status);
     }
+
+    [Fact]
+    public async Task A_scan_reads_folders_only_unless_files_are_asked_for_and_a_subfolder_can_be_scanned()
+    {
+        using (var scope = _services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
+            db.Agents.Add(new Agent { Id = "a4", Name = "FS04", KeyHash = "x", Version = "1.10.0" });
+            db.SaveChanges();
+            await scope.ServiceProvider.GetRequiredService<ServerConfigService>()
+                .SavePathsAsync("FS04", [new PathConfig(@"D:\Share", ["Read"])]);
+        }
+        var c = Controller();
+
+        // a folder below the monitored one, without saying whether files are wanted
+        var scan = c.Scan(new PermissionsController.ScanRequest("FS04", @"D:\Share\Docs", null, null, null, null), default);
+        var job = await _jobs.NextAsync("a4", TimeSpan.FromSeconds(5), default);
+        Assert.Equal(@"D:\Share\Docs", job!.Args["path"]!.GetValue<string>());
+        Assert.False(job.Args["includeFiles"]!.GetValue<bool>());
+        _jobs.Complete("a4", job.Id, new PermissionResultBuilder("windows", @"D:\Share\Docs", new PermissionScanOptions()).Build());
+        Assert.Equal(200, Status(await scan));
+
+        // files only when asked
+        var withFiles = c.Scan(new PermissionsController.ScanRequest("FS04", @"D:\Share", null, null, null, true), default);
+        job = await _jobs.NextAsync("a4", TimeSpan.FromSeconds(5), default);
+        Assert.True(job!.Args["includeFiles"]!.GetValue<bool>());
+        _jobs.Complete("a4", job.Id, Sample().Result);
+        await withFiles;
+
+        // the subfolder scan is offered after the monitored folder, and each says whether files were read
+        var roots = Json(await c.Roots("FS04")).GetProperty("roots").EnumerateArray()
+            .Select(r => (r.GetProperty("path").GetString(), r.GetProperty("subfolder").GetBoolean(), r.GetProperty("includeFiles").GetBoolean()))
+            .ToList();
+        Assert.Equal([(@"D:\Share", false, true), (@"D:\Share\Docs", true, false)], roots);
+
+        // outside the monitored folder: refused, no job
+        Assert.Equal(400, Status(await c.Scan(new PermissionsController.ScanRequest("FS04", @"D:\Other", null, null, null, null), default)));
+    }
 }

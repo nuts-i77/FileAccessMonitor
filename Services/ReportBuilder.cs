@@ -202,10 +202,13 @@ public class ReportBuilder(IServiceScopeFactory scopeFactory, IPermissionReports
         {
             var result = new ReportPermissions();
             var stored = await permissions.ListAsync(ct);
-            foreach (var report in stored.OrderBy(r => r.Server).ThenBy(r => r.Root))
+            // A folder in more than one scan (a subfolder scanned on its own too) counts once, from the newest scan
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var report in stored.OrderByDescending(r => r.ScannedAt))
             {
                 if (scope != null && !Touches(scope, report)) continue;
-                var rows = PermissionReportView.BroadRows(report, scope);
+                var rows = PermissionReportView.BroadRows(report, scope)
+                    .Where(r => seen.Add($"{r.Server}|{r.Path}|{r.Principal}|{r.Kind}")).ToList();
                 var high = rows.Count(r => r.Severity == "high");
                 var medium = rows.Count(r => r.Severity == "medium");
                 result.High += high;
@@ -214,6 +217,7 @@ public class ReportBuilder(IServiceScopeFactory scopeFactory, IPermissionReports
                 result.Roots.Add(new ReportPermRoot(Label(report.Server), report.Root, Utc(report.ScannedAt),
                     nowUtc - report.ScannedAt > OldScan, high, medium));
             }
+            result.Roots = result.Roots.OrderBy(r => r.Server).ThenBy(r => r.Root).ToList();
             result.Top = result.All.Where(r => r.Severity == "high").Take(ListRows).ToList();
 
             if (scope == null)

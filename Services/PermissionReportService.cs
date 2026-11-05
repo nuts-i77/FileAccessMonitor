@@ -217,6 +217,8 @@ public class PermissionReportService : IPermissionReports
             {
                 (result, agentVersion) = await ScanOnAgentAsync(server, root, o, ct);
             }
+            // Kept with the result so the GUI can say whether files were looked at
+            result["includeFiles"] = o.IncludeFiles;
             var report = new StoredPermissionReport
             {
                 Server = server, Root = root, Os = result["os"]?.GetValue<string>() ?? "", AgentVersion = agentVersion,

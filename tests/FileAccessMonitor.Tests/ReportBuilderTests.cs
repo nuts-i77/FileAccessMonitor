@@ -191,6 +191,27 @@ public class ReportBuilderTests
         Assert.Empty(other.Roots);
     }
 
+    // D:\Share\Docs (Everyone may modify) is in the scan of D:\Share and in its own newer scan: one high row
+    [Fact]
+    public async Task A_folder_in_two_scans_counts_once()
+    {
+        using var host = new ReportTestHost();
+        StoredPermissionReport Scan(string root, string rel, DateTime at)
+        {
+            var b = new PermissionResultBuilder("windows", root, new PermissionScanOptions());
+            var everyone = b.Principal("Everyone", "S-1-1-0");
+            b.AddRow(rel, 1 | 8, -1, [new PermissionAce(everyone, 0, 23, 7)]);
+            return new StoredPermissionReport { Server = "FS01", Root = root, Os = "windows", ScannedAt = at, Result = b.Build() };
+        }
+        host.Permissions.Reports.Add(Scan(@"D:\Share", "Docs", Slot.AddDays(-3)));
+        host.Permissions.Reports.Add(Scan(@"D:\Share\Docs", "", Slot.AddDays(-1)));
+
+        var p = (await host.Builder.BuildDataAsync(ReportTestHost.Weekly(), ReportTestHost.Smtp(), Slot)).Permissions!;
+        Assert.Equal(1, p.High);
+        Assert.Equal([@"D:\Share", @"D:\Share\Docs"], p.Roots.Select(r => r.Root));
+        Assert.Equal([0, 1], p.Roots.Select(r => r.High));   // counted with the newer scan
+    }
+
     [Fact]
     public async Task The_mail_has_subject_text_html_and_a_webhook_summary_for_the_full_report_only()
     {

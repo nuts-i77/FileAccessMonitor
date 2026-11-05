@@ -54,19 +54,26 @@ public class PermissionsController : ControllerBase
         var (name, _, error) = await ResolveAsync(server, forScan: false);
         if (error != null) return error;
         var roots = (await _servers.GetPathsAsync(server)).Select(c => PathText.Normalize(c.Path))
-            .Where(p => InScope(scope, name, p));
+            .Where(p => InScope(scope, name, p)).ToList();
         var list = new List<object>();
         foreach (var root in roots)
-        {
-            var last = await _reports.GetLastAsync(name, root, ct);
-            list.Add(new
-            {
-                path = root, scannedAt = last?.ScannedAt, folders = last?.Result["folders"]?.GetValue<int>(),
-                files = last?.Result["files"]?.GetValue<int>(), truncated = last?.Result["truncated"]?.GetValue<bool>(),
-            });
-        }
+            list.Add(RootInfo(root, await _reports.GetLastAsync(name, root, ct), false));
+        // Folders below a monitored folder that were scanned on their own
+        var subfolders = (await _reports.ListAsync(ct))
+            .Where(r => r.Server.Equals(name, StringComparison.OrdinalIgnoreCase)
+                        && roots.Any(root => PathText.IsUnder(r.Root, root) && !r.Root.Equals(root, PathText.ComparisonOf(root)))
+                        && InScope(scope, name, r.Root));
+        foreach (var report in subfolders)
+            list.Add(RootInfo(report.Root, report, true));
         return Ok(new { server = name, roots = list, canScan = scope == null });
     }
+
+    private static object RootInfo(string path, StoredPermissionReport? last, bool subfolder) => new
+    {
+        path, subfolder, scannedAt = last?.ScannedAt, folders = last?.Result["folders"]?.GetValue<int>(),
+        files = last?.Result["files"]?.GetValue<int>(), truncated = last?.Result["truncated"]?.GetValue<bool>(),
+        includeFiles = last?.Result["includeFiles"]?.GetValue<bool>(),
+    };
 
     public record ScanRequest(string? Server, string? Folder, int? MaxFolders, int? MaxFiles, int? MaxDepth, bool? IncludeFiles);
 
@@ -83,9 +90,11 @@ public class PermissionsController : ControllerBase
         if (!configs.Any(c => PathText.IsUnder(folder, c.Path)))
             return BadRequest(new { error = Messages.Get("path.notMonitored") });
 
+        // Folders only unless asked: files nearly always just inherit, and reading each one is what
+        // makes large shares hit the limits
         var defaults = new PermissionScanOptions();
         var options = new PermissionScanOptions(request.MaxFolders ?? defaults.MaxFolders, request.MaxFiles ?? defaults.MaxFiles,
-            request.MaxDepth ?? defaults.MaxDepth, request.IncludeFiles ?? defaults.IncludeFiles);
+            request.MaxDepth ?? defaults.MaxDepth, request.IncludeFiles ?? false);
         StoredPermissionReport report;
         try
         {
