@@ -162,13 +162,13 @@ public class StatsController : ControllerBase
         var recent = await q
             .OrderByDescending(r => r.AccessTime)
             .Take(50)
-            .Select(r => new { r.AccessTime, r.UserName, r.AccessType, r.NewPath, r.Detail, r.ServerName })
+            .Select(r => new { r.AccessTime, r.UserName, r.AccessType, r.NewPath, r.Detail, r.AtCreation, r.ServerName })
             .ToListAsync();
 
         return Ok(new
         {
             path, byUser, byType, timeline,
-            recent = recent.Select(r => new { r.AccessTime, r.UserName, r.AccessType, NewPath = VisibleNewPath(r.NewPath, r.ServerName), r.Detail }),
+            recent = recent.Select(r => new { r.AccessTime, r.UserName, r.AccessType, NewPath = VisibleNewPath(r.NewPath, r.ServerName), r.Detail, r.AtCreation }),
         });
     }
 
@@ -321,7 +321,7 @@ public class StatsController : ControllerBase
         var recent = await q
             .OrderByDescending(r => r.AccessTime)
             .Take(30)
-            .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType, r.IsFolder, r.ServerName, r.NewPath, r.Detail })
+            .Select(r => new { r.AccessTime, r.FilePath, r.FileName, r.AccessType, r.IsFolder, r.ServerName, r.NewPath, r.Detail, r.AtCreation })
             .ToListAsync();
 
         return Ok(new
@@ -349,7 +349,7 @@ public class StatsController : ControllerBase
             {
                 r.AccessTime, r.FilePath, r.FileName, r.FolderPath,
                 r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine, r.ServerName,
-                r.Denied, r.NewPath, r.Detail
+                r.Denied, r.NewPath, r.Detail, r.AtCreation
             })
             .ToListAsync();
 
@@ -374,7 +374,7 @@ public class StatsController : ControllerBase
             {
                 r.AccessTime, r.FilePath, r.FileName, r.FolderPath,
                 r.UserName, r.AccessType, r.IsFolder, r.ClientIp, r.ClientMachine, r.ServerName,
-                r.Denied, r.NewPath, r.Detail
+                r.Denied, r.NewPath, r.Detail, r.AtCreation
             })
             .ToListAsync();
 
@@ -406,14 +406,14 @@ public class StatsController : ControllerBase
             Messages.Get("csv.result"), Messages.Get("csv.newPath"), Messages.Get("csv.detail")));
 
         string kindFile = Messages.Get("csv.kindFile"), kindFolder = Messages.Get("csv.kindFolder");
-        string resultDenied = Messages.Get("csv.resultDenied"), resultOk = Messages.Get("csv.resultOk");
+        string permAtCreation = Messages.Get("csv.permissionAtCreation"), resultDenied = Messages.Get("csv.resultDenied"), resultOk = Messages.Get("csv.resultOk");
         var rows = 0;
         await foreach (var r in query.AsAsyncEnumerable())
         {
             var utc = DateTime.SpecifyKind(r.AccessTime, DateTimeKind.Utc);
             await writer.WriteLineAsync(CsvLine(
                 utc.Add(offset).ToString("yyyy-MM-dd HH:mm:ss"), utc.ToString("yyyy-MM-ddTHH:mm:ssZ"), r.UserName,
-                r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine, r.ServerName,
+                r.AtCreation ? permAtCreation : r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine, r.ServerName,
                 r.Denied ? resultDenied : resultOk, VisibleNewPath(r.NewPath, r.ServerName), r.Detail));
             rows++;
         }

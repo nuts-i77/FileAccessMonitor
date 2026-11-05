@@ -30,6 +30,7 @@ public sealed class ChainHasher : IDisposable
     // The canonical form of the row last hashed (for tests)
     public byte[] LastCanonical() => _buf.AsSpan(_canonicalStart, _len - _canonicalStart).ToArray();
 
+    // AtCreation is a display label that is not covered by the chain (adding it would break existing rows)
     public byte[] Hash(ReadOnlySpan<byte> prev, long seq, AccessRecord r) =>
         AccessRow(prev, seq, r.ServerName, r.AccessTime.Ticks, r.AccessType, r.Denied, r.IsFolder, r.UserName,
             r.FilePath, r.FileName, r.FolderPath, r.ClientIp, r.ClientMachine, r.NewPath, r.Detail);

@@ -148,6 +148,9 @@ function typeBadge(type) {
 function recordTypeHtml(r) {
   let html = typeBadge(r.accessType);
   if (r.denied) html += ` <span class="badge bg-danger">${t('badge.denied')}</span>`;
+  // permissions Windows set when the file was created (a copy): not a change by a user
+  if (r.atCreation && r.accessType === 'Permission')
+    html += ` <span class="badge bg-secondary-subtle text-secondary-emphasis fw-normal" title="${esc(t('badge.atCreationTip'))}">${esc(t('badge.atCreation'))}</span>`;
   if (r.detail)
     html += ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline record-detail-btn" data-detail="${esc(r.detail)}" title="${esc(t('btn.detail'))}" onclick="showRecordDetail(this)"><i class="bi bi-info-circle"></i></button>`;
   return html;

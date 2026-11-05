@@ -110,6 +110,8 @@ function histStepHtml(s) {
   if (s.count > 1)
     what = esc(t('hist.readCollapsed', { n: s.count, from: histClock(s.firstTime), to: histClock(s.lastTime) }));
   const denied = s.kind === 'denied' && typeof typeBadge === 'function' ? ' ' + typeBadge(s.type) : '';
+  const atCreation = s.kind === 'permission' && s.atCreation
+    ? ` <span class="badge bg-secondary-subtle text-secondary-emphasis fw-normal" title="${esc(t('hist.atCreationTip'))}">${esc(t('hist.atCreation'))}</span>` : '';
   const detailBtn = s.detail
     ? ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline record-detail-btn" data-detail="${esc(s.detail)}" title="${esc(t('btn.detail'))}" onclick="showRecordDetail(this)"><i class="bi bi-info-circle"></i></button>` : '';
   const client = s.clientIp ? `<span class="text-muted small ms-1">${esc(s.clientMachine ? `${s.clientIp} (${s.clientMachine})` : s.clientIp)}</span>` : '';
@@ -118,7 +120,7 @@ function histStepHtml(s) {
   if (s.viaFolder) extra += `<div class="small text-muted text-break">${esc(t('hist.via', { path: s.viaFolder }))}</div>`;
   return `<li class="position-relative pb-3">
     <span class="position-absolute rounded-circle" style="left:-1.6rem;top:.2rem;width:.9rem;height:.9rem;background:${info.color};border:2px solid var(--bs-body-bg)"></span>
-    <div class="d-flex flex-wrap align-items-baseline gap-2"><strong style="color:${info.color}">${what}</strong>${denied}${detailBtn}
+    <div class="d-flex flex-wrap align-items-baseline gap-2"><strong style="color:${info.color}">${what}</strong>${denied}${atCreation}${detailBtn}
       <span class="text-muted small">${esc(when)}</span><span class="small">${esc(s.user || '')}</span>${client}</div>${extra}</li>`;
 }
 

@@ -68,7 +68,7 @@ public class FileHistoryController(AccessDbContext db, UserScopeService scopes, 
             sb.AppendLine(StatsController.CsvLine(
                 Local(utc, offset), utc?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                 Messages.Get(s.Kind == "gap" ? "hist.gap." + s.Gap?.Reason : "hist.kind." + s.Kind),
-                s.User, s.Type, s.Path, s.NewPath, s.ViaFolder, s.Detail, count, s.ClientIp, s.ClientMachine, result.Server,
+                s.User, s.AtCreation ? Messages.Get("hist.csv.permissionAtCreation") : s.Type, s.Path, s.NewPath, s.ViaFolder, s.Detail, count, s.ClientIp, s.ClientMachine, result.Server,
                 s.Kind == "gap" ? "" : Messages.Get(s.Denied ? "csv.resultDenied" : "csv.resultOk")));
         }
         return sb.ToString();

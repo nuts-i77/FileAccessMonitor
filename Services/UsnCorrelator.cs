@@ -65,9 +65,10 @@ public class UsnCorrelator
     }
 
     // Records of these kinds are worth waiting for: a write may be the first one of a new file,
-    // a rename gets its new name. Denied, permission and folder-write records never are.
+    // a rename gets its new name, a permission change may be the one made while a file was created.
+    // Denied records and folder writes / permission changes never are.
     public static bool NeedsCorrelation(AccessRecord r) =>
-        !r.Denied && r.AccessType is AccessTypes.Rename or AccessTypes.Write
+        !r.Denied && r.AccessType is AccessTypes.Rename or AccessTypes.Write or AccessTypes.Permission
         && (r.AccessType == AccessTypes.Rename || !r.IsFolder);
 
     public void Hold(AccessRecord record, DateTime nowUtc)
@@ -108,12 +109,20 @@ public class UsnCorrelator
             if (TakeNearest(_creates, r.FilePath, t - CreateLead, t + CreateLag, t) != null)
                 r.AccessType = AccessTypes.Create;
         }
+        else if (r.AccessType == AccessTypes.Permission)
+        {
+            // Only looked at, not consumed: the write that follows needs the fact to become the Create
+            if (HasFact(_creates, r.FilePath, t - CreateLead, t + CreateLag)) r.AtCreation = true;
+        }
         else if (r.AccessType == AccessTypes.Rename)
         {
             if (TakeNearest(_renames, r.FilePath, t - RenameLead, t + RenameLag, t) is { } fact)
                 r.NewPath = fact.NewPath;
         }
     }
+
+    private static bool HasFact(Dictionary<string, List<(DateTime Time, string? NewPath)>> facts, string path, DateTime from, DateTime to) =>
+        facts.TryGetValue(path, out var list) && list.Any(f => f.Time >= from && f.Time <= to);
 
     private (DateTime Time, string? NewPath)? TakeNearest(
         Dictionary<string, List<(DateTime Time, string? NewPath)>> facts, string path, DateTime from, DateTime to, DateTime near)

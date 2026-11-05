@@ -50,6 +50,10 @@ public class AccessRecord
     [MaxLength(2000)]
     public string? Detail { get; set; }
 
+    // Permission: Windows set the permissions of a file that was created moments before (a copy, a save);
+    // not a change by a user. A display label only (not part of the tamper-detection chain)
+    public bool AtCreation { get; set; }
+
     // Tamper detection (1.10): position in the chain and the HMAC over the previous hash and this
     // row; null for records made before 1.10
     public long? ChainSeq { get; set; }

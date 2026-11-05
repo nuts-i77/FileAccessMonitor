@@ -24,6 +24,7 @@ public class AccessDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<AccessRecord>(entity =>
         {
             entity.HasIndex(r => r.FilePath);
+            entity.Property(r => r.AtCreation).HasDefaultValue(false);   // same default as the column the migration adds
             entity.HasIndex(r => r.FolderPath);
             entity.HasIndex(r => r.AccessTime);
             entity.HasIndex(r => r.UserName);

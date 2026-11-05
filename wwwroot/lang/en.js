@@ -366,6 +366,8 @@ window.I18N_EN = {
   'type.permissionChanges': 'Permission changes',
   'type.writeCreate': 'Write / create',
   'badge.denied': 'Denied',
+  'badge.atCreation': 'set at creation',
+  'badge.atCreationTip': 'Windows set the permissions of the new file when it was created (for example, by a copy). Not a change by a user.',
   'filter.result': 'Result',
   'filter.resultAll': 'All (including denied)',
   'filter.deniedOnly': 'Denied only',
