@@ -387,7 +387,7 @@ CREATE TABLE IF NOT EXISTS ""AgentEnrollments"" (
     // v11: denied accesses, rename destinations, permission change details
     await SchemaV19.ApplyAsync(db);
     // v12: tamper detection, report opt-out, file history indexes
-    await SchemaV110.ApplyAsync(db);
+    await SchemaV110.ApplyAsync(db);
     // v13: a Viewer without folders sees nothing (existing ones become "all folders" once)
     await SchemaV111.ApplyAsync(db);
 
@@ -481,10 +481,10 @@ app.UseRequestLocalization(new RequestLocalizationOptions
 
 if (knownProxies.Length > 0) app.UseForwardedHeaders();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(StaticFileCache.CreateOptions()); // .html, .js, .css revalidate on every load
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.MapFallbackToFile("index.html");
+app.MapFallbackToFile("index.html", StaticFileCache.CreateOptions());
 
 app.Run();

@@ -77,7 +77,6 @@ public class AlertService
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private readonly IDataProtector _protector;
-    private readonly IHttpClientFactory _http;
     private readonly AuditLog _audit;
     private readonly ILogger<AlertService> _logger;
 
@@ -88,11 +87,10 @@ public class AlertService
     // Rebuilt when scopes change (ReloadRecipients); null until first needed
     private volatile IReadOnlyList<AlertRecipient>? _recipients;
 
-    public AlertService(IDataProtectionProvider dataProtection, IHttpClientFactory http,
+    public AlertService(IDataProtectionProvider dataProtection,
         AuditLog audit, IServiceScopeFactory scopeFactory, ILogger<AlertService> logger)
     {
         _protector = dataProtection.CreateProtector("FileAccessMonitor.Alerts");
-        _http = http;
         _audit = audit;
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -368,8 +366,16 @@ public class AlertService
             _ => new { text = $"*{title}*\n{body}" },   // Slack incoming webhook
         };
 
-        using var client = string.IsNullOrWhiteSpace(s.ProxyUrl) ? _http.CreateClient() : CreateProxyClient(s);
-        client.Timeout = TimeSpan.FromSeconds(15);
+        // Destinations on this machine or link-local (cloud metadata) are refused; see WebhookGuard
+        // Without a proxy the address is checked where the connection is made (WebhookGuard.Client). A proxy
+        // connects by itself, so there the name is resolved here and checked instead.
+        var proxied = !string.IsNullOrWhiteSpace(s.ProxyUrl);
+        var problem = proxied ? await WebhookGuard.CheckAsync(s.WebhookUrl) : WebhookGuard.Check(s.WebhookUrl);
+        if (problem != WebhookUrlProblem.None)
+            throw new InvalidOperationException(Messages.GetIn("en", problem == WebhookUrlProblem.Forbidden ? "alerts.webhookForbidden" : "alerts.badWebhook"));
+
+        using var proxyClient = proxied ? CreateProxyClient(s) : null;
+        var client = proxyClient ?? WebhookGuard.Client;
         using var response = await client.PostAsJsonAsync(s.WebhookUrl, payload);
         response.EnsureSuccessStatusCode();
     }
@@ -379,7 +385,9 @@ public class AlertService
         var proxy = new WebProxy(s.ProxyUrl!.Trim());
         if (!string.IsNullOrWhiteSpace(s.ProxyUser))
             proxy.Credentials = new NetworkCredential(s.ProxyUser, s.ProxyPassword);
-        return new HttpClient(new SocketsHttpHandler { Proxy = proxy, UseProxy = true }, disposeHandler: true);
+        // Redirects are not followed: a destination must not send this server on to a refused address
+        return new HttpClient(new SocketsHttpHandler { Proxy = proxy, UseProxy = true, AllowAutoRedirect = false },
+            disposeHandler: true) { Timeout = TimeSpan.FromSeconds(15) };
     }
 
     private static async Task SendMailAsync(AlertSettings s, string title, string body, bool highPriority = false)

@@ -38,6 +38,7 @@ public class AlertsController : ControllerBase
     public async Task<IActionResult> Put([FromBody] AlertSettingsRequest req)
     {
         if (Validate(req) is { } error) return BadRequest(new { error });
+        if (await ValidateWebhookAsync(req) is { } webhookError) return BadRequest(new { error = webhookError });
 
         var updated = FromRequest(req);
         _alerts.Save(updated);
@@ -54,6 +55,7 @@ public class AlertsController : ControllerBase
     public async Task<IActionResult> Test([FromBody] AlertSettingsRequest? req = null)
     {
         if (req != null && Validate(req) is { } error) return BadRequest(new { error });
+        if (req != null && await ValidateWebhookAsync(req) is { } webhookError) return BadRequest(new { error = webhookError });
 
         var s = req == null ? _alerts.Settings : FromRequest(req);
         if (!s.HasWebhook && !s.HasMail)
@@ -67,6 +69,19 @@ public class AlertsController : ControllerBase
         if (failed.Count > 0)
             return BadRequest(new { error = Messages.Get("alerts.testFailed", string.Join(" / ", failed.Select(f => $"{f.Channel}: {f.Error}"))) });
         return Ok(new { message = Messages.Get("alerts.testSent") });
+    }
+
+    // A new webhook URL (null keeps the stored one, "" clears it): http(s), and not this machine or a
+    // link-local address. The name is resolved too; the connection is checked again when it is made.
+    internal static async Task<string?> ValidateWebhookAsync(AlertSettingsRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.WebhookUrl)) return null;
+        return await WebhookGuard.CheckAsync(req.WebhookUrl) switch
+        {
+            WebhookUrlProblem.None => null,
+            WebhookUrlProblem.Forbidden => Messages.Get("alerts.webhookForbidden"),
+            _ => Messages.Get("alerts.badWebhook"),
+        };
     }
 
     private static string? Validate(AlertSettingsRequest req)
