@@ -209,7 +209,7 @@ window.I18N_EN = {
   'alerts.proxyUrl': 'Proxy (optional)',
   'alerts.proxyUser': 'Proxy user',
   'alerts.proxyPassword': 'Proxy password',
-  'alerts.proxyHint': 'Set this when the internet is reached through a proxy (webhooks only; email does not use it). The service runs as SYSTEM, so the Windows proxy setting does not apply.',
+  'alerts.proxyHint': 'Set this when the internet is reached through a proxy (webhooks only; email does not use it). The service runs under a service account, so the proxy setting of the signed-in Windows user does not apply.',
   'agents.updateHint': 'The monitoring server runs {v}. Update the agent to the same version.',
   'alerts.agentOffline': 'Agent silent for (min)',
   'audit.a.agent.offline': 'Agent stopped reporting',

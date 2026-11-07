@@ -209,7 +209,7 @@ window.I18N_JA = {
   'alerts.proxyUrl': 'プロキシ（任意）',
   'alerts.proxyUser': 'プロキシのユーザー',
   'alerts.proxyPassword': 'プロキシのパスワード',
-  'alerts.proxyHint': 'インターネット接続にプロキシが必要な場合に指定します（Webhook のみ。メールでは使用しません）。サービスは SYSTEM アカウントで動作するため、Windows のプロキシ設定は使用されません。',
+  'alerts.proxyHint': 'インターネット接続にプロキシが必要な場合に指定します（Webhook のみ。メールでは使用しません）。サービスはサービスアカウントで動作するため、サインインしている Windows ユーザーのプロキシ設定は使用されません。',
   'agents.updateHint': '監視サーバーのバージョンは {v} です。エージェントも同じバージョンに更新してください。',
   'alerts.agentOffline': 'エージェントの無応答（分）',
   'audit.a.agent.offline': 'エージェントの接続途絶',
