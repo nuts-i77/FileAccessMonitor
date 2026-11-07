@@ -18,14 +18,14 @@ public static class MessagesIntegrity
 
     public static readonly IReadOnlyDictionary<string, string> Ja = new Dictionary<string, string>
     {
-        ["integrity.noKey"] = "改ざん検知の鍵(chain.key)を読み込めません。",
-        ["integrity.runNotFound"] = "その検証は見つかりません。",
+        ["integrity.noKey"] = "改ざん検知の鍵（chain.key）を読み込めません。",
+        ["integrity.runNotFound"] = "該当する検証が見つかりません。",
         ["integrity.nothingToAccept"] = "承認する検出結果がありません。",
         ["integrity.accepted"] = "{0} のチェーンを現在の状態から再開し、検出結果を承認しました。",
         ["integrity.anchorInvalid"] = "アンカーではありません。FAM-ANCHOR の行、またはアンカーファイルの内容を貼り付けてください。",
-        ["integrity.alertTitle"] = "改ざん検知: 記録のチェーンが破損しています ({0}: {1})",
-        ["integrity.alertBody"] = "記録がこのプログラム以外で変更、削除、追加された可能性があります。\nチェーン: {0}、検出: {1}、#{2} から、{3} の間。\nサーバー: {4}\n未承認の検出結果: {5} 件\n設定 > 改ざん検知 で場所を確認してください。",
+        ["integrity.alertTitle"] = "改ざん検知: 記録のチェーンが破損しています（{0}: {1}）",
+        ["integrity.alertBody"] = "記録が本プログラム以外で変更・削除・追加された可能性があります。\nチェーン: {0}、検出: {1}、#{2} から、{3} の間。\nサーバー: {4}\n未承認の検出結果: {5} 件\n場所は、［設定］>［改ざん検知］で確認してください。",
         ["integrity.anchorTitle"] = "改ざん検知の日次アンカー",
-        ["integrity.anchorBody"] = "この行をこのマシンの外に保管してください。後で 設定 > 改ざん検知 > アンカーを照合 で保存された記録と比較できます。\n{0}",
+        ["integrity.anchorBody"] = "この行を、このマシンの外に保管してください。後で、［設定］>［改ざん検知］>［アンカーを照合］で、保存された記録と比較できます。\n{0}",
     };
 }

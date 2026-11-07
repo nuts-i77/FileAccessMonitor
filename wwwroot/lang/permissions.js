@@ -175,7 +175,7 @@ Object.assign(window.I18N_JA, {
   'perm.level.read': '読み取り',
   'perm.level.list': '一覧/データの読み取り',
   'perm.level.traverse': 'フォルダの走査',
-  'perm.level.special': '特殊 (0x{h})',
+  'perm.level.special': '特殊（0x{h}）',
   'perm.scope.1': 'このフォルダのみ',
   'perm.scope.2': 'サブフォルダのみ',
   'perm.scope.3': 'このフォルダとサブフォルダ',
