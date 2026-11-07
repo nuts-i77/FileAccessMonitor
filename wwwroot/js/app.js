@@ -1419,8 +1419,9 @@ function showAgentUpdateSteps({ name, os, version }) {
     steps.push([t('agents.howWindows'), [
       'try {',
       "  [Net.ServicePointManager]::SecurityProtocol = 'Tls12'",
-      `  Invoke-WebRequest ${base}/${exe} -OutFile $env:TEMP\${exe} -UseBasicParsing -ErrorAction Stop`,
-      `  Start-Process $env:TEMP\${exe} -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -ErrorAction Stop`,
+      `  $setup = Join-Path $env:TEMP '${exe}'`,
+      `  Invoke-WebRequest ${base}/${exe} -OutFile $setup -UseBasicParsing -ErrorAction Stop`,
+      "  Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -ErrorAction Stop",
       '  Get-Service FileAccessMonitor*',
       '} catch { Write-Error $_ }',
     ].join('\r\n')]);
