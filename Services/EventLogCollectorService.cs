@@ -65,8 +65,10 @@ public class EventLogCollectorService : BackgroundService
     // Stamped on every record, so records from several file servers can be told apart
     internal static readonly string ServerName = Environment.MachineName;
 
-    private readonly Channel<RawEvent> _queue = Channel.CreateUnbounded<RawEvent>(
-        new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<RawEvent> _queue = NewQueue();
+
+    // Not SingleReader: that channel cannot tell its Count, which Enqueue needs (MaxQueuedEvents)
+    internal static Channel<RawEvent> NewQueue() => Channel.CreateUnbounded<RawEvent>();
 
     // Maps "\Device\HarddiskVolumeX" -> "C:"
     private Dictionary<string, string> _deviceMap = new(StringComparer.OrdinalIgnoreCase);
