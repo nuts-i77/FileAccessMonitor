@@ -4,9 +4,10 @@ using Microsoft.EntityFrameworkCore;
 namespace FileAccessMonitor.Services;
 
 // Notices when an agent stops contacting this server (stopped service, shut-down machine, network)
-// and when it is back, so a file server that stopped being recorded does not go unnoticed.
+// and when it is back, so a file server that stopped being recorded does not go unnoticed. The collector
+// service of this server counts as an agent here: when it is stopped, this machine is not recorded.
 public class AgentMonitorService(IServiceScopeFactory scopeFactory, AlertService alerts, AuditLog audit,
-    ILogger<AgentMonitorService> logger) : BackgroundService
+    LocalCollectorState collector, ILogger<AgentMonitorService> logger) : BackgroundService
 {
     private readonly AgentStatusTracker _tracker = new();
     private readonly AgentOutboxTracker _outboxTracker = new();
@@ -24,6 +25,9 @@ public class AgentMonitorService(IServiceScopeFactory scopeFactory, AlertService
                 var agents = await db.Agents.AsNoTracking()
                     .Select(a => new AgentStatus(a.Name, a.LastSeenAt ?? a.CreatedAt, a.Disabled))
                     .ToListAsync(stoppingToken);
+                // Never heard from since this service started: counted from the start
+                if (ServerConfigService.LocalCollects)
+                    agents.Add(new AgentStatus(ServerConfigService.LocalName, collector.LastSeenUtc ?? startedUtc, false));
 
                 foreach (var (agent, offline) in _tracker.Check(agents, alerts.Settings.AgentOfflineMinutes, startedUtc, DateTime.UtcNow))
                 {

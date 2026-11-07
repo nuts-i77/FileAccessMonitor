@@ -219,8 +219,7 @@ public class PermissionReportService : IPermissionReports
             if (local)
             {
                 if (!ServerConfigService.LocalCollects) throw new PermissionScanException(400, Messages.Get("local.notCollecting"));
-                if (!Directory.Exists(root)) throw new PermissionScanException(400, Messages.Get("path.notFound", root));
-                result = await Task.Run(() => ScanHere(root, o, ct), ct);
+                result = await ScanOnCollectorAsync(root, o, ct);
             }
             else
             {
@@ -245,11 +244,25 @@ public class PermissionReportService : IPermissionReports
         }
     }
 
-    private static JsonObject ScanHere(string root, PermissionScanOptions o, CancellationToken ct)
+    // This machine's folders are read by the collector service (the web service runs without privileges and
+    // may not be allowed to read the shares or their ACLs), as a job like on an agent
+    private async Task<JsonObject> ScanOnCollectorAsync(string root, PermissionScanOptions o, CancellationToken ct)
     {
-        if (OperatingSystem.IsWindows()) return PermissionScanWindows.Scan(root, o, ct);
-        if (OperatingSystem.IsLinux()) return PermissionScanLinux.Scan(root, o, ct);
-        throw new PermissionScanException(400, Messages.Get("perm.notSupported"));
+        using var scope = _scopes.CreateScope();
+        var collector = scope.ServiceProvider.GetRequiredService<LocalCollectorState>();
+        JsonObject result;
+        try
+        {
+            result = await collector.RunJobAsync(_jobs, PermissionContract.JobType, PermissionContract.ToArgs(root, o),
+                TimeSpan.FromSeconds(o.TimeLimitSeconds + 60), ct);
+        }
+        catch (LocalCollectorException ex)
+        {
+            throw new PermissionScanException(ex.Status, ex.Message);
+        }
+        if (result["exists"]?.GetValue<bool>() != true)
+            throw new PermissionScanException(400, Messages.Get("path.notFound", root));
+        return result;
     }
 
     private async Task<(JsonObject Result, string? Version)> ScanOnAgentAsync(string server, string root, PermissionScanOptions o,

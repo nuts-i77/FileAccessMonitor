@@ -1,32 +1,135 @@
 <#
 .SYNOPSIS
-    Called by the installer (setup.exe) to register / remove the Windows service
+    Called by the installer (setup.exe) to register / remove the Windows services
     and the firewall rule. Not intended to be run by hand; use install-service.ps1
     when deploying from a source checkout.
+
+    A monitoring server / standalone install has two services:
+      FileAccessMonitor           the web GUI, API and database, as the virtual account
+                                  NT SERVICE\FileAccessMonitor (no password, no privileges)
+      FileAccessMonitorCollector  records accesses on this server and sets up auditing, as LocalSystem;
+                                  start type Automatic while local collection is on, Disabled otherwise
+    An agent (agent.json in the data folder) has the one service FileAccessMonitor, as LocalSystem.
 #>
 param(
     [Parameter(Mandatory = $true)] [ValidateSet('Install', 'Uninstall', 'Stop')] [string]$Action,
-    [switch]$Firewall
+    [switch]$Firewall,
+    [string]$ExePath = (Join-Path $PSScriptRoot 'FileAccessMonitor.exe')
 )
 
 $ErrorActionPreference = 'Stop'
 $ServiceName    = 'FileAccessMonitor'
 $ServiceDisplay = 'File Access Monitor'
 $ServiceDesc    = 'Monitors and aggregates file access on shared directories.'
+$CollectorName    = 'FileAccessMonitorCollector'
+$CollectorDisplay = 'File Access Monitor Collector'
+$CollectorDesc    = 'Records file accesses on this server for File Access Monitor (runs with the privileges that reading the Security log needs; the web GUI service runs without).'
+$WebAccount     = 'NT SERVICE\FileAccessMonitor'
+$DataDir        = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'FileAccessMonitor'
 $FirewallRule   = $ServiceDisplay   # same name as install-service.ps1
 # Port rules made by v1.5.1 and earlier (or by hand under these names); replaced by $FirewallRule
 $OldRules       = "$ServiceDisplay Web", "$ServiceDisplay Agents"
-$ExePath        = Join-Path $PSScriptRoot 'FileAccessMonitor.exe'
+# SYSTEM and Administrators by SID, so that the names of other languages do not matter
+$SystemSid      = '*S-1-5-18'
+$AdminsSid      = '*S-1-5-32-544'
 
-function Stop-MonitorService {
-    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+function Stop-One([string]$Name) {
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
     if ($svc -and $svc.Status -ne 'Stopped') {
-        Stop-Service -Name $ServiceName -Force
+        Stop-Service -Name $Name -Force
         $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
     }
-    # The exe stays locked until the process has actually exited
+}
+
+# Both services run the same exe, which stays locked until the processes have actually exited
+function Stop-MonitorService {
+    Stop-One $CollectorName
+    Stop-One $ServiceName
     for ($i = 0; $i -lt 30 -and (Get-Process -Name $ServiceName -ErrorAction SilentlyContinue); $i++) {
         Start-Sleep -Seconds 1
+    }
+}
+
+function Remove-Service([string]$Name) {
+    if (Get-Service -Name $Name -ErrorAction SilentlyContinue) {
+        sc.exe delete $Name | Out-Null
+    }
+}
+
+# Creates the service, or updates one that exists (an upgrade, or one registered earlier by
+# install-service.ps1 from another folder)
+function Set-MonitorService([string]$Name, [string]$Display, [string]$Description, [string]$BinPath, [string]$Account, [string]$Start) {
+    if (Get-Service -Name $Name -ErrorAction SilentlyContinue) {
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name ImagePath -Value $BinPath
+        Set-Service -Name $Name -DisplayName $Display -Description $Description
+    } else {
+        New-Service -Name $Name -DisplayName $Display -Description $Description `
+                    -BinaryPathName $BinPath -StartupType Manual | Out-Null
+    }
+    # The account: a virtual account needs no password; LocalSystem none either
+    sc.exe config $Name obj= $Account | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "sc.exe config $Name obj= $Account failed (exit code $LASTEXITCODE)" }
+    sc.exe config $Name start= $Start | Out-Null
+    # Come back after a crash
+    sc.exe failure $Name reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
+}
+
+# Whether this machine records accesses on itself ("LocalCollection": false in settings.json turns it off)
+function Test-LocalCollection {
+    $file = Join-Path $DataDir 'settings.json'
+    if (-not (Test-Path $file)) { return $true }
+    try {
+        $settings = Get-Content -Raw -Path $file | ConvertFrom-Json
+        return -not ($settings.PSObject.Properties['LocalCollection'] -and $settings.LocalCollection -eq $false)
+    } catch {
+        return $true
+    }
+}
+
+# The web service account works in the data folder (database, settings, logs, keys, certificates). The collector\
+# folder is the exception: SYSTEM and Administrators only, plus read on key.hash (set by the collector itself).
+function Set-DataFolderAccess {
+    New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+    $collectorDir = Join-Path $DataDir 'collector'
+    New-Item -ItemType Directory -Force -Path $collectorDir | Out-Null
+    icacls.exe $collectorDir /inheritance:r /grant:r "${SystemSid}:(OI)(CI)F" "${AdminsSid}:(OI)(CI)F" /C /Q | Out-Null
+
+    # The folder itself (new files inherit), then what is in it. Files that carry their own protected ACL (the keys,
+    # certificates, the initial password: SYSTEM and Administrators only before 1.11) do not inherit, so every item
+    # gets the entry itself; collector\ is skipped.
+    icacls.exe $DataDir /grant "${WebAccount}:(OI)(CI)M" /C /Q | Out-Null
+    foreach ($item in Get-ChildItem -LiteralPath $DataDir -Force | Where-Object { $_.Name -ne 'collector' }) {
+        icacls.exe $item.FullName /grant "${WebAccount}:(OI)(CI)M" /T /C /Q | Out-Null
+    }
+}
+
+# Certificates that earlier versions (service as LocalSystem) put in the machine store: their private keys are only
+# open to SYSTEM and Administrators. The web service account is allowed to read them, so that the agent endpoint
+# certificate (which agents pin by fingerprint) and the web GUI's self-signed one stay the same on an upgrade.
+function Grant-CertificateKeyAccess {
+    foreach ($cert in Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -in 'CN=FileAccessMonitor Agent Endpoint', 'CN=FileAccessMonitor Web GUI' }) {
+        try {
+            $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+            if ($null -eq $rsa) { continue }
+            $keyName = if ($rsa -is [System.Security.Cryptography.RSACng]) { $rsa.Key.UniqueName } else { $rsa.CspKeyContainerInfo.UniqueKeyContainerName }
+            foreach ($dir in (Join-Path $env:ProgramData 'Microsoft\Crypto\Keys'), (Join-Path $env:ProgramData 'Microsoft\Crypto\RSA\MachineKeys')) {
+                $keyFile = Join-Path $dir $keyName
+                if (Test-Path -LiteralPath $keyFile) { icacls.exe $keyFile /grant "${WebAccount}:R" /C /Q | Out-Null }
+            }
+        } catch {
+            Write-Warning "Could not give $WebAccount access to the key of '$($cert.Subject)': $($_.Exception.Message)"
+        }
+    }
+}
+
+# The service account cannot create an event source, so it is done here (the daily anchor line goes to it)
+function Initialize-EventSource {
+    try {
+        if (-not [System.Diagnostics.EventLog]::SourceExists('FileAccessMonitor')) {
+            New-EventLog -LogName Application -Source 'FileAccessMonitor'
+        }
+    } catch {
+        Write-Warning "Could not create the event log source FileAccessMonitor: $($_.Exception.Message)"
     }
 }
 
@@ -37,20 +140,32 @@ switch ($Action) {
 
     'Install' {
         $binPath = "`"$ExePath`""
-        if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-            # Upgrade, or a service registered earlier by install-service.ps1 from another folder
-            Stop-MonitorService
-            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name ImagePath -Value $binPath
-            Set-Service -Name $ServiceName -StartupType Automatic
+        $isAgent = Test-Path (Join-Path $DataDir 'agent.json')
+        Stop-MonitorService
+
+        if ($isAgent) {
+            # An agent only collects and sends; it keeps LocalSystem. It has no collector service.
+            Set-MonitorService $ServiceName $ServiceDisplay $ServiceDesc $binPath 'LocalSystem' 'auto'
+            Remove-Service $CollectorName
         } else {
-            New-Service -Name $ServiceName -DisplayName $ServiceDisplay -Description $ServiceDesc `
-                        -BinaryPathName $binPath -StartupType Automatic | Out-Null
+            # The web GUI and database run without privileges. 1.10 and older ran everything as LocalSystem, so an
+            # upgrade switches the account here.
+            Set-MonitorService $ServiceName $ServiceDisplay $ServiceDesc $binPath $WebAccount 'auto'
+            sc.exe sidtype $ServiceName unrestricted | Out-Null
+            Set-DataFolderAccess
+            Grant-CertificateKeyAccess
+            Initialize-EventSource
+
+            # Recording on this machine is the collector's job. It stays registered while local collection is off
+            # (disabled), so that "local-collection on" only has to enable it.
+            $collect = Test-LocalCollection
+            Set-MonitorService $CollectorName $CollectorDisplay $CollectorDesc "$binPath collector" 'LocalSystem' $(if ($collect) { 'auto' } else { 'disabled' })
         }
 
         # One rule for the program, so the web GUI port and the agent port are both covered, also
         # after a port is changed. An upgrade keeps an earlier rule even when the task was not
         # ticked this time (silent upgrades only remember the tasks of the last install).
-        # A firewall problem must not keep the service from starting.
+        # The collector listens on nothing. A firewall problem must not keep the service from starting.
         try {
             $old = Get-NetFirewallRule -DisplayName $OldRules -ErrorAction SilentlyContinue
             $rule = Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue
@@ -66,14 +181,17 @@ switch ($Action) {
             Write-Warning "Could not update the firewall rule: $($_.Exception.Message)"
         }
 
+        # The web service first: it makes the certificate the collector trusts
         Start-Service -Name $ServiceName
+        if (-not $isAgent -and (Test-LocalCollection)) {
+            Start-Service -Name $CollectorName
+        }
     }
 
     'Uninstall' {
         Stop-MonitorService
-        if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-            sc.exe delete $ServiceName | Out-Null
-        }
+        Remove-Service $CollectorName
+        Remove-Service $ServiceName
         Get-NetFirewallRule -DisplayName (@($FirewallRule) + $OldRules) -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     }
 }

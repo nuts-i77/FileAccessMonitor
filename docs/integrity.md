@@ -152,6 +152,7 @@ Paste a stored `FAM-ANCHOR` line, or the content of a downloaded anchor file, in
 
 - Records saved before 1.10 are not in the chain and not protected. The page says "N records from before tamper detection started (date) are not protected." They are deleted by date when their retention period ends, as before.
 - Tamper detection **finds** changes. It does not prevent or undo them; for that you need backups.
+- The key and the database are on the same monitoring server, so this alone is not storage that an administrator cannot change. If you rely on it as an audit trail, send the anchors (and preferably the original event log / syslog) to **a separate store that administrators of the monitoring server cannot rewrite**: an append-only log server, a SIEM, WORM storage, or a mailbox managed by someone else. Do not keep the credentials for that store on the monitoring server.
 
 ---
 

@@ -12,6 +12,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
+// The collector keeps everything in its own folder (AppPaths.DataDir is that folder in its process)
+if (AppPaths.CollectorMode) LocalCollector.EnsureFolder(AppPaths.DataDir);
 var logDir = Path.Combine(AppPaths.DataDir, "logs");
 Directory.CreateDirectory(logDir);
 
@@ -22,7 +24,7 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
     .WriteTo.Console()
     .WriteTo.File(
-        path: Path.Combine(logDir, "app-.log"),
+        path: Path.Combine(logDir, AppPaths.CollectorMode ? "collector-.log" : "app-.log"),
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: 14,
         outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
@@ -51,7 +53,22 @@ if (args.Length > 0 && args[0] == "local-collection")
         return;
     }
     SettingsStore.Update(root => root[ServerConfigService.LocalCollectionKey] = args[1] == "on");
-    Console.WriteLine($"Collection on this server: {args[1]}. Restart the service to apply.");
+    Console.WriteLine($"Collection on this server: {args[1]}.");
+    // Collecting is done by the separate, privileged collector service; the web service only shows it
+    Console.WriteLine(args[1] == "on"
+        ? OperatingSystem.IsWindows()
+            ? "Start the collector: sc.exe config FileAccessMonitorCollector start= auto && sc.exe start FileAccessMonitorCollector. Restart the FileAccessMonitor service to apply."
+            : "Start the collector: systemctl enable --now fileaccessmonitor-collector. Restart the web service to apply: systemctl restart fileaccessmonitor."
+        : OperatingSystem.IsWindows()
+            ? "Stop the collector: sc.exe stop FileAccessMonitorCollector && sc.exe config FileAccessMonitorCollector start= disabled. Restart the FileAccessMonitor service to apply."
+            : "Stop the collector: systemctl disable --now fileaccessmonitor-collector. Restart the web service to apply: systemctl restart fileaccessmonitor.");
+    return;
+}
+// "collector": the privileged process that records accesses on this machine for the web service
+// (its own Windows service / systemd unit; see CollectorHost)
+if (args.Length > 0 && args[0] == "collector")
+{
+    Environment.ExitCode = await CollectorHost.RunAsync(args[1..]);
     return;
 }
 // "web-https on|off|status [--pfx file --pfx-password pw] [--redirect-port n]": HTTPS for the web GUI
@@ -134,8 +151,17 @@ else if (webHttps.Enabled)
 // a registration code). Always open, so agents can be added without restarting; the firewall
 // decides whether file servers can reach it. "Agents:Enabled": false in settings.json turns it off.
 var agentPort = AgentEndpoint.Port(builder.Configuration);
-if (AgentEndpoint.Enabled(builder.Configuration) && AgentEndpoint.Initialize(Log.Logger) is { } agentCert)
-    builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(agentPort, listen => listen.UseHttps(agentCert)));
+if (AgentEndpoint.Enabled(builder.Configuration))
+{
+    if (AgentEndpoint.Initialize(Log.Logger) is { } agentCert)
+        builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(agentPort, listen => listen.UseHttps(agentCert)));
+}
+else if (ServerConfigService.LocalCollects)
+{
+    // Agents are off, but the local collector (a separate process) still reports over loopback
+    if (AgentEndpoint.Initialize(Log.Logger, forAgents: false) is { } agentCert)
+        builder.WebHost.ConfigureKestrel(options => options.ListenLocalhost(agentPort, listen => listen.UseHttps(agentCert)));
+}
 
 // Tamper detection: new records and operation-log entries get their place in the hash chain on save
 builder.Services.AddSingleton<ChainInterceptor>();
@@ -225,20 +251,11 @@ builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<UserScopeService>();
 builder.Services.AddScoped<ServerConfigService>();
 builder.Services.AddSingleton<AgentJobs>();
-builder.Services.AddSingleton<IRecordSink, LocalRecordSink>();
-// Collecting on this machine: the Security log on Windows, Samba's audit lines on Linux. Auditing
-// for its folders is set up the way an agent does it (IAgentPlatform).
-if (ServerConfigService.LocalCollects && OperatingSystem.IsWindows())
-{
-    builder.Services.AddSingleton<SaclManagerService>();
-    builder.Services.AddSingleton<IAgentPlatform, WindowsAgentPlatform>();
-    builder.Services.AddHostedService<EventLogCollectorService>();
-}
-else if (ServerConfigService.LocalCollects && OperatingSystem.IsLinux())
-{
-    builder.Services.AddSingleton<IAgentPlatform, SambaPlatform>();
-    builder.Services.AddHostedService<SambaAuditCollector>();
-}
+// Collecting on this machine (the Security log on Windows, Samba's audit lines on Linux), setting up
+// auditing and scanning folders need privileges the web part does not have. They are done by the
+// collector, a separate process that reports to the agent port like an agent (see LocalCollector); the web
+// part queues jobs for it (AgentJobs) and remembers when it was last heard from.
+builder.Services.AddSingleton<LocalCollectorState>();
 builder.Services.AddHostedService<AgentMonitorService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RetentionService>());

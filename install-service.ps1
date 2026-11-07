@@ -1,9 +1,11 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Registers FileAccessMonitor.exe (from .\publish\) as a Windows Service.
+    Registers FileAccessMonitor.exe (from .\publish\) as Windows services:
+    File Access Monitor (web GUI and database, as the virtual account NT SERVICE\FileAccessMonitor) and
+    File Access Monitor Collector (records accesses on this server, as LocalSystem).
     .NET runtime is NOT required on this machine (self-contained binary).
-    Use -Uninstall to stop and remove the service.
+    Use -Uninstall to stop and remove the services.
 
 .EXAMPLE
     .\install-service.ps1            # Install and start
@@ -13,21 +15,14 @@ param(
     [switch]$Uninstall
 )
 
-$ServiceName    = "FileAccessMonitor"
-$ServiceDisplay = "File Access Monitor"
-$ServiceDesc    = "Monitors and aggregates file access on shared directories."
-$PublishDir     = Join-Path $PSScriptRoot "publish"
-$ExePath        = Join-Path $PublishDir "FileAccessMonitor.exe"
+$PublishDir = Join-Path $PSScriptRoot "publish"
+$ExePath    = Join-Path $PublishDir "FileAccessMonitor.exe"
+$Script     = Join-Path $PSScriptRoot "installer\service.ps1"
 
+# The same script as the installer runs: accounts, folder permissions, event log source, firewall rule
 if ($Uninstall) {
-    Write-Host "Stopping and removing service..." -ForegroundColor Yellow
-    if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-        sc.exe delete $ServiceName | Out-Null
-        Write-Host "Removed: $ServiceName" -ForegroundColor Green
-    } else {
-        Write-Host "Service not found: $ServiceName"
-    }
+    Write-Host "Stopping and removing the services..." -ForegroundColor Yellow
+    & $Script -Action Uninstall -ExePath $ExePath
     return
 }
 
@@ -37,41 +32,18 @@ if (-not (Test-Path $ExePath)) {
     exit 1
 }
 
-# Remove existing service if present
-if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-    Write-Host "Removing existing service..."
-    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    sc.exe delete $ServiceName | Out-Null
-    Start-Sleep -Seconds 2
-}
+Write-Host "Registering the services..." -ForegroundColor Yellow
+& $Script -Action Install -Firewall -ExePath $ExePath
 
-# Register service
-Write-Host "Registering service..." -ForegroundColor Yellow
-New-Service -Name $ServiceName `
-            -DisplayName $ServiceDisplay `
-            -Description $ServiceDesc `
-            -BinaryPathName "`"$ExePath`"" `
-            -StartupType Automatic | Out-Null
-
-# Start service
-Start-Service -Name $ServiceName
-$svc   = Get-Service -Name $ServiceName
-$color = if ($svc.Status -eq 'Running') { 'Green' } else { 'Red' }
-Write-Host "Service status: $($svc.Status)" -ForegroundColor $color
-
-# Firewall rule for the program (web GUI 8080 and agent port 8443)
-Write-Host "Adding firewall rule (FileAccessMonitor.exe)..."
-$fwRule = Get-NetFirewallRule -DisplayName $ServiceDisplay -ErrorAction SilentlyContinue
-if (-not $fwRule) {
-    New-NetFirewallRule -DisplayName $ServiceDisplay `
-        -Direction Inbound -Protocol TCP -Program $ExePath `
-        -Action Allow -Profile Any | Out-Null
-    Write-Host "  -> Firewall rule added." -ForegroundColor Green
-} else {
-    Write-Host "  -> Firewall rule already exists. Skipped."
+foreach ($name in "FileAccessMonitor", "FileAccessMonitorCollector") {
+    $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+    if (-not $svc) { continue }
+    $color = if ($svc.Status -eq 'Running') { 'Green' } elseif ($svc.StartType -eq 'Disabled') { 'Gray' } else { 'Red' }
+    Write-Host "$name : $($svc.Status) (start type: $($svc.StartType))" -ForegroundColor $color
 }
 
 Write-Host "`n=== Installation complete ===" -ForegroundColor Cyan
 Write-Host "Web GUI: http://localhost:8080"
 Write-Host "Remote:  http://<server-ip>:8080"
 Write-Host "To use HTTPS: .\publish\FileAccessMonitor.exe web-https on, then Restart-Service FileAccessMonitor"
+Write-Host "Not collecting on this server (monitoring only): .\publish\FileAccessMonitor.exe local-collection off, then run this script again"

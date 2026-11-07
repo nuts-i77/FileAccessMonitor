@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FileAccessMonitor.Tests;
 
+[Collection("LocalCollects")] // these tests switch LocalCollects, which the local collector tests read
 public class ServerConfigTests
 {
     [Fact]

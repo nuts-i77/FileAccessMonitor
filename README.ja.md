@@ -22,7 +22,7 @@ FileAccessMonitor は次の 2 つの役割で動きます。
 |---|---|---|---|---|
 | OS | Windows Server 2016 以降、Windows 10/11 | systemd が動く x86-64 の Linux（Rocky Linux 9.4 で確認） | Windows Server 2016 以降、Windows 10/11 | systemd が動く x86-64 の Linux（Ubuntu 24.04、Rocky Linux 9.4 で確認） |
 | 記録する対象 | 1 台構成の場合: このサーバーの共有フォルダ（Windows の監査ログ） | `--collect` の場合: このサーバーの Samba 共有 | このサーバーの共有フォルダ（Windows の監査ログ） | Samba 4.x の共有（SMB 経由のアクセス） |
-| 権限 | 導入に管理者権限（サービスは SYSTEM で動作） | 導入に root（監視専用は専用ユーザー、`--collect` は root で動作） | 導入に管理者権限（SYSTEM で動作） | root |
+| 権限 | 導入に管理者権限（Web GUI のサービスは権限なしで動作。ローカル収集では 2 つ目のサービス「コレクター」が SYSTEM で動作） | 導入に root（Web GUI は専用ユーザーで動作。`--collect` では 2 つ目のサービス「コレクター」が root で動作） | 導入に管理者権限（SYSTEM で動作） | root |
 | ネットワーク | 受信: TCP 8080（Web 画面）、8443（エージェント） | 受信: TCP 8080、8443 | 送信: 監視サーバーの 8443 のみ | 送信: 監視サーバーの 8443 のみ |
 | 配布ファイル | `FileAccessMonitor-Setup-<版>.exe` | `fileaccessmonitor-server` の rpm / deb（または tar.gz） | `FileAccessMonitor-Setup-<版>.exe`（役割で「エージェント」を選択） | `fileaccessmonitor-agent` の rpm / deb（または tar.gz） |
 | 手順 | [インストーラーで導入する](#インストーラーで導入する推奨) | [8. Linux の監視サーバー](#8-linux-の監視サーバー) | [6. 複数のファイルサーバーから収集する](#6-複数のファイルサーバーから収集するエージェント) | [7. Linux のファイルサーバー](#7-linux-のファイルサーバーsamba-エージェント) |
@@ -38,7 +38,7 @@ FileAccessMonitor は次の 2 つの役割で動きます。
 [Releases](https://github.com/nuts-i77/FileAccessMonitor/releases) から `FileAccessMonitor-Setup-<バージョン>.exe` をダウンロードし、Windows のファイルサーバー（監視サーバーを別のマシンにする場合はそのマシン）で実行します。インストーラーは次の処理を行います。
 
 - `C:\Program Files\FileAccessMonitor` にインストール
-- Windows サービス `FileAccessMonitor` を登録して起動
+- Windows サービスを登録して起動: `FileAccessMonitor`（Web GUI とデータベース。仮想サービスアカウント `NT SERVICE\FileAccessMonitor` で、権限なしで動作）と、監視サーバーのみを選んだ場合を除き `FileAccessMonitorCollector`（「File Access Monitor Collector」。SYSTEM で動作し、アクセスの記録と監査の設定を担当）。エージェントの導入では、サービスは `FileAccessMonitor`（SYSTEM）のみです。詳しくは[どのアカウントが何を実行するか](#どのアカウントが何を実行するか)を参照してください
 - サーバーの使い方を選択: **1 台構成 / 監視サーバー**（このサーバーのアクセスを記録し、Web GUI を表示）、**監視サーバーのみ**（Web GUI を表示し[エージェント](#6-複数のファイルサーバーから収集するエージェント)から記録を受け取る。このサーバー自身のアクセスは記録せず、監査の設定も変更しない）、**エージェント**
 - Web GUI のポートを指定（既定値は 8080）。必要なら FileAccessMonitor.exe の受信を許可するファイアウォール規則も追加（Web GUI のポートとエージェント用ポート 8443）
 
@@ -65,7 +65,7 @@ FileAccessMonitor は次の 2 つの役割で動きます。
 .\install-service.ps1
 ```
 
-- `FileAccessMonitor` という名前の Windows サービスとして登録・自動起動
+- Windows サービス `FileAccessMonitor` と `FileAccessMonitorCollector` として登録・自動起動（[どのアカウントが何を実行するか](#どのアカウントが何を実行するか)を参照）
 - FileAccessMonitor.exe のファイアウォール受信規則を追加（TCP 8080、エージェント用の 8443）
 
 WinRM が使える環境では、開発 PC からビルドとデプロイを一度に行えます。
@@ -79,7 +79,7 @@ WinRM が使える環境では、開発 PC からビルドとデプロイを一�
 ブラウザで `https://<サーバー>:8080` を開きます（新規インストールは自己署名証明書の HTTPS なので、ブラウザーに警告が一度表示されます。1.9 より前から更新した環境は、切り替えるまで `http://` のままです。[通信の暗号化](#セキュリティ)を参照）。
 
 - ユーザー名: `admin`
-- パスワード: 初回起動時にランダム生成され、サーバーの以下のファイルに保存されます（SYSTEM / Administrators のみ読み取り可）
+- パスワード: 初回起動時にランダム生成され、サーバーの以下のファイルに保存されます（SYSTEM / Administrators と Web GUI のサービスアカウントのみ読み取り可）
 
   ```
   C:\ProgramData\FileAccessMonitor\initial-admin-password.txt
@@ -119,7 +119,7 @@ wevtutil sl Security /ms:1073741824   # 1GB
 
 1 つの画面で、複数のファイルサーバーの記録を見られます。Web GUI を表示するサーバー（監視サーバー）には通常どおりインストールし、他のファイルサーバーには **エージェント** としてインストールします（収集と送信のみを行います）。監視サーバーはファイルサーバーの 1 台でも、**監視サーバーのみ** としてインストールした別のマシン（Windows または [Linux](#8-linux-の監視サーバー)）でも構いません。
 
-インストール済みの監視サーバーで、自分自身のアクセスを記録するか（監視専用にするか）を切り替えるには、管理者の PowerShell で `C:\Program Files\FileAccessMonitor` にある `FileAccessMonitor.exe local-collection off`（または `on`）を実行し、サービスを再起動します（Linux では `sudo fileaccessmonitor-server --collect` または `--monitor-only`）。今の状態は **設定 → アプリ情報** に表示されます。
+インストール済みの監視サーバーで、自分自身のアクセスを記録するか（監視専用にするか）を切り替えるには、管理者の PowerShell で `C:\Program Files\FileAccessMonitor` にある `FileAccessMonitor.exe local-collection off`（または `on`）を実行し、サービスを再起動します。このコマンドは設定を変えるだけなので、コレクターのサービスも有効化または無効化してください。`sc.exe config FileAccessMonitorCollector start= auto` と `sc.exe start FileAccessMonitorCollector`（無効にする場合は `start= disabled` と `sc.exe stop FileAccessMonitorCollector`）を実行します。インストーラーをもう一度実行しても同じ設定になります。Linux では `sudo fileaccessmonitor-server --collect` または `--monitor-only` がすべて行います。今の状態は **設定 → アプリ情報** に表示されます。
 
 1. ファイルサーバーから監視サーバーの TCP **8443**（エージェント用ポート）に接続できるようにします。監視サーバーは常にこのポートで待ち受けており、インストーラーのファイアウォールのオプションで許可できます。この規則は FileAccessMonitor.exe を許可するので、Web GUI のポートとエージェント用ポートの両方が対象です
 2. **設定 → エージェント** で **登録コードを発行** を押します。ファイルサーバーから監視サーバーへ別の名前や IP アドレスで接続する場合は、アドレスを変更して **反映** を押します。表示された接続文字列をコピーします（24 時間有効、1 回だけ使えます）
@@ -204,7 +204,7 @@ sudo apt install ./fileaccessmonitor-server_<バージョン>-1_amd64.deb    # U
 
 ```sh
 fileaccessmonitor-server                        # モード、ポート、サービスの状態を表示
-sudo fileaccessmonitor-server --collect         # このマシンの Samba のアクセスも記録（root で動きます）
+sudo fileaccessmonitor-server --collect         # このマシンの Samba のアクセスも記録（コレクターのサービスが root で動きます）
 sudo fileaccessmonitor-server --monitor-only    # 監視専用に戻す
 sudo fileaccessmonitor-server --port 8090       # Web GUI のポート（既定は 8080）
 sudo fileaccessmonitor-server --https on|off    # Web GUI の HTTPS（セキュリティの項を参照）
@@ -212,7 +212,7 @@ sudo fileaccessmonitor-server --https on|off    # Web GUI の HTTPS（セキュ�
 
 パッケージ管理を使わない場合は `FileAccessMonitor-<バージョン>-linux-x64-server.tar.gz` を展開し、`sudo sh install.sh` を実行します（オプション: `--collect`、`--monitor-only`、`--port <番号>`、`--https on|off`）。
 
-- `/opt/fileaccessmonitor` に導入され、systemd のサービス `fileaccessmonitor` として動きます（ログ: `journalctl -u fileaccessmonitor`）。記録と設定は `/var/lib/fileaccessmonitor` にあり、サービスのアカウントだけが読めます。改ざん検知の鍵 `chain.key` と `chain-head.json` もここにあるため、データベースと一緒にバックアップしてください
+- `/opt/fileaccessmonitor` に導入され、systemd のサービス `fileaccessmonitor` として、権限のない専用ユーザー `fileaccessmonitor` で動きます（ログ: `journalctl -u fileaccessmonitor`）。`--collect` を指定すると、systemd のサービス `fileaccessmonitor-collector` が root で動き、このマシンの Samba のアクセスを記録します（ログ: `journalctl -u fileaccessmonitor-collector`）。1.10 以前で `--collect` にしていた場合は、更新時に以前の root 用 drop-in がこのサービスに置き換わります。記録と設定は `/var/lib/fileaccessmonitor` にあり、サービスのアカウントだけが読めます。コレクターの状態は `/var/lib/fileaccessmonitor/collector` にあります（`key.hash` を除き root のみ）。改ざん検知の鍵 `chain.key` と `chain-head.json` もここにあるため、データベースと一緒にバックアップしてください
 - `https://<サーバー>:8080` を開き、`admin` でログインします（新規インストールは自己署名証明書の HTTPS で、ブラウザーに警告が一度表示されます）。初期パスワードは `/var/lib/fileaccessmonitor/initial-admin-password.txt` にあります（`sudo cat` で表示）
 - ファイアウォールが有効な場合は TCP 8080 と 8443 を開けてください（例: `firewall-cmd --permanent --add-port=8080/tcp --add-port=8443/tcp && firewall-cmd --reload`、`ufw allow 8080/tcp && ufw allow 8443/tcp`）。パッケージはファイアウォールを変更しません
 - 更新（新しいパッケージを入れる、または `install.sh` をもう一度実行）では、モードとポートを引き継ぎます
@@ -222,7 +222,8 @@ sudo fileaccessmonitor-server --https on|off    # Web GUI の HTTPS（セキュ�
 
 ## セキュリティ
 
-- **JWT 署名鍵**: 初回起動時にランダム生成し `C:\ProgramData\FileAccessMonitor\jwt.key`（SYSTEM / Administrators のみ読み取り可）に保存します。`appsettings.json` に 32 バイト以上の `Jwt:Key` を設定した場合はそちらを使用します
+- **権限の分離**: Web GUI・API・データベースは昇格した権限では動作しません（[どのアカウントが何を実行するか](#どのアカウントが何を実行するか)を参照）。権限が必要な処理（Security ログの読み取り、SACL の設定、共有フォルダとアクセス権のスキャン）は、2 つ目のプロセスであるコレクターが行います。コレクターには Web インターフェースも待ち受けポートもありません。両者はエージェント用ポートにループバックアドレスで接続し、コレクターは SYSTEM（root）だけが読めるランダムな秘密情報で自分を証明します。Web GUI 側が持つのはそのハッシュだけです。
+- **JWT 署名鍵**: 初回起動時にランダム生成し `C:\ProgramData\FileAccessMonitor\jwt.key`（SYSTEM / Administrators と Web GUI のサービスアカウントのみ読み取り可）に保存します。`appsettings.json` に 32 バイト以上の `Jwt:Key` を設定した場合はそちらを使用します
 - **ログイン試行制限**: 5 回連続で失敗すると、そのアカウントは 15 分間ロックされます
 - **閲覧範囲**: 管理者は **設定 → ユーザー管理** で、Viewer が見られるフォルダを限定できます（例: 部署ごとの共有フォルダ）。そのユーザーには、CSV 出力や未使用ファイルを含め、指定したフォルダ配下の記録だけが表示されます。通知先メールアドレスを指定すると、そのフォルダでのアラートもメールで届きます。Admin と、フォルダを指定していない Viewer は全体を見られます。変更は次の操作から反映されます
 - **ログイン状態**: ログインは `Jwt:ExpiresHours`（既定 24 時間）有効ですが、ユーザーの削除・ロール変更・パスワード変更／リセットを行うと、その時点で無効になります
@@ -246,6 +247,16 @@ sudo fileaccessmonitor-server --https on|off    # Web GUI の HTTPS（セキュ�
 
 脆弱性を見つけた場合は、公開 Issue ではなく [SECURITY.md](SECURITY.md) の手順（非公開報告）でご連絡ください。
 
+### どのアカウントが何を実行するか
+
+| | Windows | Linux |
+|---|---|---|
+| Web GUI・API・データベース・通知・エージェント用ポート | サービス `FileAccessMonitor`。仮想サービスアカウント `NT SERVICE\FileAccessMonitor`（パスワードなし、権限なし） | systemd `fileaccessmonitor`、ユーザー `fileaccessmonitor` |
+| このサーバーでの記録、監査の設定、フォルダとアクセス権のスキャン（ローカル収集がオンのときのみ） | サービス `FileAccessMonitorCollector`、SYSTEM | systemd `fileaccessmonitor-collector`、root |
+| エージェント | サービス `FileAccessMonitor`、SYSTEM（従来どおり） | systemd `fileaccessmonitor-agent`、root |
+
+コレクターは、同じプログラムを引数 `collector` で起動したものです。組み込みのエージェントのように動作し、記録を `https://127.0.0.1:<エージェント用ポート>` に送ります（その証明書はフィンガープリントで信頼します）。監視フォルダと記録ルールは Web サービスから受け取り、Web GUI からの処理（SACL の設定、未使用ファイルのスキャン、アクセス権のスキャン）を実行します。登録は不要です。**設定 → エージェント** には、このサーバーの行（状態のみ）として表示され、コレクターが停止すると、接続が途絶えたエージェントと同様に通知されます。コレクターが動いていない間は GUI にその旨が表示され、記録は作られません（エージェントが停止しているときと同様、その間のイベントは Security ログに残ります）。コレクターの状態はデータフォルダ内の `collector\` にあり、Web サービスからは読めません。
+
 ## 設定
 
 ### appsettings.json（`publish\` 内）
@@ -265,9 +276,11 @@ sudo fileaccessmonitor-server --https on|off    # Web GUI の HTTPS（セキュ�
 | ファイル | 内容 |
 |---|---|
 | `settings.json` | 監視フォルダ・記録するイベント種別・逆引き DNS サーバー・保持期間・通知設定（GUI から変更）、このサーバー自身のアクセスを記録するか（`LocalCollection`）、Web GUI の HTTPS（`Web:Https`。`web-https` が書き込み） |
-| `web-https.pfx` / `web-user.pfx` | Web GUI の証明書（Linux の自己署名証明書と、`--pfx` で指定した証明書）。Windows の自己署名証明書はマシンの証明書ストアに保存 |
+| `web-https.pfx` / `web-user.pfx` | Web GUI の証明書（自己署名証明書と、`--pfx` で指定した証明書）。1.10 以前の Windows では自己署名証明書をマシンの証明書ストアに保存していました。ストアに残っている証明書は、そのまま使用されます |
+| `agent-endpoint.pfx` | エージェント用ポートの証明書（自己署名。エージェントはフィンガープリントで固定します）。1.10 以前がマシンの証明書ストアに作成した証明書もそのまま使用されるため、フィンガープリントは変わりません |
 | `fileaccess.db` | アクセス記録（SQLite） |
-| `logs\app-YYYYMMDD.log` | アプリケーションログ（14 日保持） |
+| `logs\app-YYYYMMDD.log` | Web サービスのアプリケーションログ（14 日保持） |
+| `collector\` | コレクターのサービスの状態。SYSTEM と Administrators のみアクセス可（Web サービスは、コレクターの秘密情報のハッシュ `collector\key.hash` だけ読めます）: `key.secret`、`settings.json`（このサーバーの監視フォルダと記録ルールの写し）、`outbox\`、`logs\collector-YYYYMMDD.log` |
 | `jwt.key` | JWT 署名鍵 |
 | `chain.key` | 改ざん検知の鍵。`fileaccess.db` と一緒にバックアップしてください（なければ古い記録を検証できません） |
 | `chain-head.json` | 改ざん検知が最後に確認したチェーンの末尾。`fileaccess.db` と一緒にバックアップしてください |
@@ -285,7 +298,7 @@ sudo fileaccessmonitor-server --https on|off    # Web GUI の HTTPS（セキュ�
 | アクセス権 | 監視フォルダとその配下の、最後のスキャン時点での権限。単に継承しているだけでない項目、広いアクセス（Everyone、Authenticated Users など）、継承を切っているフォルダを表示します。スキャンは管理者だけが開始できます。フォルダの閲覧範囲を持つ Viewer は、自分のフォルダについて保存済みの結果を見られます |
 | 設定 | 監視フォルダ、ユーザー管理、記録ルール（除外・連続した読み取りのまとめ）、逆引き DNS、データ保持期間、通知、定期レポート、改ざん検知、操作ログ |
 
-通知（Teams / Slack / Webhook / メール）は、1 人のユーザーが数分以内に設定件数以上のファイルを削除・書き込み・読み取りしたとき（大量読み取りは既定でオフ）、1 人のユーザーが設定回数以上アクセスを拒否されたとき（**拒否の連続**。既定は 5 分で 20 回）、ランサムウェアに似た動きがあったとき（**緊急**。下記）と、記録が途切れたとき（Security ログのイベントが収集前に上書きされた、またはログが消去された。消去したユーザーも通知。Linux のサーバーでは journald が監査ログを捨てた、またはジャーナルに残っていなかった）に送信します。連絡が途絶えたエージェントも通知します。インターネットへの接続にプロキシが必要な場合は、通知設定でプロキシを指定してください（Webhook のみ。サービスは SYSTEM で動くため、Windows のプロキシ設定は使われません）。
+通知（Teams / Slack / Webhook / メール）は、1 人のユーザーが数分以内に設定件数以上のファイルを削除・書き込み・読み取りしたとき（大量読み取りは既定でオフ）、1 人のユーザーが設定回数以上アクセスを拒否されたとき（**拒否の連続**。既定は 5 分で 20 回）、ランサムウェアに似た動きがあったとき（**緊急**。下記）と、記録が途切れたとき（Security ログのイベントが収集前に上書きされた、またはログが消去された。消去したユーザーも通知。Linux のサーバーでは journald が監査ログを捨てた、またはジャーナルに残っていなかった）に送信します。連絡が途絶えたエージェントも通知します。インターネットへの接続にプロキシが必要な場合は、通知設定でプロキシを指定してください（Webhook のみ。サービスはサービスアカウントで動くため、ログオンしているユーザーの Windows のプロキシ設定は使われません）。
 
 Webhook の宛先には、このマシン自身（localhost、`127.x.x.x`、`::1`）、リンクローカルアドレス（クラウドのメタデータ用アドレスを含む `169.254.x.x` と `fe80::`）、未指定アドレス、マルチキャストアドレスは指定できません。URL の保存時と、接続時の両方で確認するため、名前解決の結果がこれらのアドレスになる場合も拒否されます。リダイレクトには従いません。ネットワーク内のチャットサーバー向けに、プライベートアドレス（`10.x`、`172.16-31.x`、`192.168.x`）は使用できます。
 
@@ -402,7 +415,7 @@ GitHub Actions（`.github/workflows/ci.yml`）で push / Pull Request ごとに�
 
 ## アンインストール
 
-インストーラーで導入した場合は、**設定 → アプリ** から **File Access Monitor** をアンインストールします。サービスとファイアウォール規則は削除されます。アクセス記録・設定・鍵は `C:\ProgramData\FileAccessMonitor\` に残るので、不要であればそのフォルダを削除してください。監査エントリ (SACL) も削除する場合は、アンインストールの前に `C:\Program Files\FileAccessMonitor\scripts\restore-audit.ps1` を実行してください。
+インストーラーで導入した場合は、**設定 → アプリ** から **File Access Monitor** をアンインストールします。サービス（コレクターを含む）とファイアウォール規則は削除されます。アクセス記録・設定・鍵は `C:\ProgramData\FileAccessMonitor\` に残るので、不要であればそのフォルダを削除してください。監査エントリ (SACL) も削除する場合は、アンインストールの前に `C:\Program Files\FileAccessMonitor\scripts\restore-audit.ps1` を実行してください。
 
 ソースから導入した場合:
 

@@ -7,12 +7,12 @@ Wants=network-online.target
 Type=notify
 ExecStart=/opt/fileaccessmonitor/FileAccessMonitor
 WorkingDirectory=/opt/fileaccessmonitor
-# Monitoring only; fileaccessmonitor-server --collect runs it as root and --port sets the web GUI
-# port, through drop-ins in /etc/systemd/system/fileaccessmonitor.service.d
+# Always an unprivileged account. Recording this machine's own Samba accesses is done by the separate
+# fileaccessmonitor-collector.service (root), which fileaccessmonitor-server --collect enables;
+# --port sets the web GUI port through a drop-in in /etc/systemd/system/fileaccessmonitor.service.d
 User=fileaccessmonitor
 Restart=always
 RestartSec=10
-# Stop the server first; it ends the journalctl it reads from itself
 KillMode=mixed
 
 [Install]

@@ -55,7 +55,7 @@ Write-Host "[3/4] Deploying..." -ForegroundColor Cyan
 
 $targetDir = Invoke-Command -Session $session -ScriptBlock {
     param($RemotePath)
-    Stop-Service FileAccessMonitor -Force -ErrorAction SilentlyContinue
+    Stop-Service FileAccessMonitorCollector, FileAccessMonitor -Force -ErrorAction SilentlyContinue   # same exe; no collector before 1.11
     # Wait until the process actually exits (up to 30s)
     $waited = 0
     while ($waited -lt 30) {
@@ -91,6 +91,8 @@ $status = Invoke-Command -Session $session -ScriptBlock {
     $oldConfig = "$RemotePath\appsettings.json"
     if (Test-Path $oldConfig) { Remove-Item $oldConfig -Force }
     Start-Service FileAccessMonitor
+    $collector = Get-Service FileAccessMonitorCollector -ErrorAction SilentlyContinue
+    if ($collector -and $collector.StartType -ne 'Disabled') { Start-Service FileAccessMonitorCollector }
     Start-Sleep -Seconds 2
     (Get-Service FileAccessMonitor).Status
 } -ArgumentList $RemotePath

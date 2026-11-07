@@ -1385,7 +1385,20 @@ async function loadAgents() {
     const auditPolicy = a => a.auditPolicyOk == null ? '-'
       : a.auditPolicyOk ? `<span class="badge bg-success-subtle text-success-emphasis">${t('agents.auditOn')}</span>`
         : `<span class="badge bg-danger" title="${t(isLinux(a) ? 'agents.auditOffHintLinux' : 'agents.auditOffHint')}">${t('agents.auditOff')}</span>`;
-    tbody.innerHTML = d.agents.map(a => `<tr>
+    // This server's own collector service: not an agent (no buttons), but what it records is only as good as it is running
+    const c = d.local && d.local.status;
+    const localRow = !c ? '' : `<tr>
+      <td><i class="bi bi-hdd-fill me-1 text-muted"></i>${esc(d.local.name)} <span class="small text-muted">(${t('agents.localCollector')})</span></td>
+      <td>${os({ os: c.os })}</td>
+      <td>${fmtDate(c.lastSeen)}</td>
+      <td>${esc(c.version || '-')}</td>
+      <td>${c.connected ? `<span class="badge bg-success">${t('agents.stOnline')}</span>` : `<span class="badge bg-warning text-dark">${t('agents.stOffline')}</span>`}</td>
+      <td class="text-end">${outbox({ outboxCount: c.outbox })}</td>
+      <td>${auditPolicy({ auditPolicyOk: c.auditPolicyOk, os: c.os })}</td>
+      <td></td>
+    </tr>`;
+    if (c && !c.connected) showAgentsAlert(t('agents.localCollectorOff'), 'warning');
+    tbody.innerHTML = localRow + (d.agents.map(a => `<tr>
       <td><i class="bi bi-hdd me-1 text-muted"></i>${esc(a.name)}</td>
       <td>${os(a)}</td>
       <td>${fmtDate(a.lastSeenAt)}</td>
@@ -1399,7 +1412,8 @@ async function loadAgents() {
         <button class="btn btn-sm btn-outline-danger py-0" title="${t('agents.remove')}"
           data-name="${esc(a.name)}" onclick="deleteAgent('${esc(a.id)}', this.dataset.name)"><i class="bi bi-trash"></i></button>
       </div></td>
-    </tr>`).join('') || `<tr><td colspan="8" class="text-muted text-center py-3">${t('agents.none')}</td></tr>`;
+    </tr>`).join('')
+      || (localRow ? '' : `<tr><td colspan="8" class="text-muted text-center py-3">${t('agents.none')}</td></tr>`));
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" class="text-danger small p-3">${esc(e.message)}</td></tr>`;
   }
@@ -1697,6 +1711,10 @@ async function loadServerSettings() {
       || (d.monitoredPaths || []).map(p => ({ path: p, eventTypes: ['Read', 'Write', 'Delete'] }));
     pathAudit = { applied: lowerKeys(d.auditApplied), version: d.auditVersion || 0, os: d.os || '' };
     renderPathsList(configs);
+    // This server's collector service does the recording and the auditing set-up: say so when it is not there
+    if (d.collector && !d.collector.connected)
+      document.getElementById('monitoredPathsList').insertAdjacentHTML('afterbegin',
+        `<div class="alert alert-warning small">${t('agents.localCollectorOff')}</div>`);
     const dnsInput = document.getElementById('dnsServerInput');
     if (dnsInput) dnsInput.value = d.dnsServer || '';
   } catch (e) {
