@@ -1393,7 +1393,7 @@ async function loadAgents() {
       <td>${fmtDate(c.lastSeen)}</td>
       <td>${esc(c.version || '-')}</td>
       <td>${c.connected ? `<span class="badge bg-success">${t('agents.stOnline')}</span>` : `<span class="badge bg-warning text-dark">${t('agents.stOffline')}</span>`}</td>
-      <td class="text-end">${outbox({ outboxCount: c.outbox })}</td>
+      <td class="text-end">${outbox({ outboxCount: c.outbox, outboxFull: c.outboxFull })}</td>
       <td>${auditPolicy({ auditPolicyOk: c.auditPolicyOk, os: c.os })}</td>
       <td></td>
     </tr>`;

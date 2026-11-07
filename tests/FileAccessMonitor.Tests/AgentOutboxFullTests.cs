@@ -121,7 +121,7 @@ public class AgentOutboxFullTests : IDisposable
             http.Connection.LocalPort = AgentEndpoint.Port(config);
             http.Request.Scheme = "https";
             http.Request.Headers.Authorization = "Bearer a1." + secret;
-            var controller = new AgentApiController(db, null!, null!, config, NullLogger<AgentApiController>.Instance)
+            var controller = new AgentApiController(db, null!, null!, config, NullLogger<AgentApiController>.Instance, new LocalCollectorState())
             {
                 ControllerContext = new ControllerContext { HttpContext = http },
             };

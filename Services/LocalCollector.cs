@@ -136,18 +136,23 @@ public class LocalCollectorState
     private string? _version, _os;
     private bool? _auditPolicyOk;
     private int _outbox;
+    private bool _outboxFull;
 
     public DateTime? LastSeenUtc { get { lock (_gate) return _lastSeenUtc; } }
     public string? Version { get { lock (_gate) return _version; } }
     public string? Os { get { lock (_gate) return _os; } }
     public bool? AuditPolicyOk { get { lock (_gate) return _auditPolicyOk; } }
     public int Outbox { get { lock (_gate) return _outbox; } }
+    public bool OutboxFull { get { lock (_gate) return _outboxFull; } }
 
     public bool IsConnected(DateTime nowUtc) => LastSeenUtc is { } seen && nowUtc - seen < ConnectedWindow;
 
     public void Touch(DateTime nowUtc) { lock (_gate) _lastSeenUtc = nowUtc; }
 
-    public void SetOutbox(int waiting) { lock (_gate) _outbox = waiting; }
+    public void SetOutbox(int waiting, bool full)
+    {
+        lock (_gate) { _outbox = waiting; _outboxFull = full; }
+    }
 
     public void Heartbeat(HeartbeatRequest req, DateTime nowUtc)
     {
@@ -156,6 +161,7 @@ public class LocalCollectorState
             _lastSeenUtc = nowUtc;
             _version = req.Version;
             if (req.OutboxCount is { } count) _outbox = count;
+            _outboxFull = req.OutboxFull ?? false;
             _auditPolicyOk = req.AuditPolicyOk;
             if (req.Os is { Length: > 0 } os) _os = os.Length <= 100 ? os : os[..100];
         }
@@ -191,8 +197,8 @@ public class LocalCollectorException(int status, string message, string? reporte
 }
 
 // What the GUI shows about the collector service of this server
-public record CollectorStatus(bool Connected, DateTime? LastSeen, bool? AuditPolicyOk, string? Version, int Outbox, string? Os)
+public record CollectorStatus(bool Connected, DateTime? LastSeen, bool? AuditPolicyOk, string? Version, int Outbox, bool OutboxFull, string? Os)
 {
     public static CollectorStatus From(LocalCollectorState state) =>
-        new(state.IsConnected(DateTime.UtcNow), state.LastSeenUtc, state.AuditPolicyOk, state.Version, state.Outbox, state.Os);
+        new(state.IsConnected(DateTime.UtcNow), state.LastSeenUtc, state.AuditPolicyOk, state.Version, state.Outbox, state.OutboxFull, state.Os);
 }

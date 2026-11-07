@@ -91,16 +91,12 @@ public class AgentApiController : ControllerBase
             agent.LastBatchSeq = await LoadLocalSeqAsync();
         }
         // Batches waiting behind this one, so a backlog shows in the GUI while it is being sent
-<<<<<<< HEAD
-        if (int.TryParse(Request.Headers["X-Agent-Outbox"], out var waiting)) agent.OutboxCount = waiting;
-        agent.OutboxFull = Request.Headers["X-Agent-Outbox-Full"] == "1";
-=======
         if (int.TryParse(Request.Headers["X-Agent-Outbox"], out var waiting))
         {
             agent.OutboxCount = waiting;
-            if (isLocal) _collector.SetOutbox(waiting);
         }
->>>>>>> worktree-agent-a0d942653ff7c21b7
+        agent.OutboxFull = Request.Headers["X-Agent-Outbox-Full"] == "1";
+        if (isLocal) _collector.SetOutbox(agent.OutboxCount, agent.OutboxFull);
         if (batch.Seq <= agent.LastBatchSeq)
         {
             await _db.SaveChangesAsync();
