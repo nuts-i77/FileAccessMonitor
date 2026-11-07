@@ -353,6 +353,7 @@ window.I18N_JA = {
   'audit.a.export.csv': 'CSV 出力',
   'audit.a.permissions.scan': 'アクセス権のスキャン',
   'audit.a.permissions.export': 'アクセス権の CSV 出力',
+  'audit.a.permissions.delete': 'アクセス権のスキャン結果を削除',
   'audit.a.report.settings': '定期レポート設定の変更',
   'audit.a.report.test': 'テストレポート',
   'audit.a.report.sent': '定期レポートを送信',

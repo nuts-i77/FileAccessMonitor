@@ -353,6 +353,7 @@ window.I18N_EN = {
   'audit.a.export.csv': 'CSV export',
   'audit.a.permissions.scan': 'Permissions scan',
   'audit.a.permissions.export': 'Permissions CSV export',
+  'audit.a.permissions.delete': 'Permissions scan result deleted',
   'audit.a.report.settings': 'Scheduled report settings changed',
   'audit.a.report.test': 'Test report',
   'audit.a.report.sent': 'Scheduled report sent',

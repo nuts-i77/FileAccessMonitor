@@ -75,6 +75,23 @@ public class PermissionsController : ControllerBase
         includeFiles = last?.Result["includeFiles"]?.GetValue<bool>(),
     };
 
+    // DELETE /api/permissions/scan?server=&folder= : removes the stored scan of a folder below a monitored
+    // folder (one scanned on its own). A monitored folder's scan is replaced by scanning it again.
+    [HttpDelete("scan")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> DeleteScan([FromQuery] string? server, [FromQuery] string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder)) return BadRequest(new { error = Messages.Get("path.required") });
+        folder = PathText.Normalize(folder);
+        var (name, _, error) = await ResolveAsync(server, forScan: false);
+        if (error != null) return error;
+        if ((await _servers.GetPathsAsync(server)).Any(c => PathText.Normalize(c.Path).Equals(folder, PathText.ComparisonOf(folder))))
+            return BadRequest(new { error = Messages.Get("perm.deleteMonitored") });
+        if (!_reports.Delete(name, folder)) return NotFound(new { error = Messages.Get("perm.noScan") });
+        await _audit.WriteAsync(HttpContext, "permissions.delete", $"server={name}, folder={folder}");
+        return Ok(new { message = Messages.Get("perm.deleted", folder) });
+    }
+
     public record ScanRequest(string? Server, string? Folder, int? MaxFolders, int? MaxFiles, int? MaxDepth, bool? IncludeFiles);
 
     // POST /api/permissions/scan : scans the folder now and stores the result

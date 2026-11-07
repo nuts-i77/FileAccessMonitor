@@ -45,6 +45,7 @@ function permBuildShell() {
           <div class="col-auto">
             <button class="btn btn-sm btn-primary d-none" id="permScanBtn" onclick="permScan()"><i class="bi bi-arrow-repeat me-1"></i>${t('perm.scan')}</button>
             <button class="btn btn-sm btn-outline-secondary" id="permCsvBtn" onclick="permExport()" disabled><i class="bi bi-download me-1"></i>${t('perm.csv')}</button>
+            <button class="btn btn-sm btn-outline-danger d-none" id="permDeleteBtn" onclick="permDeleteScan()" title="${esc(t('perm.deleteScanTip'))}"><i class="bi bi-trash me-1"></i>${t('perm.deleteScan')}</button>
           </div>
         </div>
         <!-- Admins: a folder below a monitored folder, and whether files are read too -->
@@ -157,7 +158,26 @@ function permQuery() {
     (q ? `&q=${encodeURIComponent(q)}` : '');
 }
 
+// Admins may delete the result of a subfolder scan (the one picked in the list)
+function permUpdateDeleteBtn() {
+  const picked = permRoots.find(r => r.path === document.getElementById('permFolder').value);
+  document.getElementById('permDeleteBtn').classList.toggle('d-none', !(permCanScan && picked?.subfolder));
+}
+
+async function permDeleteScan() {
+  const folder = document.getElementById('permFolder').value;
+  if (!folder || !confirm(t('perm.deleteScanConfirm', { p: folder }))) return;
+  try {
+    await api(`/api/permissions/scan?server=${encodeURIComponent(document.getElementById('permServer').value)}&folder=${encodeURIComponent(folder)}`,
+      { method: 'DELETE' });
+    await permLoadRoots();
+  } catch (e) {
+    permShowError(e.message);
+  }
+}
+
 async function permLoadReport(page) {
+  permUpdateDeleteBtn();
   if (!document.getElementById('permFolder').value) return;
   permPage = page;
   const el = document.getElementById('permResults');

@@ -184,6 +184,15 @@ public class PermissionReportService : IPermissionReports
         return await ReadAsync(file, ct);
     }
 
+    // Removes the stored scan of (server, root); false when there was none
+    public bool Delete(string server, string root)
+    {
+        var file = FileOf(CanonicalServer(server), PathText.Normalize(root));
+        if (!File.Exists(file)) return false;
+        File.Delete(file);
+        return true;
+    }
+
     public async Task<List<StoredPermissionReport>> ListAsync(CancellationToken ct = default)
     {
         var list = new List<StoredPermissionReport>();

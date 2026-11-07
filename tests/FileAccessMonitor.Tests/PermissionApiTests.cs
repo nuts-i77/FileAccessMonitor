@@ -403,4 +403,31 @@ public class PermissionApiTests : IDisposable
         // outside the monitored folder: refused, no job
         Assert.Equal(400, Status(await c.Scan(new PermissionsController.ScanRequest("FS04", @"D:\Other", null, null, null, null), default)));
     }
+
+    [Fact]
+    public async Task A_subfolder_scan_can_be_deleted_but_not_the_scan_of_a_monitored_folder()
+    {
+        using (var scope = _services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
+            db.Agents.Add(new Agent { Id = "a5", Name = "FS05", KeyHash = "x", Version = "1.10.0" });
+            db.SaveChanges();
+            await scope.ServiceProvider.GetRequiredService<ServerConfigService>()
+                .SavePathsAsync("FS05", [new PathConfig(@"D:\Share", ["Read"])]);
+        }
+        var b = new PermissionResultBuilder("windows", @"D:\Share", new PermissionScanOptions());
+        await _reports.WriteAsync(new StoredPermissionReport { Server = "FS05", Root = @"D:\Share", Os = "windows", ScannedAt = ScannedAt, Result = b.Build() }, default);
+        await _reports.WriteAsync(new StoredPermissionReport { Server = "FS05", Root = @"D:\Share\Docs", Os = "windows", ScannedAt = ScannedAt,
+            Result = new PermissionResultBuilder("windows", @"D:\Share\Docs", new PermissionScanOptions()).Build() }, default);
+        var c = Controller();
+
+        Assert.Equal(400, Status(await c.DeleteScan("FS05", @"d:\share\")));          // the monitored folder itself
+        Assert.Equal(200, Status(await c.DeleteScan("FS05", @"d:\share\docs")));
+        Assert.Null(await _reports.GetLastAsync("FS05", @"D:\Share\Docs"));
+        Assert.NotNull(await _reports.GetLastAsync("FS05", @"D:\Share"));
+        Assert.Equal(404, Status(await c.DeleteScan("FS05", @"D:\Share\Docs")));       // already gone
+        Assert.Contains(typeof(PermissionsController).GetMethod(nameof(PermissionsController.DeleteScan))!
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), false)
+            .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>(), a => a.Roles == "Admin");
+    }
 }
