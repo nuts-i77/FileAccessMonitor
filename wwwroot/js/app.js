@@ -1350,7 +1350,9 @@ async function loadAgents() {
         : `<span class="badge bg-warning text-dark">${t('agents.stOffline')}</span>`;
     // Agents should run the monitoring server's version (local builds, 0.0.0, are not compared)
     const version = a => esc(a.version || '-') + (a.version && d.serverVersion !== '0.0.0' && a.version !== d.serverVersion
-      ? ` <span class="badge bg-warning text-dark" title="${t('agents.updateHint', { v: esc(d.serverVersion) })}">${t('agents.needsUpdate')}</span>` : '');
+      ? ` <span class="badge bg-warning text-dark" title="${t('agents.updateHint', { v: esc(d.serverVersion) })}">${t('agents.needsUpdate')}</span>`
+        + ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline" data-name="${esc(a.name)}" data-os="${esc(a.os || '')}"
+            data-version="${esc(d.serverVersion)}" onclick="showAgentUpdateSteps(this.dataset)">${t('agents.howToUpdate')}</button>` : '');
     // A growing outbox means records are not getting through
     const outbox = a => a.outboxCount > 0
       ? `<span class="${a.outboxCount >= 100 ? 'text-danger fw-semibold' : 'text-warning'}">${fmtNum(a.outboxCount)}</span>` : '0';
@@ -1381,6 +1383,48 @@ async function loadAgents() {
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" class="text-danger small p-3">${esc(e.message)}</td></tr>`;
   }
+}
+
+// How to bring an agent to the monitoring server's version, to run on that file server. Nothing is
+// sent to the agent: updating stays a step an administrator takes on the file server itself.
+const RELEASES = 'https://github.com/nuts-i77/FileAccessMonitor/releases';
+
+function showAgentUpdateSteps({ name, os, version }) {
+  const v = version;
+  const base = `${RELEASES}/download/v${v}`;
+  const linux = os && !/^windows/i.test(os);
+  const deb = /ubuntu|debian/i.test(os || '');
+  const steps = [];
+  if (!linux) {
+    const exe = `FileAccessMonitor-Setup-${v}.exe`;
+    steps.push([t('agents.howWindows'),
+      `[Net.ServicePointManager]::SecurityProtocol = 'Tls12'\r\nInvoke-WebRequest ${base}/${exe} -OutFile $env:TEMP\\${exe} -UseBasicParsing\r\nStart-Process $env:TEMP\\${exe} -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait\r\nGet-Service FileAccessMonitor*`]);
+  }
+  if (linux && deb || !os) {
+    const pkg = `fileaccessmonitor-agent_${v}-1_amd64.deb`;
+    steps.push([t('agents.howDeb'), `curl -fLO ${base}/${pkg}\nsudo apt install ./${pkg}\nsystemctl status fileaccessmonitor-agent --no-pager`]);
+  }
+  if (linux && !deb || !os) {
+    const pkg = `fileaccessmonitor-agent-${v}-1.x86_64.rpm`;
+    steps.push([t('agents.howRpm'), `curl -fLO ${base}/${pkg}\nsudo dnf install ./${pkg}\nsystemctl status fileaccessmonitor-agent --no-pager`]);
+  }
+  const blocks = steps.map(([label, cmd], i) => `
+    <div class="mb-3">
+      <div class="small fw-semibold mb-1">${esc(label)}</div>
+      <div class="input-group">
+        <textarea class="form-control font-monospace small" rows="${cmd.split('\n').length}" readonly id="agentUpdateCmd${i}">${esc(cmd)}</textarea>
+        <button class="btn btn-outline-secondary" title="${esc(t('agents.copy'))}" onclick="copyBox(document.getElementById('agentUpdateCmd${i}'), this)"><i class="bi bi-clipboard"></i></button>
+      </div>
+    </div>`).join('');
+  const notes = [
+    /-/.test(v) ? `<div class="alert alert-warning py-2 small">${t('agents.howPrerelease', { v: esc(v) })}</div>` : '',
+    linux || !os ? `<p class="small text-muted mb-1">${t('agents.howTarGz')}</p>` : '',
+    `<p class="small text-muted mb-1">${t('agents.howKeep')}</p>`,
+    `<p class="small mb-0"><a href="${RELEASES}/tag/v${encodeURIComponent(v)}" target="_blank" rel="noopener">${t('agents.howRelease', { v: esc(v) })}</a></p>`,
+  ].join('');
+  document.getElementById('detailModalTitle').textContent = t('agents.howTitle', { n: name, v });
+  document.getElementById('detailModalBody').innerHTML = blocks + notes;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('detailModal')).show();
 }
 
 async function createEnrollment() {
@@ -1424,7 +1468,10 @@ function alertInModal(message) {
 // navigator.clipboard exists only on HTTPS or localhost; the GUI is usually opened over plain
 // HTTP, so fall back to copying the selected text
 async function copyConnection(btn) {
-  const box = document.getElementById('enrollConnection');
+  await copyBox(document.getElementById('enrollConnection'), btn);
+}
+
+async function copyBox(box, btn) {
   let copied = false;
   try {
     await navigator.clipboard.writeText(box.value);
