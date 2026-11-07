@@ -233,13 +233,47 @@ async function loadTimeline() {
     options: {
       responsive: true,
       interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { position: 'top' } },
+      plugins: { legend: { position: 'top' }, tooltip: { callbacks: { footer: () => t('dash.clickHint') } } },
       scales: {
         x: { ticks: { maxRotation: 45 } },
         y: { beginAtZero: true, ticks: { precision: 0 } }
-      }
+      },
+      // A point: that day's records of that type; elsewhere on the day: all of that day's records
+      ...chartClick((chart, e) => {
+        const point = chart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, false)[0];
+        const index = point?.index ?? chart.getElementsAtEventForMode(e, 'index', { intersect: false }, false)[0]?.index;
+        if (index == null) return null;
+        return () => openSearch({ type: point ? types[point.datasetIndex] : '', from: dates[index], to: dates[index] });
+      })
     }
   });
+}
+
+// ── Dashboard click-through ───────────────────────────────────────
+// pick(chart, event) returns what to open for the place under the pointer, or null; it also sets the cursor
+function chartClick(pick) {
+  return {
+    onHover: (e, _, chart) => { e.native.target.style.cursor = pick(chart, e) ? 'pointer' : 'default'; },
+    onClick: (e, _, chart) => pick(chart, e)?.(),
+  };
+}
+
+// The records behind a dashboard value in the search tab: a type, and a day range or the dashboard's period
+function openSearch({ type = '', from = '', to = '' } = {}) {
+  document.getElementById('searchResult').value = '';
+  document.getElementById('searchType').value = type;
+  document.getElementById('searchTagInput').value = '';
+  searchKeywords = [];
+  renderSearchTags();
+  if (from || to) {
+    document.getElementById('searchDateFrom').value = from;
+    document.getElementById('searchDateTo').value = to;
+    selectSearchPeriodCustom();
+  } else {
+    selectSearchPeriodQuick(getDays());
+  }
+  switchTab('search', document.querySelector('#mainTabs [data-tab="search"]'));
+  runSearch();
 }
 
 // ── Pie Chart ─────────────────────────────────────────────────────
@@ -262,10 +296,23 @@ async function loadTypeChart() {
       plugins: {
         legend: { position: 'bottom' },
         tooltip: {
-          callbacks: { label: ctx => ` ${ctx.label}: ${fmtNum(ctx.parsed)}` }
+          callbacks: { label: ctx => ` ${ctx.label}: ${fmtNum(ctx.parsed)}`, footer: () => t('dash.clickHint') }
         }
-      }
+      },
+      // A slice: the records of that type in the dashboard's period
+      ...chartClick((chart, e) => {
+        const slice = chart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, false)[0];
+        return slice ? () => openSearch({ type: types[slice.index].type }) : null;
+      })
     }
+  });
+}
+
+// A row of a top-10 bar chart (anywhere along it, the label too): the file or folder detail
+function topRowClick(open) {
+  return chartClick((chart, e) => {
+    const row = chart.getElementsAtEventForMode(e, 'y', { intersect: false }, false)[0];
+    return row ? () => open(row.index) : null;
   });
 }
 
@@ -295,8 +342,9 @@ async function loadTopCharts() {
     options: {
       indexAxis: 'y',
       responsive: true,
-      plugins: { legend: { position: 'top' } },
-      scales: { x: { stacked: true, ticks: { precision: 0 } }, y: { stacked: true } }
+      plugins: { legend: { position: 'top' }, tooltip: { callbacks: { footer: () => t('dash.clickHint') } } },
+      scales: { x: { stacked: true, ticks: { precision: 0 } }, y: { stacked: true } },
+      ...topRowClick(i => showFileDetail(files[i].filePath, files[i].serverName || ''))
     }
   });
 
@@ -318,8 +366,9 @@ async function loadTopCharts() {
     options: {
       indexAxis: 'y',
       responsive: true,
-      plugins: { legend: { position: 'top' } },
-      scales: { x: { stacked: true, ticks: { precision: 0 } }, y: { stacked: true } }
+      plugins: { legend: { position: 'top' }, tooltip: { callbacks: { footer: () => t('dash.clickHint') } } },
+      scales: { x: { stacked: true, ticks: { precision: 0 } }, y: { stacked: true } },
+      ...topRowClick(i => showFolderDetail(folders[i].folderPath, folders[i].serverName || ''))
     }
   });
 }

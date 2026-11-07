@@ -29,6 +29,7 @@ window.I18N_JA = {
   'kind.folder': 'フォルダ',
   'type.all': '全種別',
   'dash.timeline': 'アクセス推移',
+  'dash.clickHint': 'クリックで詳細を表示',
   'dash.typePie': 'アクセス種別',
   'dash.topFiles': 'アクセス数 Top 10 ファイル',
   'dash.topFolders': 'アクセス数 Top 10 フォルダ',

@@ -29,6 +29,7 @@ window.I18N_EN = {
   'kind.folder': 'Folder',
   'type.all': 'All Types',
   'dash.timeline': 'Access Trend',
+  'dash.clickHint': 'Click to show the details',
   'dash.typePie': 'Access Types',
   'dash.topFiles': 'Top 10 Files',
   'dash.topFolders': 'Top 10 Folders',
