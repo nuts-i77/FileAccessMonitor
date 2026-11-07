@@ -425,7 +425,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <p>発行時のオプション（<code>PublishSingleFile</code>、<code>SelfContained</code>、<code>win-x64</code>）は <code>build.ps1</code> が指定します。版番号は <code>AssemblyInformationalVersion</code> の <code>+</code> より前を使い（<code>SettingsController.AppVersion</code>）、<code>0.0.0</code> は開発版として扱います（更新のお知らせ・「要更新」の比較対象外）。</p>
 
       <div class="callout warn">
-        <strong>注意：</strong><code>wwwroot/</code> の静的ファイルは EXE に埋め込まれず、ファイルシステムから配信されます。発行フォルダには <code>wwwroot/</code> を含める必要があります。
+        <strong>注意：</strong><code>wwwroot/</code> の静的ファイルは EXE に埋め込まれず、ファイルシステムから配信されます。発行フォルダには <code>wwwroot/</code> を含める必要があります。<code>.html</code>・<code>.js</code>・<code>.css</code> は <code>Cache-Control: no-cache</code> で返し、ブラウザーに毎回確認させます（v1.11、<code>StaticFileCache</code>。更新後に古い <code>app.js</code> が使われないように。<code>/lib</code> 配下は対象外）。
       </div>
     </section>
 
@@ -464,10 +464,10 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <tbody>
             <tr><td>AuditLogs</td><td>操作ログ（Time, UserName, Action, Detail, ClientIp）。ログイン、設定変更、CSV 出力、通知の送信、エージェントの登録・無応答など。Time にインデックス</td></tr>
             <tr><td>CollectorStates</td><td>キー/値。<code>LastRecordId</code> = ローカル収集の Security ログ読み取り位置</td></tr>
-            <tr><td>UserScopes</td><td>Viewer の閲覧範囲（UserId, Paths, NotifyEmail, SendReport（v1.10。範囲つきの定期レポートを送るか。既定 1））。Paths は 1 行 1 件で <code>SERVER|D:\Share</code> または <code>D:\Share</code>（全サーバー）</td></tr>
+            <tr><td>UserScopes</td><td>Viewer の閲覧範囲（UserId, Paths, NotifyEmail, SendReport（v1.10。範囲つきの定期レポートを送るか。既定 1）, AllFolders（v1.11。1 なら全体を見られる。Paths は無視））。Paths は 1 行 1 件で <code>SERVER|D:\Share</code> または <code>D:\Share</code>（全サーバー）</td></tr>
             <tr><td>ChainHeads</td><td>改ざん検知のチェーンごとの末尾（Chain = access | audit、Seq、Hash、UpdatedAt）、旧データの件数（LegacyMaxId、LegacyCount、StartedAt）、検証済みの位置（VerifiedSeq、VerifiedHash、VerifiedAt）（v1.10）</td></tr>
             <tr><td>ChainCheckpoints</td><td>保持期間の削除と承認の位置（Chain、UpToSeq、Hash、DeletedRows、CreatedAt、Reason = genesis | retention | accepted、Note、KeyId、Mac。Mac は前の checkpoint の Mac を含む HMAC）（v1.10）</td></tr>
-            <tr><td>Agents</td><td>エージェント（Id, Name, KeyHash, CreatedAt, LastSeenAt, Version, LastBatchSeq, Disabled, Config, ConfigVersion, OutboxCount, AuditPolicyOk, Os）</td></tr>
+            <tr><td>Agents</td><td>エージェント（Id, Name, KeyHash, CreatedAt, LastSeenAt, Version, LastBatchSeq, Disabled, Config, ConfigVersion, OutboxCount, AuditPolicyOk, Os, OutboxFull, OutboxBytes（v1.11。送信待ちが満杯か、その量））</td></tr>
             <tr><td>AgentEnrollments</td><td>未使用の登録コード（CodeHash, ExpiresAt）。使うと削除</td></tr>
             <tr><td>AspNet*</td><td>ASP.NET Identity（ユーザー、ロール Admin / Viewer ほか）</td></tr>
           </tbody>
@@ -510,7 +510,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
 
       <h3>流れ</h3>
       <pre><code>EventLogWatcher（ブックマークから再開）
-  → Channel&lt;RawEvent&gt;（XML をここで解析して EventRecord を手放す）
+  → Channel&lt;RawEvent&gt;（XML をここで解析して EventRecord を手放す。最大 200,000 件（v1.11）: 送信待ちが満杯でコンシューマーが待っている間に溢れたら、以降はキューに入れず、キューが空になったら最後に入れた記録の次から EventLogWatcher を作り直して読む。件数を数えるため SingleReader にしない）
   → 単一のコンシューマー: ProcessEvent → DeleteTracker / ReadMerger
   → 最大 500 件ずつ IRecordSink.SaveAsync(records, lastRecordId)
        RemoteRecordSink: 送信待ちフォルダに書いてから読み取り位置を保存（AgentSender が送る）
@@ -612,7 +612,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
 
       <h3>送信（AgentSender）</h3>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
-        <li>収集した記録は、まず送信待ちフォルダ <code>outbox\</code> に通し番号のファイルとして書く（最大 2 GB）。読み取り位置は <code>agent-position.txt</code></li>
+        <li>収集した記録は、まず送信待ちフォルダ <code>outbox\</code> に通し番号のファイルとして書く（最大 2 GB）。読み取り位置は <code>agent-position.txt</code>。満杯のときは記録を捨てず、<code>RemoteRecordSink.SaveAsync</code> が 30 秒ごとに空きを確認しながら待つ（v1.11）。その間は読み取り位置が進まないので、記録は Security ログ / ジャーナルに残る。満杯は heartbeat の <code>outboxFull</code>・<code>outboxBytes</code> と batch のヘッダー <code>X-Agent-Outbox-Full: 1</code> で知らせ、監視サーバーは <code>Agents.OutboxFull</code> に保存し、［エージェント］に表示し、満杯になったとき 1 回通知する（<code>AgentOutboxTracker</code>）</li>
         <li>古い順に <code>POST /api/agent/batch</code>。成功したら削除。失敗したら 5 秒から最大 5 分まで間隔を広げて再試行。401 のときは 5 分待つ（無効化・削除されたエージェント）</li>
         <li>監視サーバーは通し番号を確認し、保存済みの番号なら保存せずに成功を返す（応答が失われた再送を二重に保存しない）。記録と番号は 1 トランザクション</li>
         <li>送るものがないときは 1 分ごとに <code>heartbeat</code>（バージョン、送信待ち件数、監査が有効か、OS 名。Linux で監視フォルダがないときの監査は null で、一覧では「-」）。バッチ送信時も <code>X-Agent-Outbox</code> ヘッダーで残り件数を伝える</li>
@@ -753,7 +753,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <li>設定: <code>settings.json</code> の <code>Web:Https</code>（<code>WebTlsSettings</code>: <code>Enabled</code>、<code>Mode</code> = <code>SelfSigned</code> / <code>Pfx</code>、<code>PfxFile</code>、<code>PfxPassword</code>（Data Protection で <code>enc:</code> 付きに暗号化。purpose <code>FileAccessMonitor.WebTls</code>）、<code>RedirectPort</code>）。ポートは従来の Web GUI のポートのまま。保存する URL は <code>http://</code> のままにして、起動時に <code>Program.cs</code> がメモリ上の設定でスキームだけ <code>https</code> に置き換える（インストーラーと <code>--port</code> の書き込みを変えないため）</li>
         <li>自己署名の Web 証明書（<code>WebTls</code> / <code>SelfSignedCertificate</code>）: 件名 <code>CN=FileAccessMonitor Web GUI</code>、RSA 2048 / SHA-256、10 年、サーバー認証の EKU。SAN はマシン名、FQDN、<code>localhost</code>、稼働中のインターフェイスの IPv4 / IPv6（リンクローカルと、Windows の一時 IPv6 は除く）、<code>127.0.0.1</code>、<code>::1</code>。起動のたびに保存済み証明書の SAN と今の名前・アドレスを比べ、足りなければ作り直して指紋をログに出す（有効期限 30 日未満、秘密鍵なしも作り直し）。保存先は Windows が <code>LocalMachine\My</code>、Linux が <code>web-https.pfx</code>（<code>SecretStore.WriteProtected</code>）。エージェント用ポートの証明書（<code>AgentEndpoint</code>）は同じ共通部分を使うが、件名・動作は変えない（エージェントが指紋で固定しているため）</li>
         <li>自分の PFX: <code>web-https on --pfx f --pfx-password p</code>（Linux は <code>--pfx-password-file</code>）が、ファイルを <code>web-user.pfx</code>（保護付き）にコピーし、パスワードを暗号化して保存する。秘密鍵がある・期限切れでないことを確認し、件名・SAN・期限・指紋を表示（マシン名が SAN に合わなければ警告）。<code>--pfx</code> なしの <code>on</code> は自己署名に戻し、保存済みの PFX を消す</li>
-        <li>Kestrel（<code>Program.cs</code>）: 有効なら <code>WebTls.Initialize</code> で証明書を得て <code>ConfigureHttpsDefaults</code> に設定。<strong style="color:var(--fg)">読み込めなければ警告ログを出して HTTP のまま起動する</strong>（GUI に届かなくならないように）。<code>RedirectPort</code> &gt; 0 なら追加の HTTP リスナーを開き、そのポートへの要求だけに <code>308</code> で HTTPS のポートへ転送（ミドルウェア）。TLS ポートで HTTP を見分けることはしないので、切り替え後の古い <code>http://host:8080</code> は TLS エラーになる（転送用ポートがある理由）。HSTS は付けない（自己署名で締め出されないため）。エージェント用の 8443 は独立</li>
+        <li>Kestrel（<code>Program.cs</code>）: 有効なら <code>WebTls.Initialize</code> で証明書を得て <code>ConfigureHttpsDefaults</code> に設定。<strong style="color:var(--fg)">読み込めなければエラーログを出し、同じポートの HTTP をループバック（<code>localhost</code>）だけで開く</strong>（v1.11。そのマシンの管理者は直せるが、ネットワークに平文で流さない。<code>WebTlsStatus.LoopbackOnly</code> と <code>Problem</code> を <code>/api/web-tls</code> で返し、カードに理由を出す。転送用ポートは開かない）。<code>RedirectPort</code> &gt; 0 なら追加の HTTP リスナーを開き、そのポートへの要求だけに <code>308</code> で HTTPS のポートへ転送（ミドルウェア）。TLS ポートで HTTP を見分けることはしないので、切り替え後の古い <code>http://host:8080</code> は TLS エラーになる（転送用ポートがある理由）。HSTS は付けない（自己署名で締め出されないため）。エージェント用の 8443 は独立</li>
         <li>コマンド: <code>FileAccessMonitor.exe web-https on|off|status [--pfx f --pfx-password p] [--redirect-port n]</code>（<code>status</code> は <code>on</code> / <code>off</code> と方式を表示）。Linux は <code>fileaccessmonitor-server --https on|off [--pfx f] [--pfx-password-file f] [--redirect-port n]</code>。反映はサービスの再起動後</li>
         <li>既定: 新規インストールはオン（自己署名）。Windows のインストーラーは「安全な接続」ページ（フルのロールのみ。新規は既定でチェック、1.9 より前からの更新は未チェック。<code>SetPreviousData('Https')</code> で記憶、サイレントは <code>/HTTPS=1|0</code>）で、サービス登録の前に <code>web-https on|off</code> を実行。Linux のパッケージの postinstall と <code>install.sh</code> は新規のときだけ <code>on</code>。更新では変えない</li>
       </ul>
@@ -807,11 +807,11 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
 
       <h3>改ざん検知（<code>ChainInterceptor</code>、<code>ChainHash</code>、<code>IntegrityService</code>、<code>IntegrityBackgroundService</code>、<code>RetentionService</code>、<code>AnchorLog</code>、<code>SecretStore</code>）</h3>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
-        <li>鍵: <code>chain.key</code>（データフォルダ、32 バイトの乱数、<code>SecretStore.GetOrCreateChainKey()</code>）。Windows は SYSTEM / Administrators のみ読み取り可、Linux は所有者だけ読み書き可。<code>KeyId</code> は鍵の SHA-256 の先頭 8 桁（checkpoint に保存）。</li>
+        <li>鍵: <code>chain.key</code>（データフォルダ、32 バイトの乱数、<code>SecretStore.GetOrCreateChainKey()</code>）。Windows は SYSTEM / Administrators と Web サービスのアカウント（v1.11）のみ、Linux は所有者（<code>fileaccessmonitor</code>）だけ読み書き可。<code>KeyId</code> は鍵の SHA-256 の先頭 8 桁（checkpoint に保存）。</li>
         <li>チェーン: 2 本（<code>access</code> = AccessRecords、<code>audit</code> = AuditLogs）。<code>ChainHash = HMAC-SHA256(鍵, 前のハッシュ || 正準形式)</code>。正準形式は、チェーン名、<code>ChainSeq</code>、サーバー名、UTC の ticks、種別、Denied、IsFolder、ユーザー、パス、ファイル名、フォルダ、IP、端末名、NewPath、Detail（audit は Time、ユーザー、Action、Detail、IP）を、フィールドごとに長さ（4 バイト）と UTF-8 の値で連ねたもの（null は長さ -1）。<code>Id</code> は含まない（DB が後で振るため）。</li>
         <li>書き込み（<code>ChainInterceptor</code>、<code>SaveChangesInterceptor</code>）: 追加された行があると、プロセス内のロック（<code>SemaphoreSlim</code>）を取り、連番を振ってヘッドの更新を同じ SaveChanges（同じトランザクション）に入れる。ロックは完了・失敗・キャンセルで解放し、30 秒のウォッチドッグで必ず解放する。失敗時はヘッドを DB から読み直す。チェーンの順は挿入の順で、AccessTime の順ではない（エージェントの遅れた送信のため。だから保持期間の削除も先頭からの接頭辞になる）。</li>
         <li>検証（<code>IntegrityService</code>）: 増分は 15 分ごとに、前回の検証位置から。全件は毎日 03:30（ローカル時刻）と、手動（<code>POST verify</code>）。どちらも短いページ単位で読む（SQLite のロールバックジャーナルは長い読み取りで書き込みを止めるため）。検出の種類: <code>altered</code>、<code>missing</code>、<code>truncatedTail</code>、<code>headMismatch</code>、<code>headRollback</code>、<code>unchained</code>、<code>checkpoint</code>、<code>keyChanged</code>、<code>duplicate</code>。1 か所の改変は 1 件として報告し、以後の行は保存されたハッシュを前として続ける。</li>
-        <li><code>chain-head.json</code>（データフォルダ、SYSTEM / Administrators のみ）: 確認済みの各チェーンの末尾（Seq、Hash、keyId）。古い DB に戻されたこと（<code>headRollback</code>）を見つけるために使う。中身が改ざんされていれば無視して警告を出す。</li>
+        <li><code>chain-head.json</code>（データフォルダ、SYSTEM / Administrators と Web サービスのアカウントのみ）: 確認済みの各チェーンの末尾（Seq、Hash、keyId）。古い DB に戻されたこと（<code>headRollback</code>）を見つけるために使う。中身が改ざんされていれば無視して警告を出す。</li>
         <li>保持期間（<code>RetentionService.CleanupAsync</code>）: 鍵があるとき、チェーンの先頭から、保持期間内で最初に残す記録の直前までを削除し、<code>ChainCheckpoint</code>（reason <code>retention</code>、<code>Mac = HMAC(鍵, chain, UpToSeq, Hash, KeyId, 前の Mac)</code>）を書く。ChainSeq が null で <code>Id ≤ LegacyMaxId</code> の旧行は、従来どおり時刻で削除。遅れて届いた古い日付の記録は、前の記録が消えるまで残る。</li>
         <li>初回起動（<code>SchemaV110Integrity</code>）: 既存の行は計算しない。<code>LegacyMaxId</code> と <code>LegacyCount</code> を記録し、genesis の checkpoint とヘッド（Seq 0）を作る。新しい DB は件数 0。</li>
         <li>承認（<code>POST accept</code>）: 現在の検証済みの位置に、reason <code>accepted</code> の checkpoint を書く。検出は一覧に残る（承認済み）。</li>
@@ -974,6 +974,9 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
 }</code></pre>
       <p>インストーラーは利用者の設定（ポートなど）を <code>appsettings.Production.json</code> に書き、更新時も残します。<code>Jwt:Key</code> は通常指定せず、初回に生成して <code>jwt.key</code> に保存します。リバースプロキシの背後では <code>ReverseProxy:KnownProxies</code> を指定すると、そのプロキシからの <code>X-Forwarded-For</code> を使います。</p>
 
+      <p>Windows のサービスは <code>installer/service.ps1</code> が登録します（v1.11）。監視サーバーでは、Web サービスをいったん LocalSystem で登録し、<code>sc.exe config obj= "NT SERVICE\FileAccessMonitor"</code> で仮想アカウントに切り替えます（<code>Win32_Service.Change</code> は仮想アカウントを受け付けない）。起動して 30 秒動き続けなければ LocalSystem に戻して起動し直し、途中で失敗しても最後に起動を試みるので、更新でサービスが止まったままにはなりません。処理の記録は <code>logs\service-install.log</code>。エラーの画面は <code>SuppressibleMsgBox</code> なので、<code>/SUPPRESSMSGBOXES</code> では出ません。</p>
+      <p>データフォルダのアクセス権（v1.11）: 継承を切り、SYSTEM と Administrators（フルコントロール）と、監視サーバーでは Web サービスのアカウント（変更）だけにします（<code>ProgramData</code> から引き継ぐ Users の読み取りを外す）。1.10 以前の保護付きのファイル（鍵、証明書、初期パスワード）は継承しないので、1 つずつ Web サービスのアカウントを追加します。ファイルに <code>(OI)(CI)</code> を付けると <code>icacls</code> は成功と表示して何もしないため、ファイルには継承の指定を付けません。<code>collector\</code> は SYSTEM と Administrators のみ。</p>
+
       <h3>データフォルダ（<code>C:\ProgramData\FileAccessMonitor</code>）</h3>
       <div class="table-wrap">
         <table>
@@ -998,6 +1001,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
     <section id="alerts">
       <h2>通知</h2>
       <p>Webhook（Teams Workflows / Slack / 汎用 JSON）とメール（SMTP）。通知が有効なときだけ送ります。送信結果は操作ログ <code>alert.sent</code> に残します。Webhook はプロキシ（URL・ユーザー・パスワード）を指定できます。サービスはサービスアカウントで動くため Windows のユーザーのプロキシ設定は使えず、アプリ側で指定します（メールは使わない）。</p>
+      <p>Webhook の宛先の制限（v1.11、<code>WebhookGuard</code>）: ループバック（<code>127.0.0.0/8</code>、<code>::1</code>）、リンクローカル（<code>169.254.0.0/16</code>（クラウドのメタデータ用アドレスを含む）、<code>fe80::/10</code>）、未指定（<code>0.0.0.0</code>、<code>::</code>）、マルチキャスト・ブロードキャストを拒否する（IPv4 射影・NAT64 の形も展開して判定）。プライベートアドレスは許可。保存とテスト送信のとき URL を検査し（<code>http</code> / <code>https</code> 以外、<code>localhost</code> も拒否）、送信時は <code>SocketsHttpHandler.ConnectCallback</code> で名前解決の結果を確かめてから接続する（DNS リバインディング対策）。リダイレクトは追わない。プロキシ経由のときはプロキシが接続するため、送信前に名前解決して確かめる（ベストエフォート）。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>種類</th><th>条件</th></tr></thead>
@@ -1050,13 +1054,13 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <table>
           <thead><tr><th>ロール</th><th>権限</th></tr></thead>
           <tbody>
-            <tr><td><span class="badge badge-viewer">Viewer</span></td><td>閲覧（ダッシュボード・一覧・検索・CSV）、自分のパスワード変更。閲覧範囲があればその範囲だけ、加えて範囲内の未使用ファイル</td></tr>
+            <tr><td><span class="badge badge-viewer">Viewer</span></td><td>閲覧（ダッシュボード・一覧・検索・CSV）、自分のパスワード変更。閲覧範囲（または［すべてのフォルダ］）の記録だけ、加えて範囲内の未使用ファイル。範囲も［すべてのフォルダ］もなければ何も見えない</td></tr>
             <tr><td><span class="badge badge-admin">Admin</span></td><td>全体の閲覧と、すべての設定・ユーザー・エージェント・通知・操作ログ</td></tr>
           </tbody>
         </table>
       </div>
       <h3>閲覧範囲</h3>
-      <p>Viewer ごとに「サーバー＋フォルダ」（サーバー省略で全サーバー）を割り当てます。範囲がない Viewer と Admin は全体を見られます。範囲はリクエストのたびに DB から読み、統計・CSV・保持の件数・未使用ファイルに適用します。</p>
+      <p>Viewer ごとに「サーバー＋フォルダ」（サーバー省略で全サーバー）を割り当てます。Admin と、<code>AllFolders</code> の Viewer は全体を見られます。範囲がない Viewer には何も見えません（v1.11。それまでは全体が見えたため、更新時に範囲のない Viewer を一度だけ <code>AllFolders</code> にする。<code>SchemaV111</code>、印は <code>CollectorStates</code> の <code>Schema.ViewerScope111</code>）。範囲はリクエストのたびに DB から読み、統計・CSV・保持の件数・未使用ファイルに適用します。</p>
     </section>
 
     <!-- ビルド・リリース -->
