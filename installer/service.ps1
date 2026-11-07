@@ -59,6 +59,25 @@ function Remove-Service([string]$Name) {
     }
 }
 
+# The account of a service, only when it changes (an agent stays LocalSystem). Neither a virtual account nor
+# LocalSystem has a password, and sc.exe needs none for them (Win32_Service.Change refuses a virtual account).
+function Set-ServiceAccount([string]$Name, [string]$Account) {
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+    $current = if ($svc.StartName -in 'LocalSystem', 'NT AUTHORITY\SYSTEM', '.\LocalSystem') { 'LocalSystem' } else { $svc.StartName }
+    if ($current -eq $Account) { return }
+    $out = sc.exe config $Name obj= $Account
+    if ($LASTEXITCODE -ne 0) { throw "sc.exe config $Name obj= $Account failed (exit code $LASTEXITCODE): $out" }
+    Write-Output "Account of $Name set to $Account."
+}
+
+# Starts the service and waits until it has stayed up for a while (a web service that cannot use its certificate or
+# its files stops again within seconds). False when it is not running then.
+function Start-AndCheck([string]$Name, [int]$Seconds = 30) {
+    try { Start-Service -Name $Name } catch { Write-Warning "Starting $Name failed: $($_.Exception.Message)" }
+    Start-Sleep -Seconds $Seconds
+    return ((Get-Service -Name $Name).Status -eq 'Running')
+}
+
 # Creates the service, or updates one that exists (an upgrade, or one registered earlier by
 # install-service.ps1 from another folder)
 function Set-MonitorService([string]$Name, [string]$Display, [string]$Description, [string]$BinPath, [string]$Account, [string]$Start) {
@@ -69,14 +88,7 @@ function Set-MonitorService([string]$Name, [string]$Display, [string]$Descriptio
         New-Service -Name $Name -DisplayName $Display -Description $Description `
                     -BinaryPathName $BinPath -StartupType Manual | Out-Null
     }
-    # The account, only when it changes (an agent stays LocalSystem). Neither a virtual account nor LocalSystem has
-    # a password; Win32_Service.Change takes an empty one, which sc.exe cannot be given from PowerShell 5.1.
-    $svc = Get-CimInstance Win32_Service -Filter "Name='$Name'"
-    $current = if ($svc.StartName -in 'LocalSystem', 'NT AUTHORITY\SYSTEM', '.\LocalSystem') { 'LocalSystem' } else { $svc.StartName }
-    if ($current -ne $Account) {
-        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ StartName = $Account; StartPassword = '' }
-        if ($r.ReturnValue -ne 0) { throw "Could not set the account of $Name to $Account (Win32_Service.Change returned $($r.ReturnValue))" }
-    }
+    Set-ServiceAccount $Name $Account
     $out = sc.exe config $Name start= $Start
     if ($LASTEXITCODE -ne 0) { throw "sc.exe config $Name start= $Start failed (exit code $LASTEXITCODE): $out" }
     # Come back after a crash
@@ -151,6 +163,10 @@ try {
 trap {
     Write-Output "ERROR: $($_.Exception.Message)"
     Write-Output $_.ScriptStackTrace
+    # An install that went wrong half way must not leave the service stopped
+    if ($Action -eq 'Install') {
+        try { Start-Service -Name $ServiceName -ErrorAction Stop } catch { Write-Output "Starting $ServiceName failed too: $($_.Exception.Message)" }
+    }
     try { Stop-Transcript | Out-Null } catch { }
     exit 1
 }
@@ -172,7 +188,13 @@ switch ($Action) {
         } else {
             # The web GUI and database run without privileges. 1.10 and older ran everything as LocalSystem, so an
             # upgrade switches the account here.
-            Set-MonitorService $ServiceName $ServiceDisplay $ServiceDesc $binPath $WebAccount 'auto'
+            # If the account cannot be changed, the service keeps LocalSystem and still works (as in 1.10).
+            Set-MonitorService $ServiceName $ServiceDisplay $ServiceDesc $binPath 'LocalSystem' 'auto'
+            try {
+                Set-ServiceAccount $ServiceName $WebAccount
+            } catch {
+                Write-Warning "The web service keeps running as LocalSystem: $($_.Exception.Message)"
+            }
             sc.exe sidtype $ServiceName unrestricted | Out-Null
             Set-DataFolderAccess
             Grant-CertificateKeyAccess
@@ -203,8 +225,16 @@ switch ($Action) {
             Write-Warning "Could not update the firewall rule: $($_.Exception.Message)"
         }
 
-        # The web service first: it makes the certificate the collector trusts
-        Start-Service -Name $ServiceName
+        # The web service first: it makes the certificate the collector trusts. Should it not stay up under its own
+        # account, it goes back to LocalSystem (as in 1.10), so that an upgrade never leaves it stopped.
+        if ($isAgent) {
+            Start-Service -Name $ServiceName
+        } elseif (-not (Start-AndCheck $ServiceName)) {
+            Write-Warning "$ServiceName did not stay running as $WebAccount; going back to LocalSystem. See logs\app-*.log."
+            Stop-One $ServiceName
+            Set-ServiceAccount $ServiceName 'LocalSystem'
+            if (-not (Start-AndCheck $ServiceName)) { throw "$ServiceName does not start; see logs\app-*.log." }
+        }
         if (-not $isAgent -and (Test-LocalCollection)) {
             Start-Service -Name $CollectorName
         }

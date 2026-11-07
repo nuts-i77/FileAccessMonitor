@@ -423,14 +423,14 @@ begin
     if not Enroll(Output) then
     begin
       // Without agent.json the service would start as a standalone install, so leave it off
-      MsgBox(FmtMessage(CustomMessage('EnrollFailed'), [Output]), mbError, MB_OK);
+      SuppressibleMsgBox(FmtMessage(CustomMessage('EnrollFailed'), [Output]), mbError, MB_OK, IDOK);
       Exit;
     end;
   end;
   WizardForm.StatusLabel.Caption := CustomMessage('InstallingService');
   Code := RunServiceScript('-Action Install');
   if Code <> 0 then
-    MsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbError, MB_OK);
+    SuppressibleMsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbError, MB_OK, IDOK);
 end;
 
 procedure InstallFull();
@@ -459,7 +459,7 @@ begin
     Args := Args + ' -Firewall';
   Code := RunServiceScript(Args);
   if Code <> 0 then
-    MsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbError, MB_OK)
+    SuppressibleMsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbError, MB_OK, IDOK)
   else
     Sleep(3000);  // give the service time to create the initial admin password file
 end;
@@ -494,5 +494,5 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and DirExists(DataDir()) and not UninstallSilent() then
-    MsgBox(FmtMessage(CustomMessage('UninstallKeptData'), [DataDir()]), mbInformation, MB_OK);
+    SuppressibleMsgBox(FmtMessage(CustomMessage('UninstallKeptData'), [DataDir()]), mbInformation, MB_OK, IDOK);
 end;
