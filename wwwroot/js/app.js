@@ -1407,22 +1407,32 @@ const RELEASES = 'https://github.com/nuts-i77/FileAccessMonitor/releases';
 
 function showAgentUpdateSteps({ name, os, version }) {
   const v = version;
+  // A test build (1.10.3-rc1) is not on GitHub: its download links would only fail
+  const testBuild = /-/.test(v);
   const base = `${RELEASES}/download/v${v}`;
   const linux = os && !/^windows/i.test(os);
   const deb = /ubuntu|debian/i.test(os || '');
   const steps = [];
-  if (!linux) {
+  if (!testBuild && !linux) {
+    // One block: a failed download stops it before the installer is started
     const exe = `FileAccessMonitor-Setup-${v}.exe`;
-    steps.push([t('agents.howWindows'),
-      `[Net.ServicePointManager]::SecurityProtocol = 'Tls12'\r\nInvoke-WebRequest ${base}/${exe} -OutFile $env:TEMP\\${exe} -UseBasicParsing\r\nStart-Process $env:TEMP\\${exe} -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait\r\nGet-Service FileAccessMonitor*`]);
+    steps.push([t('agents.howWindows'), [
+      'try {',
+      "  [Net.ServicePointManager]::SecurityProtocol = 'Tls12'",
+      `  Invoke-WebRequest ${base}/${exe} -OutFile $env:TEMP\${exe} -UseBasicParsing -ErrorAction Stop`,
+      `  Start-Process $env:TEMP\${exe} -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -ErrorAction Stop`,
+      '  Get-Service FileAccessMonitor*',
+      '} catch { Write-Error $_ }',
+    ].join('\r\n')]);
   }
-  if (linux && deb || !os) {
+  // && stops at the first command that fails
+  if (!testBuild && (linux && deb || !os)) {
     const pkg = `fileaccessmonitor-agent_${v}-1_amd64.deb`;
-    steps.push([t('agents.howDeb'), `curl -fLO ${base}/${pkg}\nsudo apt install ./${pkg}\nsystemctl status fileaccessmonitor-agent --no-pager`]);
+    steps.push([t('agents.howDeb'), `curl -fLO ${base}/${pkg} && \\n  sudo apt install -y ./${pkg} && \\n  systemctl status fileaccessmonitor-agent --no-pager`]);
   }
-  if (linux && !deb || !os) {
+  if (!testBuild && (linux && !deb || !os)) {
     const pkg = `fileaccessmonitor-agent-${v}-1.x86_64.rpm`;
-    steps.push([t('agents.howRpm'), `curl -fLO ${base}/${pkg}\nsudo dnf install ./${pkg}\nsystemctl status fileaccessmonitor-agent --no-pager`]);
+    steps.push([t('agents.howRpm'), `curl -fLO ${base}/${pkg} && \\n  sudo dnf install -y ./${pkg} && \\n  systemctl status fileaccessmonitor-agent --no-pager`]);
   }
   const blocks = steps.map(([label, cmd], i) => `
     <div class="mb-3">
@@ -1432,12 +1442,14 @@ function showAgentUpdateSteps({ name, os, version }) {
         <button class="btn btn-outline-secondary" title="${esc(t('agents.copy'))}" onclick="copyBox(document.getElementById('agentUpdateCmd${i}'), this)"><i class="bi bi-clipboard"></i></button>
       </div>
     </div>`).join('');
-  const notes = [
-    /-/.test(v) ? `<div class="alert alert-warning py-2 small">${t('agents.howPrerelease', { v: esc(v) })}</div>` : '',
-    linux || !os ? `<p class="small text-muted mb-1">${t('agents.howTarGz')}</p>` : '',
-    `<p class="small text-muted mb-1">${t('agents.howKeep')}</p>`,
-    `<p class="small mb-0"><a href="${RELEASES}/tag/v${encodeURIComponent(v)}" target="_blank" rel="noopener">${t('agents.howRelease', { v: esc(v) })}</a></p>`,
-  ].join('');
+  const notes = testBuild
+    ? `<div class="alert alert-warning py-2 small">${t('agents.howPrerelease', { v: esc(v) })}</div>
+       <p class="small mb-0"><a href="${RELEASES}" target="_blank" rel="noopener">${t('agents.howReleases')}</a></p>`
+    : [
+      linux || !os ? `<p class="small text-muted mb-1">${t('agents.howTarGz')}</p>` : '',
+      `<p class="small text-muted mb-1">${t('agents.howKeep')}</p>`,
+      `<p class="small mb-0"><a href="${RELEASES}/tag/v${encodeURIComponent(v)}" target="_blank" rel="noopener">${t('agents.howRelease', { v: esc(v) })}</a></p>`,
+    ].join('');
   document.getElementById('detailModalTitle').textContent = t('agents.howTitle', { n: name, v });
   document.getElementById('detailModalBody').innerHTML = blocks + notes;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('detailModal')).show();
