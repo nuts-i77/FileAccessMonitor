@@ -76,7 +76,8 @@ public static class AccessScope
     public static string Escape(string s) => s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 }
 
-// The signed-in user's scope, or null when they may see everything.
+// The signed-in user's scope: null when they may see everything (Admins, and Viewers set to all folders),
+// otherwise their folders; a Viewer without folders gets an empty list, which matches nothing.
 // Synchronous: a primary-key lookup in a local SQLite file, used once per request.
 public class UserScopeService(AccessDbContext db)
 {
@@ -85,9 +86,11 @@ public class UserScopeService(AccessDbContext db)
         if (user.IsInRole("Admin")) return null;
         var id = user.FindFirstValue(ClaimTypes.NameIdentifier);
         var row = id == null ? null : db.UserScopes.Find(id);
-        var scope = AccessScope.Parse(row?.Paths);
-        return scope.Count == 0 ? null : scope;
+        return Resolve(row);
     }
+
+    public static List<ScopeEntry>? Resolve(UserScope? row) =>
+        row is { AllFolders: true } ? null : AccessScope.Parse(row?.Paths);
 
     public IQueryable<AccessRecord> Records(ClaimsPrincipal user) =>
         Get(user) is { } scope ? AccessScope.Apply(db.AccessRecords, scope) : db.AccessRecords;

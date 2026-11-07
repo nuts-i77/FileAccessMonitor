@@ -190,6 +190,7 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
 {
     public const string SyslogIdentifier = "smbd_audit";
     private const int MaxBatchSize = 500;
+    internal static readonly TimeSpan SaveRetryDelay = TimeSpan.FromSeconds(10);
     private static readonly Regex Suppressed = new(@"Suppressed (\d+) messages from (smbd|smb|samba)", RegexOptions.IgnoreCase);
 
     private readonly ReadMerger _readMerger = new();
@@ -249,7 +250,13 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
         async Task FlushAsync()
         {
             if (lastCursor == null) return;
-            await sink.SaveAsync(batch, lastCursor); // logs and drops the batch if it cannot be kept
+            // Not given up until the sink has the batch and the cursor: a full outbox makes it wait (journalctl is
+            // held back meanwhile and the journal keeps the entries), a failure is tried again
+            while (!await sink.SaveAsync(batch, lastCursor, ct))
+            {
+                logger.LogWarning("Saving {Count} records failed; trying again in {Seconds} seconds.", batch.Count, SaveRetryDelay.TotalSeconds);
+                await Task.Delay(SaveRetryDelay, ct);
+            }
             batch.Clear();
             lastCursor = null;
         }

@@ -82,6 +82,7 @@ public class AgentApiController : ControllerBase
         agent.LastSeenAt = DateTime.UtcNow;
         // Batches waiting behind this one, so a backlog shows in the GUI while it is being sent
         if (int.TryParse(Request.Headers["X-Agent-Outbox"], out var waiting)) agent.OutboxCount = waiting;
+        agent.OutboxFull = Request.Headers["X-Agent-Outbox-Full"] == "1";
         if (batch.Seq <= agent.LastBatchSeq)
         {
             await _db.SaveChangesAsync();
@@ -120,6 +121,8 @@ public class AgentApiController : ControllerBase
         agent.LastSeenAt = DateTime.UtcNow;
         agent.Version = req.Version;
         if (req.OutboxCount is { } count) agent.OutboxCount = count;
+        agent.OutboxFull = req.OutboxFull ?? false; // an older agent does not say: not full
+        agent.OutboxBytes = req.OutboxBytes ?? 0;
         agent.AuditPolicyOk = req.AuditPolicyOk; // null: not known, or (Linux) no folders monitored yet
         if (req.Os is { Length: > 0 } os) agent.Os = os.Length <= 100 ? os : os[..100];
         await _db.SaveChangesAsync();

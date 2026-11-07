@@ -116,6 +116,19 @@ if (webHttps.Enabled && WebTls.Initialize(webHttps, Log.Logger) is { } webCert)
         builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(webRedirectPort));
     }
 }
+else if (webHttps.Enabled)
+{
+    // HTTPS is on but the certificate cannot be loaded: HTTP on loopback only, so an administrator on
+    // this machine can still sign in and fix it, and nothing is served in clear text to the network.
+    // The redirect port stays closed.
+    var webUrl = builder.Configuration["Kestrel:Endpoints:Http:Url"] ?? "http://0.0.0.0:8080";
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Kestrel:Endpoints:Http:Url"] = WebTls.ToLoopback(webUrl),
+    });
+    Log.Error("HTTPS is on but the certificate cannot be loaded, so the web GUI listens on {Urls} only (this machine). " +
+              "Other computers cannot reach it until this is fixed.", WebTls.ToLoopback(webUrl));
+}
 
 // HTTPS port for agents (only /api/agent/* is served there, and only to registered agents or with
 // a registration code). Always open, so agents can be added without restarting; the firewall
@@ -375,6 +388,8 @@ CREATE TABLE IF NOT EXISTS ""AgentEnrollments"" (
     await SchemaV19.ApplyAsync(db);
     // v12: tamper detection, report opt-out, file history indexes
     await SchemaV110.ApplyAsync(db);
+    // v13: a Viewer without folders sees nothing (existing ones become "all folders" once)
+    await SchemaV111.ApplyAsync(db);
 
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     foreach (var role in new[] { "Admin", "Viewer" })
@@ -466,10 +481,10 @@ app.UseRequestLocalization(new RequestLocalizationOptions
 
 if (knownProxies.Length > 0) app.UseForwardedHeaders();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(StaticFileCache.CreateOptions()); // .html, .js, .css revalidate on every load
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.MapFallbackToFile("index.html");
+app.MapFallbackToFile("index.html", StaticFileCache.CreateOptions());
 
 app.Run();

@@ -1270,8 +1270,10 @@ async function loadWebTls() {
     const row = (label, value) => `<div class="mb-1"><span class="text-muted">${t(label)}:</span> ${value}</div>`;
     const state = d.https
       ? `<span class="badge text-bg-success">${t('web.card.on')}</span>`
+      : d.problem ? `<span class="badge text-bg-danger">${t('web.card.loopback')}</span>`
       : `<span class="badge text-bg-secondary">${t('web.card.off')}</span>`;
     let html = row('web.card.state', state);
+    if (d.problem) html += `<div class="alert alert-danger py-2 small">${t('web.card.problem')}<div class="font-monospace text-break mt-1">${esc(d.problem)}</div></div>`;
     if (d.https) {
       html += row('web.card.mode', t(d.mode === 'pfx' ? 'web.card.pfx' : 'web.card.selfSigned'));
       if (d.subject) html += row('web.card.subject', `<span class="font-monospace">${esc(d.subject)}</span>`);
@@ -1370,8 +1372,10 @@ async function loadAgents() {
         + ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline" data-name="${esc(a.name)}" data-os="${esc(a.os || '')}"
             data-version="${esc(d.serverVersion)}" onclick="showAgentUpdateSteps(this.dataset)">${t('agents.howToUpdate')}</button>` : '');
     // A growing outbox means records are not getting through
-    const outbox = a => a.outboxCount > 0
-      ? `<span class="${a.outboxCount >= 100 ? 'text-danger fw-semibold' : 'text-warning'}">${fmtNum(a.outboxCount)}</span>` : '0';
+    // A full outbox (2 GB) pauses the collection on that server: records stay in its Security log / journal
+    const outbox = a => (a.outboxCount > 0
+      ? `<span class="${a.outboxCount >= 100 ? 'text-danger fw-semibold' : 'text-warning'}">${fmtNum(a.outboxCount)}</span>` : '0')
+      + (a.outboxFull ? `<div><span class="badge bg-danger" title="${t('agents.outboxFullHint')}">${t('agents.outboxFull')}</span></div>` : '');
     // Windows or Linux (Samba), with the full name on hover; agents before 1.7 do not report it
     const isLinux = a => !!a.os && !/^windows/i.test(a.os);
     const os = a => !a.os ? '-'
@@ -1992,13 +1996,15 @@ function isAdmin() {
 
 let usersCache = [];
 
-// Admins always see everything; a Viewer sees everything unless folders are assigned
+// Admins always see everything; a Viewer sees the assigned folders, everything when "all folders" is chosen, otherwise nothing
 function scopeCell(u, role) {
   if (role === 'Admin') return `<td class="text-muted small">${t('scope.all')}</td>`;
   const paths = (u.scopePaths || []).map(parseScopeEntry);
-  const summary = paths.length
-    ? paths.map(e => `<div class="font-monospace text-break">${esc(e.server ? `${e.server}: ${e.path}` : e.path)}</div>`).join('')
-    : `<span class="text-muted">${t('scope.all')}</span>`;
+  const summary = u.allFolders
+    ? `<span class="text-muted">${t('scope.all')}</span>`
+    : paths.length
+      ? paths.map(e => `<div class="font-monospace text-break">${esc(e.server ? `${e.server}: ${e.path}` : e.path)}</div>`).join('')
+      : `<span class="text-danger">${t('scope.none')}</span>`;
   const mail = u.notifyEmail ? `<div class="text-muted"><i class="bi bi-envelope me-1"></i>${esc(u.notifyEmail)}</div>` : '';
   return `<td class="small">
     <div class="d-flex align-items-start gap-2">
@@ -2023,8 +2029,17 @@ function addScopeRow(server = '', path = '') {
     sel.insertAdjacentHTML('beforeend', `<option value="${esc(server)}" selected>${esc(server)}</option>`);
   else if (server)
     sel.value = [...sel.options].find(o => o.value.toUpperCase() === server.toUpperCase()).value;
-  row.querySelector('button').onclick = () => row.remove();
+  row.querySelector('button').onclick = () => { row.remove(); updateScopeAllFolders(); };
+  row.querySelector('input').addEventListener('input', updateScopeAllFolders);
   document.getElementById('scopeRows').appendChild(row);
+}
+
+// "All folders" turns the folder list off. Without it and without folders the user sees nothing: say so.
+function updateScopeAllFolders() {
+  const all = document.getElementById('scopeAllFolders').checked;
+  document.querySelectorAll('#scopeRows select, #scopeRows input, #scopeRows button, #scopeAddRow').forEach(el => { el.disabled = all; });
+  const empty = ![...document.querySelectorAll('#scopeRows .scope-row input')].some(i => i.value.trim());
+  document.getElementById('scopeNothing').classList.toggle('d-none', all || !empty);
 }
 
 function showScopeEditor(id) {
@@ -2035,6 +2050,8 @@ function showScopeEditor(id) {
   document.getElementById('scopeRows').innerHTML = '';
   (u.scopePaths || []).map(parseScopeEntry).forEach(e => addScopeRow(e.server, e.path));
   if (!u.scopePaths?.length) addScopeRow();
+  document.getElementById('scopeAllFolders').checked = u.allFolders === true;
+  updateScopeAllFolders();
   document.getElementById('scopeNotifyEmail').value = u.notifyEmail || '';
   document.getElementById('scopeSendReport').checked = u.sendReport !== false;
   document.getElementById('scopeError').classList.add('d-none');
@@ -2053,6 +2070,7 @@ async function saveScope() {
           .map(row => ({ server: row.querySelector('select').value, path: row.querySelector('input').value.trim() }))
           .filter(e => e.path)
           .map(e => e.server ? `${e.server}|${e.path}` : e.path),
+        allFolders: document.getElementById('scopeAllFolders').checked,
         notifyEmail: document.getElementById('scopeNotifyEmail').value.trim(),
         sendReport: document.getElementById('scopeSendReport').checked
       })
@@ -2509,17 +2527,22 @@ if (_user) {
 }
 
 // Restore tab from URL hash on page load (survives F5)
-// Folders the signed-in Viewer is limited to (empty = everything); read from the server each
-// time, so a scope changed by an Admin applies without signing in again
+// Folders the signed-in Viewer is limited to (none and not myAllFolders = nothing); read from the
+// server each time, so a scope changed by an Admin applies without signing in again
 let myScope = [];
+let myAllFolders = true;
 
 (async () => {
-  try { myScope = (await api('/api/auth/me')).scopePaths || []; } catch { /* keep defaults */ }
+  try {
+    const me = await api('/api/auth/me');
+    myScope = me.scopePaths || [];
+    myAllFolders = me.allFolders !== false; // an older server does not say: its Viewers without folders saw everything
+  } catch { /* keep defaults */ }
   await loadServers();
-  if (myScope.length) {
+  if (!myAllFolders) {
     const badge = document.getElementById('navScopeBadge');
     badge.classList.remove('d-none');
-    badge.title = myScope.map(parseScopeEntry).map(e => e.server ? `${e.server}: ${e.path}` : e.path).join('\n');
+    badge.title = myScope.length ? myScope.map(parseScopeEntry).map(e => e.server ? `${e.server}: ${e.path}` : e.path).join('\n') : t('scope.none');
   }
 
   const VALID_TABS = ['dashboard', 'files', 'folders', 'users', 'recent', 'search', 'settings'];

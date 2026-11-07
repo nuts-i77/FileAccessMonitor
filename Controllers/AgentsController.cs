@@ -38,7 +38,7 @@ public class AgentsController : ControllerBase
             endpointReady = AgentEndpoint.Certificate != null,
             port = AgentEndpoint.Port(_config),
             serverVersion = SettingsController.AppVersion,
-            agents = agents.Select(a => new { a.Id, a.Name, a.CreatedAt, a.LastSeenAt, a.Version, a.Disabled, a.OutboxCount, a.AuditPolicyOk, a.Os }),
+            agents = agents.Select(a => new { a.Id, a.Name, a.CreatedAt, a.LastSeenAt, a.Version, a.Disabled, a.OutboxCount, a.AuditPolicyOk, a.Os, a.OutboxFull, a.OutboxBytes }),
         });
     }
 

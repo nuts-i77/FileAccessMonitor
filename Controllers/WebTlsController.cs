@@ -14,7 +14,8 @@ public class WebTlsController : ControllerBase
     // GET /api/web-tls
     // { https, mode: "selfSigned" | "pfx" | null, subject, names[], fingerprint, notAfter, redirectPort, requestIsHttps }
     // https is whether this run serves TLS; configured is whether settings.json asks for it (they
-    // differ until the service restarts, or when the certificate could not be loaded)
+    // differ until the service restarts, or when the certificate could not be loaded: then problem says why and
+    // loopbackOnly is true (the GUI is served over HTTP on this machine only))
     [HttpGet]
     public IActionResult Get()
     {
@@ -31,6 +32,8 @@ public class WebTlsController : ControllerBase
             redirectPort = status.Https ? settings.RedirectPort : 0,
             requestIsHttps = Request.IsHttps,
             configured = settings.Enabled,
+            problem = status.Problem,
+            loopbackOnly = status.LoopbackOnly,
         });
     }
 }

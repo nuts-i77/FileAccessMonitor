@@ -104,7 +104,10 @@ public record EnrollRequest(string Code, string Name, string? Version);
 public record EnrollResponse(string AgentId, string Key);
 // OutboxCount: batches waiting on the agent; AuditPolicyOk: whether file access auditing is on there
 // (File System auditing on Windows, Samba's audit module on Linux); Os: the agent's operating system
-public record HeartbeatRequest(string? Version, int? OutboxCount = null, bool? AuditPolicyOk = null, string? Os = null);
+// OutboxFull / OutboxBytes (from 1.11): the outbox reached its limit and collection is paused; its size.
+// Older agents leave them out (null = not full), older servers ignore them.
+public record HeartbeatRequest(string? Version, int? OutboxCount = null, bool? AuditPolicyOk = null, string? Os = null,
+    bool? OutboxFull = null, long? OutboxBytes = null);
 
 // Everything an agent needs to register, in one string an Admin copies from the GUI:
 // the agent endpoint URL, the SHA-256 fingerprint of its certificate, and a one-time code.

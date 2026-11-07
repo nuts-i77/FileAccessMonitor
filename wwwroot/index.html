@@ -970,6 +970,7 @@
             <option value="Viewer" data-i18n="modal.roleViewer">Viewer（閲覧のみ）</option>
             <option value="Admin" data-i18n="modal.roleAdmin">Admin（全操作）</option>
           </select>
+          <div class="form-text" data-i18n="modal.roleViewerNote">Viewer は、閲覧できるフォルダを指定するまで何も表示されません（作成後、ユーザー一覧で指定します）。</div>
         </div>
         <div id="createUserError" class="d-none text-danger small mt-2"></div>
       </div>
@@ -1029,11 +1030,15 @@
         <p class="small text-muted mb-3"><span data-i18n="modal.resetTarget">対象:</span> <strong id="scopeUsername"></strong></p>
         <div class="mb-3">
           <label class="form-label small" data-i18n="scope.paths">閲覧できるフォルダ</label>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="scopeAllFolders" onchange="updateScopeAllFolders()">
+            <label class="form-check-label small" for="scopeAllFolders" data-i18n="scope.allFolders">すべてのフォルダ</label>
+          </div>
           <div id="scopeRows" class="d-flex flex-column gap-1"></div>
-          <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="addScopeRow()">
+          <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="scopeAddRow" onclick="addScopeRow()">
             <i class="bi bi-plus"></i> <span data-i18n="scope.addRow">フォルダを追加</span>
           </button>
-          <div class="form-text" data-i18n="scope.pathsHint">このユーザーには、指定したフォルダ以下の記録のみ表示します（CSV 出力、未使用ファイルを含む）。［全サーバー］を選択すると、すべてのサーバーの同じパスが対象になります。すべて削除すると、全体を表示します。</div>
+          <div class="form-text" data-i18n="scope.pathsHint">このユーザーには、指定したフォルダ以下の記録のみ表示します（CSV 出力、未使用ファイルを含む）。［全サーバー］を選択すると、すべてのサーバーの同じパスが対象になります。フォルダを指定しないユーザーには何も表示されません。全体を表示するには、［すべてのフォルダ］を選択してください。</div>
         </div>
         <div class="mb-2">
           <label class="form-label small" for="scopeNotifyEmail" data-i18n="scope.email">通知先メールアドレス（任意）</label>
@@ -1044,6 +1049,7 @@
             <label class="form-check-label small" for="scopeSendReport" data-i18n="scope.sendReport">定期レポート（範囲内のみ）もこのアドレスに送信する</label>
           </div>
         </div>
+        <div id="scopeNothing" class="alert alert-warning py-2 small d-none" data-i18n="scope.noneNote">フォルダが指定されていないため、フォルダを指定するか［すべてのフォルダ］を選択するまで、このユーザーには何も表示されません。</div>
         <div id="scopeError" class="d-none text-danger small mt-2"></div>
       </div>
       <div class="modal-footer py-2">

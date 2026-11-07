@@ -4,6 +4,8 @@ English | [日本語](https.ja.md)
 
 Since 1.9, new installs serve the web GUI over HTTPS by default, with a self-signed certificate or your own PFX file. Installs upgraded from earlier versions keep plain HTTP until you switch: `FileAccessMonitor.exe web-https on` on Windows (then restart the service), `sudo fileaccessmonitor-server --https on` on Linux. See "Security" in the README. Over plain HTTP, sign-in passwords and JWTs cross the network unencrypted.
 
+If HTTPS is on but the certificate cannot be loaded (for example the PFX file is gone or its password no longer matches), the web GUI is served over plain HTTP on the machine itself only (`localhost`), never on other interfaces. Sign in there, check the log and **Settings**, then supply a new PFX (`web-https on --pfx ...`) or, behind a reverse proxy, run `web-https off`, and restart the service.
+
 If you prefer to configure HTTPS yourself, this page shows two other ways:
 
 - [Option A](#option-a-https-in-the-app-kestrel): let the app serve HTTPS itself. This is the simplest option.
