@@ -264,6 +264,8 @@ To report a vulnerability, please follow [SECURITY.md](SECURITY.md) instead of o
 
 The collector is the same program started with the argument `collector`. It works like a built-in agent: it sends its batches to `https://127.0.0.1:<agent port>` (trusting that certificate by its fingerprint), takes the monitored folders and recording rules from the web service, and runs the web GUI's jobs (setting SACLs, scanning for unused files, permission scans). It needs no registration. It shows in **Settings → Agents** as a row for this server (status only), and a stopped collector is notified like an offline agent. If it is not running, the GUI says so and records are not made until it is started again (the Security log keeps the events meanwhile, as when an agent is stopped). Its own state is in `collector\` below the data folder, which the web service cannot read.
 
+The separation limits what a flaw in the web part can do, but the web service still decides what the collector does: someone who takes over the web service account can change the monitored folders and ask the collector for folder and permission scans (file names, sizes and ACLs, not file contents), and can change or delete records. Treat the monitoring server as a system to protect: reach the web GUI from the management network only, keep it updated, and send the tamper-detection anchors off the server ([How tamper detection works](docs/integrity.md)). The recommended layout is a monitoring server that only monitors (Linux, user `fileaccessmonitor`) with agents on the file servers.
+
 ## Configuration
 
 ### appsettings.json (in `publish\`)
