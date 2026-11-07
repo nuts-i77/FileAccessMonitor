@@ -24,7 +24,7 @@ Restart-Service FileAccessMonitor
 
 ## Option A: HTTPS in the app (Kestrel)
 
-You need a certificate with a private key in the **Local Computer → Personal** certificate store, issued to the name users type in the browser, for example `fam.example.com`. The service runs as LocalSystem, so it can read the private key.
+You need a certificate with a private key in the **Local Computer → Personal** certificate store, issued to the name users type in the browser, for example `fam.example.com`. Since 1.11 the web service runs as the virtual account `NT SERVICE\FileAccessMonitor`, which cannot read the private key until you allow it: in `certlm.msc`, right-click the certificate → **All Tasks → Manage Private Keys…**, add `NT SERVICE\FileAccessMonitor` and give it **Read**. Without that the service stops at start (see `logs\app-*.log`).
 
 `appsettings.Production.json`:
 

@@ -49,7 +49,7 @@ seal (ChainHash)    = HMAC-SHA256( key, seal of the previous row + content of th
 
 | File | Contents |
 |---|---|
-| `chain.key` | 32 random bytes, created at the first start. Readable by SYSTEM and Administrators only (root on Linux) |
+| `chain.key` | 32 random bytes, created at the first start. Readable by SYSTEM, Administrators and the web service account `NT SERVICE\FileAccessMonitor` only (Linux: the user `fileaccessmonitor` and root) |
 | `chain-head.json` | The chain end last confirmed. Used to find a database that was put back to an older state |
 
 They are in `C:\ProgramData\FileAccessMonitor\` on Windows and `/var/lib/fileaccessmonitor/` on Linux.
@@ -147,7 +147,7 @@ Paste a stored `FAM-ANCHOR` line, or the content of a downloaded anchor file, in
 |---|---|
 | Edit, delete or replace only the database file | **Yes** (without the key the chain cannot be rebuilt) |
 | Put the database back to an old backup | **Yes** (compared with `chain-head.json`) |
-| Has administrator rights on the monitoring server (key and database) | **Yes, if** anchors are kept **off the server** and checked; otherwise no |
+| Has administrator rights on the monitoring server, or has taken over the web service account (both can read the key and change the database) | **Yes, if** anchors are kept **off the server** and checked; otherwise no |
 | Delete events before they are recorded (Windows Security log, Samba log) | **Out of scope.** A gap in collection is still reported by the "recording gap" notification |
 
 - Records saved before 1.10 are not in the chain and not protected. The page says "N records from before tamper detection started (date) are not protected." They are deleted by date when their retention period ends, as before.

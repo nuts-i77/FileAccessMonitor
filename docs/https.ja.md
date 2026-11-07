@@ -24,7 +24,7 @@ Restart-Service FileAccessMonitor
 
 ## 方法 A: アプリ自身で HTTPS にする（Kestrel）
 
-**ローカル コンピューター → 個人** の証明書ストアに、秘密鍵付きの証明書が必要です。証明書の発行先は、利用者がブラウザーに入力する名前（例: `fam.example.com`）にしてください。サービスは LocalSystem で動くため、秘密鍵を読み取れます。
+**ローカル コンピューター → 個人** の証明書ストアに、秘密鍵付きの証明書が必要です。証明書の発行先は、利用者がブラウザーに入力する名前（例: `fam.example.com`）にしてください。1.11 からは Web サービスが仮想アカウント `NT SERVICE\FileAccessMonitor` で動くため、許可するまで秘密鍵を読み取れません。`certlm.msc` で証明書を右クリックし、**すべてのタスク → 秘密キーの管理** で `NT SERVICE\FileAccessMonitor` を追加して **読み取り** を許可してください。許可しないと、サービスは起動時に停止します（`logs\app-*.log` を参照）。
 
 `appsettings.Production.json`:
 

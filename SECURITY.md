@@ -24,6 +24,8 @@ In scope:
 
 - The web API and web GUI (authentication, authorization, input handling)
 - Handling of the secrets in `C:\ProgramData\FileAccessMonitor\` (`jwt.key`, `initial-admin-password.txt`, and `chain.key`, the key of the tamper-detection chains; on Linux the same files are in `/var/lib/fileaccessmonitor/`)
+- The boundary between the web service (since 1.11 `NT SERVICE\FileAccessMonitor`, on Linux the user `fileaccessmonitor`) and the collector service (SYSTEM / root): ways for the web service account, or anyone on the machine, to make the collector do more than set up auditing and scan the monitored folders, or to read `collector\key.secret`
+- The agent protocol (registration, the agent and collector credentials, batches and jobs)
 - The PowerShell scripts in this repository
 
 Out of scope:
