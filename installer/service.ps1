@@ -14,10 +14,13 @@
 param(
     [Parameter(Mandatory = $true)] [ValidateSet('Install', 'Uninstall', 'Stop')] [string]$Action,
     [switch]$Firewall,
-    [string]$ExePath = (Join-Path $PSScriptRoot 'FileAccessMonitor.exe')
+    # Default: FileAccessMonitor.exe next to this script (set below: $PSScriptRoot is empty in parameter defaults
+    # when PowerShell 5.1 runs a script with -File)
+    [string]$ExePath
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $ExePath) { $ExePath = Join-Path $PSScriptRoot 'FileAccessMonitor.exe' }
 $ServiceName    = 'FileAccessMonitor'
 $ServiceDisplay = 'File Access Monitor'
 $ServiceDesc    = 'Monitors and aggregates file access on shared directories.'
