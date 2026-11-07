@@ -40,28 +40,27 @@ function permBuildShell() {
           </div>
           <div class="col-12 col-md">
             <label class="form-label small text-muted" for="permFolder">${t('perm.folder')}</label>
-            <select id="permFolder" class="form-select form-select-sm font-monospace" onchange="permLoadReport(1)"></select>
+            <!-- The same folder box as the Unused Files tab: a monitored folder, or a folder below one typed in -->
+            <div class="input-group input-group-sm">
+              <input type="text" id="permFolder" class="form-control font-monospace" placeholder="${esc(t('perm.folderPh'))}"
+                onkeydown="if(event.key==='Enter')permLoadReport(1)" onchange="permLoadReport(1)">
+              <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"
+                title="${esc(t('folder.choose'))}"></button>
+              <ul class="dropdown-menu dropdown-menu-end folder-menu" id="permFolderMenu"></ul>
+            </div>
           </div>
-          <div class="col-auto">
+          <div class="col-12 col-md-auto">
             <button class="btn btn-sm btn-primary d-none" id="permScanBtn" onclick="permScan()"><i class="bi bi-arrow-repeat me-1"></i>${t('perm.scan')}</button>
             <button class="btn btn-sm btn-outline-secondary" id="permCsvBtn" onclick="permExport()" disabled><i class="bi bi-download me-1"></i>${t('perm.csv')}</button>
             <button class="btn btn-sm btn-outline-danger d-none" id="permDeleteBtn" onclick="permDeleteScan()" title="${esc(t('perm.deleteScanTip'))}"><i class="bi bi-trash me-1"></i>${t('perm.deleteScan')}</button>
           </div>
         </div>
-        <!-- Admins: a folder below a monitored folder, and whether files are read too -->
-        <div class="row g-2 align-items-center mt-1 d-none" id="permScanOptions">
-          <div class="col-12 col-md">
-            <div class="input-group input-group-sm">
-              <input type="text" id="permSubPath" class="form-control font-monospace" placeholder="${esc(t('perm.subPathPh'))}">
-              <button class="btn btn-outline-primary" onclick="permScanSubPath()"><i class="bi bi-arrow-repeat me-1"></i>${t('perm.scanSubPath')}</button>
-            </div>
-          </div>
-          <div class="col-auto form-check ms-2">
+        <div class="row g-2 align-items-center mt-1">
+          <!-- Admins: whether the scan reads files too -->
+          <div class="col-auto form-check ms-2 d-none" id="permScanOptions">
             <input type="checkbox" class="form-check-input" id="permFoldersOnly" checked>
             <label class="form-check-label small" for="permFoldersOnly" title="${esc(t('perm.foldersOnlyTip'))}">${t('perm.foldersOnly')}</label>
           </div>
-        </div>
-        <div class="row g-2 align-items-center mt-1">
           <div class="col-auto form-check ms-2">
             <input type="checkbox" class="form-check-input" id="permBroadOnly" onchange="permLoadReport(1)">
             <label class="form-check-label small" for="permBroadOnly">${t('perm.broadOnly')}</label>
@@ -117,19 +116,17 @@ function permAge(time) {
 // select: the folder to show afterwards (a folder just scanned)
 async function permLoadRoots(select) {
   const server = document.getElementById('permServer').value;
-  const folderSel = document.getElementById('permFolder');
+  const box = document.getElementById('permFolder');
   document.getElementById('permResults').innerHTML = '';
   try {
     const d = await api(`/api/permissions/roots?server=${encodeURIComponent(server)}`);
     // Monitored folders first, then folders below them that were scanned on their own
     permRoots = [...d.roots.filter(r => !r.subfolder), ...d.roots.filter(r => r.subfolder).sort((a, b) => a.path.localeCompare(b.path))];
     permCanScan = d.canScan;
-    folderSel.innerHTML = permRoots.map(r =>
-      `<option value="${esc(r.path)}">${r.subfolder ? '&#8627; ' : ''}${esc(r.path)}  (${esc(permAge(r.scannedAt))})</option>`).join('');
-    // The typed path may differ in case or a trailing separator from the stored one
-    const key = p => p.replace(/[\\/]+$/, '').toLowerCase();
-    const picked = select && permRoots.find(r => key(r.path) === key(select));
-    if (picked) folderSel.value = picked.path;
+    setFolderChoices('permFolder', permRoots.map(r => ({ path: r.path, sub: r.subfolder, note: permAge(r.scannedAt) })),
+      () => permLoadReport(1));
+    // The folder just scanned (a typed path may differ in case or a trailing separator), else the first one
+    box.value = (select && permRootOf(select)?.path) || select || permRoots[0]?.path || '';
     document.getElementById('permScanBtn').classList.toggle('d-none', !d.canScan);
     document.getElementById('permScanOptions').classList.toggle('d-none', !d.canScan);
     if (!d.roots.length) {
@@ -158,9 +155,15 @@ function permQuery() {
     (q ? `&q=${encodeURIComponent(q)}` : '');
 }
 
-// Admins may delete the result of a subfolder scan (the one picked in the list)
+// The listed folder a typed path means (case and a trailing separator do not matter)
+function permRootOf(path) {
+  const key = p => p.trim().replace(/[\\/]+$/, '').toLowerCase();
+  return permRoots.find(r => key(r.path) === key(path));
+}
+
+// Admins may delete the result of a subfolder scan (the one in the folder box)
 function permUpdateDeleteBtn() {
-  const picked = permRoots.find(r => r.path === document.getElementById('permFolder').value);
+  const picked = permRootOf(document.getElementById('permFolder').value);
   document.getElementById('permDeleteBtn').classList.toggle('d-none', !(permCanScan && picked?.subfolder));
 }
 
@@ -192,9 +195,9 @@ async function permLoadReport(page) {
   }
 }
 
-// folder: the folder to scan (default: the one picked in the list)
+// folder: the folder to scan (default: the one in the folder box, listed or typed)
 async function permScan(folder) {
-  folder = folder || document.getElementById('permFolder').value;
+  folder = (folder || document.getElementById('permFolder').value).trim();
   if (!folder) return;
   const btn = document.getElementById('permScanBtn');
   const el = document.getElementById('permResults');
@@ -214,11 +217,6 @@ async function permScan(folder) {
   } finally {
     btn.disabled = false;
   }
-}
-
-function permScanSubPath() {
-  const path = document.getElementById('permSubPath').value.trim();
-  if (path) permScan(path);
 }
 
 // The button on a folder row: scan just that folder (the rest of a scan that stopped at a limit)
@@ -326,7 +324,7 @@ function permWarnings(d) {
     const more = permCanScan ? ' ' + t(d.limit === 'files' ? 'perm.truncatedFiles' : 'perm.truncatedMore') : '';
     w.push(`<div class="alert alert-warning py-2 small mb-2"><i class="bi bi-exclamation-triangle me-1"></i>${t('perm.truncated', { limit: t(PERM_LIMIT_KEYS[d.limit] || PERM_LIMIT_KEYS.rows) })}${more}</div>`);
   }
-  if (permRoots.find(r => r.path === document.getElementById('permFolder').value)?.includeFiles === false)
+  if (permRootOf(document.getElementById('permFolder').value)?.includeFiles === false)
     w.push(`<div class="alert alert-secondary py-2 small mb-2"><i class="bi bi-folder me-1"></i>${t('perm.foldersOnlyNote')}</div>`);
   if (d.os === 'linux') {
     if (!d.shares?.length && !d.scoped) w.push(`<div class="alert alert-secondary py-2 small mb-2">${t('perm.notShared')}</div>`);

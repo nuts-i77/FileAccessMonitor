@@ -443,15 +443,19 @@
       <div class="card-body">
         <p class="small text-muted mb-3" data-i18n="unused.hint">監視フォルダ内のファイルのうち、指定期間に読み取りのないファイル（またはアクセスのないファイル）と、その容量をフォルダ別に集計します。フォルダの実体をスキャンするため、ファイル数が多い場合は時間がかかります。</p>
         <div class="row g-2 align-items-end">
-          <div class="col-12 col-md-2 d-none" id="unusedServerCol">
+          <div class="col-12 col-md-3 d-none" id="unusedServerCol">
             <label class="form-label small text-muted" for="unusedServer" data-i18n="servers.target">対象サーバー</label>
             <select id="unusedServer" class="form-select form-select-sm" onchange="loadUnusedFolders()"></select>
           </div>
           <div class="col-12 col-md">
             <label class="form-label small text-muted" for="unusedFolder" data-i18n="unused.folder">対象フォルダ</label>
-            <input type="text" id="unusedFolder" class="form-control form-control-sm font-monospace" list="unusedFolderList"
-              onkeydown="if(event.key==='Enter')searchUnused()">
-            <datalist id="unusedFolderList"></datalist>
+            <!-- The same folder box as the Permissions tab: type a path, or pick one with the button (folderPicker in app.js) -->
+            <div class="input-group input-group-sm">
+              <input type="text" id="unusedFolder" class="form-control font-monospace" onkeydown="if(event.key==='Enter')searchUnused()">
+              <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"
+                data-i18n-title="folder.choose" title="一覧から選択"></button>
+              <ul class="dropdown-menu dropdown-menu-end folder-menu" id="unusedFolderMenu"></ul>
+            </div>
           </div>
           <div class="col-6 col-md-2">
             <label class="form-label small text-muted" for="unusedDays" data-i18n="unused.period">期間</label>
@@ -463,14 +467,14 @@
               <option value="0" data-i18n="unused.dAll">記録開始以降</option>
             </select>
           </div>
-          <div class="col-6 col-md-3">
+          <div class="col-6 col-md-2">
             <label class="form-label small text-muted" for="unusedCriterion" data-i18n="unused.criterion">判定</label>
             <select id="unusedCriterion" class="form-select form-select-sm">
               <option value="read" data-i18n="unused.notRead">読み取りなし</option>
               <option value="any" data-i18n="unused.notAccessed">アクセスなし</option>
             </select>
           </div>
-          <div class="col-12 col-md-2">
+          <div class="col-12 col-md-auto">
             <button class="btn btn-primary btn-sm w-100" id="unusedSearchBtn" onclick="searchUnused()">
               <i class="bi bi-search me-1"></i><span data-i18n="unused.search">一覧を表示</span>
             </button>

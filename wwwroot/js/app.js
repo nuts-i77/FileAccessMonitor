@@ -975,10 +975,26 @@ async function loadUnusedTab() {
   await loadUnusedFolders();
 }
 
-// Folder suggestions for the selected server
+// The folder box of the Unused Files and Permissions tabs: a text box (any folder below a monitored
+// one can be typed) and a button listing the folders to pick. items: { path, sub?, note? }; sub marks
+// a folder below a monitored one. onPick(path) runs when one is picked from the list.
+function setFolderChoices(id, items, onPick) {
+  const menu = document.getElementById(id + 'Menu');
+  menu.innerHTML = items.length
+    ? items.map((it, i) => `<li><a class="dropdown-item font-monospace" href="#" data-i="${i}">${it.sub ? '&#8627; ' : ''}${esc(it.path)}`
+        + `${it.note ? ` <span class="small text-muted ms-2">${esc(it.note)}</span>` : ''}</a></li>`).join('')
+    : `<li><span class="dropdown-item-text small text-muted">${t('folder.none')}</span></li>`;
+  menu.querySelectorAll('a[data-i]').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault();
+    const path = items[Number(a.dataset.i)].path;
+    document.getElementById(id).value = path;
+    onPick?.(path);
+  }));
+}
+
+// Folder choices for the selected server
 async function loadUnusedFolders() {
   const server = document.getElementById('unusedServer').value;
-  const list = document.getElementById('unusedFolderList');
   let paths = [];
   try {
     // A Viewer with a scope may only look inside it (and cannot read the settings)
@@ -986,7 +1002,7 @@ async function loadUnusedFolders() {
       ? ((await api(`/api/settings${server ? `?server=${encodeURIComponent(server)}` : ''}`)).pathConfigs || []).map(c => c.path)
       : myScope.map(parseScopeEntry).filter(e => !e.server || e.server.toUpperCase() === server.toUpperCase()).map(e => e.path);
   } catch { /* the folder can still be typed */ }
-  list.innerHTML = paths.map(p => `<option value="${esc(p)}">`).join('');
+  setFolderChoices('unusedFolder', paths.map(path => ({ path })));
   document.getElementById('unusedFolder').value = paths[0] || '';
 }
 

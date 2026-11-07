@@ -268,6 +268,8 @@ window.I18N_EN = {
   'scope.edit': 'Edit viewing scope',
   'unused.hint': 'Lists files in a monitored folder that were not read (or not accessed at all) in the selected period, with their size per folder. The folder is scanned on disk, so this can take time with many files.',
   'unused.folder': 'Folder',
+  'folder.choose': 'Choose from the list',
+  'folder.none': 'No folders',
   'unused.period': 'Period',
   'unused.d30': 'Last 30 days',
   'unused.d90': 'Last 90 days',

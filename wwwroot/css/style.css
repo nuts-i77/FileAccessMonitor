@@ -91,3 +91,6 @@ body.single-server .col-server {
   max-width: 480px;
   word-break: break-all;
 }
+
+/* The folder list of the Unused Files and Permissions tabs: long lists scroll */
+.folder-menu { max-height: 20rem; overflow-y: auto; }
