@@ -10,7 +10,7 @@ public class LocalRecordSink(IServiceScopeFactory scopeFactory, AlertService ale
     // Where the collector got to (Security log record id, or journal cursor on Linux); the key keeps its old name
     private const string PositionKey = "LastRecordId";
 
-    public async Task<bool> SaveAsync(IReadOnlyList<AccessRecord> batch, string position)
+    public async Task<bool> SaveAsync(IReadOnlyList<AccessRecord> batch, string position, CancellationToken ct = default)
     {
         for (var attempt = 1; ; attempt++)
         {

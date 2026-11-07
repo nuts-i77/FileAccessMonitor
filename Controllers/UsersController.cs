@@ -43,7 +43,7 @@ public class UsersController : ControllerBase
             result.Add(new
             {
                 id = u.Id, username = u.UserName, displayName = u.DisplayName, email = u.Email, roles,
-                scopePaths = AccessScope.Parse(scope?.Paths).Select(e => e.ToString()), notifyEmail = scope?.NotifyEmail, sendReport = scope?.SendReport ?? true,
+                scopePaths = AccessScope.Parse(scope?.Paths).Select(e => e.ToString()), notifyEmail = scope?.NotifyEmail, sendReport = scope?.SendReport ?? true, allFolders = scope?.AllFolders ?? false,
             });
         }
         return Ok(result);
@@ -99,7 +99,7 @@ public class UsersController : ControllerBase
         return Ok(new { message = Messages.Get("user.deleted", user.UserName) });
     }
 
-    // PUT /api/users/{id}/scope  — folders a Viewer may see, and where to mail alerts about them
+    // PUT /api/users/{id}/scope  — folders a Viewer may see (or all folders; none = nothing), and where to mail alerts about them
     [HttpPut("{id}/scope")]
     public async Task<IActionResult> SetScope(string id, [FromBody] ScopeRequest req,
         [FromServices] ServerConfigService servers)
@@ -108,7 +108,8 @@ public class UsersController : ControllerBase
         if (user == null) return NotFound(new { error = Messages.Get("user.notFound") });
 
         // Each folder must be monitored on its server, or on some server when no server is named
-        var paths = AccessScope.Parse(req.Paths ?? []);
+        var allFolders = req.AllFolders == true;
+        var paths = allFolders ? new List<ScopeEntry>() : AccessScope.Parse(req.Paths ?? []);
         var monitored = new Dictionary<string, PathConfig[]>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in await servers.ServerNamesAsync())
             monitored[name] = await servers.GetPathsAsync(ServerConfigService.IsLocal(name) ? null : name);
@@ -124,18 +125,20 @@ public class UsersController : ControllerBase
         var email = string.IsNullOrWhiteSpace(req.NotifyEmail) ? null : req.NotifyEmail.Trim();
         if (email != null && !System.Net.Mail.MailAddress.TryCreate(email, out _))
             return BadRequest(new { error = Messages.Get("scope.invalidEmail") });
-        if (email != null && paths.Count == 0)
+        if (email != null && paths.Count == 0) // also with "all folders": the mail goes by folder
             return BadRequest(new { error = Messages.Get("scope.emailNeedsPaths") });
 
         var row = await _db.UserScopes.FindAsync(id);
-        if (paths.Count == 0)
+        if (paths.Count == 0 && !allFolders)
         {
+            // No folders and not "all folders": the Viewer sees nothing
             if (row != null) _db.UserScopes.Remove(row);
         }
         else
         {
             if (row == null) _db.UserScopes.Add(row = new UserScope { UserId = id });
             row.Paths = string.Join('\n', paths);
+            row.AllFolders = allFolders;
             row.NotifyEmail = email;
             row.SendReport = req.SendReport ?? true;
         }
@@ -143,7 +146,7 @@ public class UsersController : ControllerBase
         _alerts.ReloadRecipients();
 
         await _audit.WriteAsync(HttpContext, "user.scope",
-            $"user={user.UserName}, paths=[{string.Join(", ", paths)}], notifyEmail={email ?? "-"}, sendReport={req.SendReport ?? true}");
+            $"user={user.UserName}, paths=[{string.Join(", ", paths)}], allFolders={allFolders}, notifyEmail={email ?? "-"}, sendReport={req.SendReport ?? true}");
         return Ok(new { message = Messages.Get("scope.saved") });
     }
 
@@ -194,4 +197,4 @@ public class UsersController : ControllerBase
 public record CreateUserRequest(string Username, string? DisplayName, string? Email, string? Password, string? Role);
 public record ChangeRoleRequest(string Role);
 public record ResetPasswordRequest(string NewPassword);
-public record ScopeRequest(string[]? Paths, string? NotifyEmail, bool? SendReport);
+public record ScopeRequest(string[]? Paths, string? NotifyEmail, bool? SendReport, bool? AllFolders = null);

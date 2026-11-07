@@ -36,6 +36,10 @@ public class Agent
     public int OutboxCount { get; set; }
     public bool? AuditPolicyOk { get; set; }
 
+    // Reported by the agent (from 1.11): its outbox is full and collection is paused there; the outbox size in bytes
+    public bool OutboxFull { get; set; }
+    public long OutboxBytes { get; set; }
+
     // Reported by the agent: "Windows Server 2022 Standard", "Ubuntu 24.04 LTS" (null before 1.7)
     [MaxLength(100)]
     public string? Os { get; set; }

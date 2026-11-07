@@ -33,9 +33,13 @@ public record WebTlsSettings(bool Enabled, string Mode, string PfxFile, string? 
 
 // What the running service serves (GET /api/web-tls)
 public record WebTlsStatus(bool Https, string? Mode, string? Subject, IReadOnlyList<string> Names, string? Fingerprint,
-    DateTime? NotAfter)
+    DateTime? NotAfter, string? Problem = null)
 {
     public static readonly WebTlsStatus Off = new(false, null, null, [], null, null);
+
+    // HTTPS is switched on but the certificate could not be loaded: the GUI is served over HTTP on
+    // the loopback addresses only (so an administrator on the machine can still sign in and fix it)
+    public bool LoopbackOnly => Problem != null;
 }
 
 // HTTPS for the web GUI: a self-signed certificate that covers the machine's names and addresses
@@ -53,8 +57,8 @@ public static class WebTls
     // Set at startup
     public static WebTlsStatus Status { get; private set; } = WebTlsStatus.Off;
 
-    // The certificate for the web GUI port, or null (off, or it could not be loaded: the GUI then
-    // stays reachable over HTTP and the log says why)
+    // The certificate for the web GUI port, or null (off, or it could not be loaded: the GUI is then
+    // served over HTTP on loopback only, Status.Problem says why and the log tells how to fix it)
     public static X509Certificate2? Initialize(WebTlsSettings settings, Serilog.ILogger log, IDataProtectionProvider? dataProtection = null)
     {
         Status = WebTlsStatus.Off;
@@ -82,7 +86,10 @@ public static class WebTls
         }
         catch (Exception ex) when (ex is CryptographicException or UnauthorizedAccessException or IOException or InvalidOperationException)
         {
-            log.Warning(ex, "Could not load the web GUI certificate; the web GUI uses HTTP instead. Fix it or run: FileAccessMonitor web-https off");
+            Status = new WebTlsStatus(false, null, null, [], null, null, ex.Message);
+            log.Error(ex, "Could not load the web GUI certificate: {Reason}. The web GUI is served over HTTP on this machine only (localhost); other computers cannot reach it. " +
+                          "Check the setting with: FileAccessMonitor.exe web-https status. Then supply a new PFX (web-https on --pfx <file> --pfx-password <password>), " +
+                          "or, behind a reverse proxy, run: FileAccessMonitor.exe web-https off. Restart the service afterwards.", ex.Message);
             return null;
         }
     }
@@ -143,6 +150,17 @@ public static class WebTls
     public static string ToHttps(string urls) =>
         string.Join(';', urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(u => u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "https://" + u[7..] : u));
+
+    // "http://0.0.0.0:8080;http://*:9090" -> "http://localhost:8080;http://localhost:9090". Kestrel binds
+    // localhost to 127.0.0.1 and [::1] (only the first where IPv6 is missing), never to other interfaces.
+    public static string ToLoopback(string urls) =>
+        string.Join(';', urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(u =>
+            {
+                var probe = u.Replace("://*", "://localhost").Replace("://+", "://localhost");
+                if (!Uri.TryCreate(probe, UriKind.Absolute, out var uri)) return u;
+                return $"http://localhost:{uri.Port}";
+            }).Distinct());
 
     // The port of the first URL, or null
     public static int? PortOf(string urls)

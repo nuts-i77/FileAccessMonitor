@@ -194,7 +194,7 @@ public class PermissionsController : ControllerBase
     private bool Allowed(out List<ScopeEntry>? scope)
     {
         scope = _scopes.Get(User);
-        return User.IsInRole("Admin") || scope != null;
+        return User.IsInRole("Admin") || scope is { Count: > 0 };
     }
 
     private IActionResult NoAccess() => StatusCode(StatusCodes.Status403Forbidden, new { error = Messages.Get("perm.noAccess") });

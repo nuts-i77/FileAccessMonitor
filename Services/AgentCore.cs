@@ -141,6 +141,7 @@ public class AgentOutbox
 {
     public const long MaxBytes = 2L * 1024 * 1024 * 1024;
 
+    private readonly long _maxBytes;
     private readonly string _dir;
     private readonly string _seqFile;
     private readonly string _positionFile;
@@ -148,8 +149,9 @@ public class AgentOutbox
     private long _nextSeq;
     private long _bytes;
 
-    public AgentOutbox(string? dataDir = null)
+    public AgentOutbox(string? dataDir = null, long maxBytes = MaxBytes)
     {
+        _maxBytes = maxBytes;
         var root = dataDir ?? AgentConfig.DataDir;
         _dir = Path.Combine(root, "outbox");
         _seqFile = Path.Combine(root, "agent-seq.txt");
@@ -169,12 +171,17 @@ public class AgentOutbox
     // Where the collector got to: a Security log record id (Windows) or a journal cursor (Linux)
     public string Position => File.Exists(_positionFile) ? File.ReadAllText(_positionFile).Trim() : "";
 
-    // False when the outbox is full (the monitoring server has been unreachable for long)
-    public bool Add(AgentBatch batch)
+    // Bytes waiting in the outbox, and whether it is full (the monitoring server has been unreachable for long)
+    public long Bytes { get { lock (_lock) return _bytes; } }
+    public bool IsFull { get { lock (_lock) return _bytes > _maxBytes; } }
+
+    // False when the outbox is full; the caller waits for room (see RemoteRecordSink). force: for a small
+    // notice (a recording gap) that must not be lost, which is kept even when the outbox is full.
+    public bool Add(AgentBatch batch, bool force = false)
     {
         lock (_lock)
         {
-            if (_bytes > MaxBytes) return false;
+            if (_bytes > _maxBytes && !force) return false;
             batch.Seq = _nextSeq;
             var bytes = JsonSerializer.SerializeToUtf8Bytes(batch);
             var path = Path.Combine(_dir, $"{batch.Seq:D16}.json");
@@ -222,9 +229,10 @@ public class AgentOutbox
 public interface IRecordSink
 {
     // Saves the records together with the position they were collected up to (Security log record
-    // id, or journal cursor on Linux), so that neither is saved without the other. False when the
-    // batch had to be dropped.
-    Task<bool> SaveAsync(IReadOnlyList<FileAccessMonitor.Models.AccessRecord> batch, string position);
+    // id, or journal cursor on Linux), so that neither is saved without the other. False when they
+    // could not be saved: the caller keeps the batch, does not move its position on and tries again.
+    // A sink may wait (an agent whose outbox is full waits for room); ct ends that wait.
+    Task<bool> SaveAsync(IReadOnlyList<FileAccessMonitor.Models.AccessRecord> batch, string position, CancellationToken ct = default);
 
     // Position to resume after ("" = start with live events)
     Task<string> LoadPositionAsync();
@@ -236,23 +244,37 @@ public interface IRecordSink
 // The agent's record sink: puts batches in the outbox for AgentSender to deliver
 public class RemoteRecordSink(AgentOutbox outbox, ILogger<RemoteRecordSink> logger) : IRecordSink
 {
-    public Task<bool> SaveAsync(IReadOnlyList<FileAccessMonitor.Models.AccessRecord> batch, string position)
+    // How often a full outbox is looked at again
+    public TimeSpan FullRetryInterval { get; init; } = TimeSpan.FromSeconds(30);
+
+    // Nothing is dropped: when the outbox is full this waits until the sender has made room. The
+    // collector then does not move on, so its position stays where it is and the records stay in
+    // the source (Security log, journal) meanwhile.
+    public async Task<bool> SaveAsync(IReadOnlyList<FileAccessMonitor.Models.AccessRecord> batch, string position, CancellationToken ct = default)
     {
         try
         {
-            if (batch.Count > 0 && !outbox.Add(new AgentBatch { Records = batch.Select(AgentRecord.From).ToList() }))
+            if (batch.Count > 0)
             {
-                logger.LogError("The outbox is full ({Max} bytes); dropping {Count} records. Is the monitoring server reachable?",
-                    AgentOutbox.MaxBytes, batch.Count);
-                return Task.FromResult(false);
+                var item = new AgentBatch { Records = batch.Select(AgentRecord.From).ToList() };
+                var waiting = false;
+                while (!outbox.Add(item))
+                {
+                    if (!waiting)
+                        logger.LogError("The outbox is full ({Max} bytes). Collection is paused until the monitoring server has taken records; "
+                            + "{Count} records wait in the source log. Is the monitoring server reachable?", AgentOutbox.MaxBytes, batch.Count);
+                    waiting = true;
+                    await Task.Delay(FullRetryInterval, ct);
+                }
+                if (waiting) logger.LogInformation("The outbox has room again; collection continues.");
             }
             outbox.SavePosition(position);
-            return Task.FromResult(true);
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             logger.LogError(ex, "Could not write {Count} records to the outbox.", batch.Count);
-            return Task.FromResult(false);
+            return false;
         }
     }
 
@@ -267,7 +289,7 @@ public class RemoteRecordSink(AgentOutbox outbox, ILogger<RemoteRecordSink> logg
                 AuditDetail = auditDetail, MessageKey = messageKey,
                 Args = args.Select(a => Convert.ToString(a, System.Globalization.CultureInfo.InvariantCulture) ?? "").ToList(),
             },
-        });
+        }, force: true); // a few bytes: kept even when the outbox is full
         return Task.CompletedTask;
     }
 }
@@ -310,6 +332,7 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
                         Content = JsonContent.Create(AgentProtocol.ForServer(next.Batch, serverProtocol)),
                     };
                     request.Headers.Add("X-Agent-Outbox", (outbox.Count - 1).ToString()); // still waiting after this one
+                    if (outbox.IsFull) request.Headers.Add("X-Agent-Outbox-Full", "1");
                     using var response = await client.SendAsync(request, stoppingToken);
                     if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                         throw new AgentRejectedException();
@@ -319,7 +342,7 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
                 else if (heartbeatFirst || DateTime.UtcNow - lastContact >= HeartbeatInterval)
                 {
                     using var response = await client.PostAsJsonAsync("api/agent/heartbeat",
-                        new HeartbeatRequest(AppInfo.Version, outbox.Count, platform.AuditOk(), AppInfo.OsName), stoppingToken);
+                        new HeartbeatRequest(AppInfo.Version, outbox.Count, platform.AuditOk(), AppInfo.OsName, outbox.IsFull, outbox.Bytes), stoppingToken);
                     if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                         throw new AgentRejectedException();
                     response.EnsureSuccessStatusCode();

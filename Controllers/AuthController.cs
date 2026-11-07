@@ -69,9 +69,10 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByNameAsync(User.Identity!.Name!);
         if (user == null) return Unauthorized();
         var roles = await _userManager.GetRolesAsync(user);
-        // Folders this user is limited to (empty = everything)
-        var scope = (HttpContext.RequestServices.GetRequiredService<UserScopeService>().Get(User) ?? []).Select(e => e.ToString());
-        return Ok(new { username = user.UserName, displayName = user.DisplayName, roles, scopePaths = scope });
+        // Folders this user is limited to; allFolders = sees everything (Admins, and Viewers set to all folders), otherwise empty = nothing
+        var folders = HttpContext.RequestServices.GetRequiredService<UserScopeService>().Get(User);
+        var scope = (folders ?? []).Select(e => e.ToString());
+        return Ok(new { username = user.UserName, displayName = user.DisplayName, roles, scopePaths = scope, allFolders = folders == null });
     }
 
     // POST /api/auth/change-password

@@ -222,6 +222,19 @@ public class AlertService
             $"type={(offline ? "agentOffline" : "agentOnline")}, server={agentName}, channels=[{channels}]");
     }
 
+    // An agent's send queue is full and its collection is paused. Sent whenever notifications are enabled.
+    public async Task NotifyAgentOutboxFullAsync(string agentName)
+    {
+        var s = _settings;
+        if (!s.Enabled || (!s.HasWebhook && !s.HasMail)) return;
+
+        var title = "[FileAccessMonitor] " + Messages.GetIn(s.Language, "agentOutboxFull.title");
+        var body = Messages.GetIn(s.Language, "agentOutboxFull.body", agentName, AgentOutbox.MaxBytes / (1024 * 1024 * 1024) + " GB");
+        var results = await SendAsync(s, title, body, null);
+        var channels = string.Join(", ", results.Select(r => $"{r.Channel}={(r.Ok ? "ok" : "failed")}"));
+        await _audit.WriteAsync(AuditLog.SystemUser, "alert.sent", $"type=agentOutboxFull, server={agentName}, channels=[{channels}]");
+    }
+
     // A notification of a feature (e.g. type "Integrity" when the record chain is broken) to the main
     // channels in the configured language. Sent whenever notifications are enabled.
     public async Task<List<ChannelResult>> NotifyAsync(string type, string titleKey, string bodyKey, bool high, params object[] args)

@@ -173,17 +173,32 @@ public class EventLogCollectorService : BackgroundService
         _ = Task.Run(() => _usnReader.RunAsync(stoppingToken), stoppingToken);
 
         var lastRecordId = long.TryParse(await _sink.LoadPositionAsync(), out var savedId) ? savedId : 0;
-        var consumer = Task.Run(() => ConsumeAsync(lastRecordId, excludeSystem, excludeProcessSet));
+        var consumer = Task.Run(() => ConsumeAsync(lastRecordId, excludeSystem, excludeProcessSet, stoppingToken));
 
         EventLogWatcher? watcher = null;
         try
         {
             (watcher, var skipUpTo) = await CreateWatcherAsync(lastRecordId);
-            watcher.EventRecordWritten += (_, e) => Enqueue(e, skipUpTo);
-            watcher.Enabled = true;
+            Volatile.Write(ref _lastEnqueued, skipUpTo);
+            Start(watcher);
 
             _logger.LogInformation("Watching Security event log for file access events.");
-            await Task.Delay(Timeout.Infinite, stoppingToken);
+            // The queue is full (the sink has been waiting for long, see RemoteRecordSink): once the consumer has
+            // worked it off, the watcher starts again after the last queued event and the Security log is read from there
+            while (true)
+            {
+                var resume = _resume.Task;
+                var finished = await Task.WhenAny(resume, Task.Delay(Timeout.Infinite, stoppingToken));
+                if (finished != resume) await finished; // the service is stopping: throws
+                var from = await resume;
+                _logger.LogWarning("The event queue is worked off; reading the Security log again after record {RecordId}.", from);
+                watcher.Dispose();
+                Volatile.Write(ref _overflowAt, 0);
+                _resume = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+                (watcher, skipUpTo) = await CreateWatcherAsync(from);
+                Volatile.Write(ref _lastEnqueued, skipUpTo);
+                Start(watcher);
+            }
         }
         catch (OperationCanceledException) { }
         catch (UnauthorizedAccessException)
@@ -284,7 +299,22 @@ public class EventLogCollectorService : BackgroundService
         return ev?.RecordId ?? 0;
     }
 
-    private void Enqueue(EventRecordWrittenEventArgs e, long skipUpToRecordId)
+    // Events waiting for the consumer. The sink can make the consumer wait for days (an agent whose
+    // outbox is full); the queue then stops growing here and the rest is read from the log later.
+    internal const int MaxQueuedEvents = 200_000;
+    private long _lastEnqueued;      // record id of the newest queued event (older ones are skipped)
+    private long _overflowAt;        // 0, or the record id after which events were not queued (queue full)
+    private long _watcherGeneration; // events of a watcher that was replaced are ignored
+    private TaskCompletionSource<long> _resume = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private void Start(EventLogWatcher watcher)
+    {
+        var generation = Interlocked.Increment(ref _watcherGeneration);
+        watcher.EventRecordWritten += (_, e) => Enqueue(e, generation);
+        watcher.Enabled = true;
+    }
+
+    private void Enqueue(EventRecordWrittenEventArgs e, long generation)
     {
         if (e.EventException != null)
         {
@@ -292,12 +322,21 @@ public class EventLogCollectorService : BackgroundService
             return;
         }
         using var record = e.EventRecord;
-        if (record?.RecordId is not long recordId || recordId <= skipUpToRecordId) return;
+        if (generation != Volatile.Read(ref _watcherGeneration)) return;
+        if (record?.RecordId is not long recordId || recordId <= Volatile.Read(ref _lastEnqueued)) return;
+        if (Volatile.Read(ref _overflowAt) != 0) return; // read again from the log when the queue is worked off
+        if (_queue.Reader.Count >= MaxQueuedEvents)
+        {
+            Volatile.Write(ref _overflowAt, Volatile.Read(ref _lastEnqueued));
+            _logger.LogWarning("{Count} events are waiting to be saved; new events stay in the Security log until they are worked off.", MaxQueuedEvents);
+            return;
+        }
 
         try
         {
             var failure = ((record.Keywords ?? 0) & AuditFailureKeyword) != 0;
-            _queue.Writer.TryWrite(new RawEvent(record.Id, recordId, record.TimeCreated, ParseEventData(record), failure));
+            if (_queue.Writer.TryWrite(new RawEvent(record.Id, recordId, record.TimeCreated, ParseEventData(record), failure)))
+                Volatile.Write(ref _lastEnqueued, recordId);
         }
         catch (Exception ex)
         {
@@ -309,7 +348,7 @@ public class EventLogCollectorService : BackgroundService
     // saved together with the last Security log record id, in one transaction, so a crash
     // can neither lose nor duplicate records. The exception are DELETE accesses still waiting
     // to be told apart from renames (at most DeleteTracker.ConfirmTimeout) when the process is killed.
-    private async Task ConsumeAsync(long lastRecordId, bool excludeSystem, HashSet<string> excludeProcessSet)
+    private async Task ConsumeAsync(long lastRecordId, bool excludeSystem, HashSet<string> excludeProcessSet, CancellationToken ct)
     {
         var batch = new List<AccessRecord>(MaxBatchSize);
         var savedRecordId = lastRecordId;
@@ -349,20 +388,48 @@ public class EventLogCollectorService : BackgroundService
 
             if (batch.Count > 0 || (lastRecordId != savedRecordId && sinceSave.Elapsed >= PositionSaveInterval))
             {
-                if (await _sink.SaveAsync(batch, lastRecordId.ToString()))
+                // The batch and the position are only given up once the sink has them (it may wait for room)
+                if (await SaveUntilDoneAsync(batch, lastRecordId.ToString(), ct))
                 {
                     savedRecordId = lastRecordId;
                     sinceSave.Restart();
                     _usnReader?.SavePositions();
+                    batch.Clear();
                 }
-                batch.Clear();
+                else
+                {
+                    break; // the service is stopping; what is not saved is read from the Security log at the next start
+                }
             }
+
+            // The queue was full and is worked off: the rest is read from the Security log (see ExecuteAsync)
+            if (Volatile.Read(ref _overflowAt) is > 0 and var overflowAt && lastRecordId >= overflowAt && reader.Count == 0)
+                _resume.TrySetResult(overflowAt);
         }
 
         _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow, force: true).ForEach(Add);
         batch.AddRange(_usnCorrelator.Release(DateTime.UtcNow, force: true));
         if (batch.Count > 0 || lastRecordId != savedRecordId)
-            await _sink.SaveAsync(batch, lastRecordId.ToString());
+            await SaveUntilDoneAsync(batch, lastRecordId.ToString(), ct);
+    }
+
+    internal static readonly TimeSpan SaveRetryDelay = TimeSpan.FromSeconds(10);
+
+    // Asks the sink again until it has saved the batch: a false answer never means "go on without it"
+    // (the position would move past records that were not kept). False only when the service is stopping;
+    // the batch is then left as it is and the records are read from the Security log at the next start.
+    private async Task<bool> SaveUntilDoneAsync(List<AccessRecord> batch, string position, CancellationToken ct)
+    {
+        while (true)
+        {
+            try
+            {
+                if (await _sink.SaveAsync(batch, position, ct)) return true;
+                _logger.LogWarning("Saving {Count} records failed; trying again in {Seconds} seconds.", batch.Count, SaveRetryDelay.TotalSeconds);
+                await Task.Delay(SaveRetryDelay, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return false; }
+        }
     }
 
     // While DELETE accesses are pending, wakes up after the confirm timeout even without new

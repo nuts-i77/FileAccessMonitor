@@ -195,4 +195,27 @@ public class WebTlsTests : IDisposable
         Assert.Contains("password", output.ToString());
         Assert.False(File.Exists(file));
     }
+
+    [Theory]
+    [InlineData("http://0.0.0.0:8080", "http://localhost:8080")]
+    [InlineData("http://*:9090", "http://localhost:9090")]
+    [InlineData("http://192.168.0.5:8080;http://0.0.0.0:8080", "http://localhost:8080")]
+    [InlineData("http://[::]:8081;http://+:8082", "http://localhost:8081;http://localhost:8082")]
+    public void Without_a_certificate_the_web_gui_listens_on_loopback_only(string url, string expected) =>
+        Assert.Equal(expected, WebTls.ToLoopback(url));
+
+    [Fact]
+    public void A_certificate_that_cannot_be_loaded_is_reported_as_a_loopback_only_problem()
+    {
+        var log = new Serilog.LoggerConfiguration().CreateLogger();
+        // The PFX file named in the settings does not exist in the data folder
+        var settings = new WebTlsSettings(true, WebTlsSettings.PfxMode, "missing-" + Guid.NewGuid().ToString("N") + ".pfx", null, 8081);
+        Assert.Null(WebTls.Initialize(settings, log, new EphemeralDataProtectionProvider()));
+        Assert.False(WebTls.Status.Https);
+        Assert.True(WebTls.Status.LoopbackOnly);
+        Assert.False(string.IsNullOrEmpty(WebTls.Status.Problem));
+
+        Assert.Null(WebTls.Initialize(settings with { Enabled = false }, log));
+        Assert.False(WebTls.Status.LoopbackOnly); // off is not an error
+    }
 }

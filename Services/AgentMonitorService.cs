@@ -9,6 +9,7 @@ public class AgentMonitorService(IServiceScopeFactory scopeFactory, AlertService
     ILogger<AgentMonitorService> logger) : BackgroundService
 {
     private readonly AgentStatusTracker _tracker = new();
+    private readonly AgentOutboxTracker _outboxTracker = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -32,6 +33,19 @@ public class AgentMonitorService(IServiceScopeFactory scopeFactory, AlertService
                         $"name={agent.Name}, lastSeen={agent.LastSeenUtc:O}");
                     await alerts.NotifyAgentStatusAsync(agent.Name, offline, agent.LastSeenUtc);
                 }
+
+                // Agents whose send queue is full (collection is paused there): notified once, logged when it clears
+                var outboxes = await db.Agents.AsNoTracking().Where(a => !a.Disabled)
+                    .Select(a => new AgentOutboxState(a.Name, a.OutboxFull, a.OutboxBytes))
+                    .ToListAsync(stoppingToken);
+                foreach (var (agent, full) in _outboxTracker.Check(outboxes))
+                {
+                    logger.LogWarning(full
+                        ? "The send queue of agent {Name} is full ({Bytes:N0} bytes); its collection is paused until the queue has been sent."
+                        : "The send queue of agent {Name} has room again.", agent.Name, agent.Bytes);
+                    await audit.WriteAsync(AuditLog.SystemUser, full ? "agent.outboxFull" : "agent.outboxRoom", $"name={agent.Name}, bytes={agent.Bytes}");
+                    if (full) await alerts.NotifyAgentOutboxFullAsync(agent.Name);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -42,6 +56,28 @@ public class AgentMonitorService(IServiceScopeFactory scopeFactory, AlertService
 }
 
 public record AgentStatus(string Name, DateTime LastSeenUtc, bool Disabled);
+
+public record AgentOutboxState(string Name, bool Full, long Bytes);
+
+// Decides which agents just reported a full send queue, or room again. Kept apart from the service for testing.
+public class AgentOutboxTracker
+{
+    private readonly HashSet<string> _full = new(StringComparer.OrdinalIgnoreCase);
+
+    public List<(AgentOutboxState Agent, bool Full)> Check(IEnumerable<AgentOutboxState> agents)
+    {
+        var changes = new List<(AgentOutboxState, bool)>();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var agent in agents)
+        {
+            names.Add(agent.Name);
+            if (agent.Full && _full.Add(agent.Name)) changes.Add((agent, true));
+            else if (!agent.Full && _full.Remove(agent.Name)) changes.Add((agent, false));
+        }
+        _full.RemoveWhere(n => !names.Contains(n)); // removed or disabled: forgotten, reported again if it comes back full
+        return changes;
+    }
+}
 
 // Decides which agents just went offline or came back. Kept apart from the service for testing.
 public class AgentStatusTracker
