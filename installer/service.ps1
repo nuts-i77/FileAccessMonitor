@@ -66,12 +66,19 @@ function Set-MonitorService([string]$Name, [string]$Display, [string]$Descriptio
         New-Service -Name $Name -DisplayName $Display -Description $Description `
                     -BinaryPathName $BinPath -StartupType Manual | Out-Null
     }
-    # The account: a virtual account needs no password; LocalSystem none either
-    sc.exe config $Name obj= $Account | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "sc.exe config $Name obj= $Account failed (exit code $LASTEXITCODE)" }
-    sc.exe config $Name start= $Start | Out-Null
+    # The account, only when it changes (an agent stays LocalSystem). Neither a virtual account nor LocalSystem has
+    # a password; Win32_Service.Change takes an empty one, which sc.exe cannot be given from PowerShell 5.1.
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+    $current = if ($svc.StartName -in 'LocalSystem', 'NT AUTHORITY\SYSTEM', '.\LocalSystem') { 'LocalSystem' } else { $svc.StartName }
+    if ($current -ne $Account) {
+        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ StartName = $Account; StartPassword = '' }
+        if ($r.ReturnValue -ne 0) { throw "Could not set the account of $Name to $Account (Win32_Service.Change returned $($r.ReturnValue))" }
+    }
+    $out = sc.exe config $Name start= $Start
+    if ($LASTEXITCODE -ne 0) { throw "sc.exe config $Name start= $Start failed (exit code $LASTEXITCODE): $out" }
     # Come back after a crash
-    sc.exe failure $Name reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
+    $out = sc.exe failure $Name reset= 86400 actions= restart/60000/restart/60000/restart/60000
+    if ($LASTEXITCODE -ne 0) { Write-Warning "sc.exe failure $Name failed (exit code $LASTEXITCODE): $out" }
 }
 
 # Whether this machine records accesses on itself ("LocalCollection": false in settings.json turns it off)
@@ -131,6 +138,18 @@ function Initialize-EventSource {
     } catch {
         Write-Warning "Could not create the event log source FileAccessMonitor: $($_.Exception.Message)"
     }
+}
+
+# The installer runs this hidden: what happened goes to logs\service-install.log ("check the logs" in its message)
+try {
+    New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'logs') | Out-Null
+    Start-Transcript -Path (Join-Path $DataDir 'logs\service-install.log') -Append | Out-Null
+} catch { }
+trap {
+    Write-Output "ERROR: $($_.Exception.Message)"
+    Write-Output $_.ScriptStackTrace
+    try { Stop-Transcript | Out-Null } catch { }
+    exit 1
 }
 
 switch ($Action) {
@@ -195,3 +214,5 @@ switch ($Action) {
         Get-NetFirewallRule -DisplayName (@($FirewallRule) + $OldRules) -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     }
 }
+
+try { Stop-Transcript | Out-Null } catch { }
