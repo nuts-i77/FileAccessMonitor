@@ -1,6 +1,11 @@
 body {
   background-color: #f4f6f9;
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
+}
+
+/* Bootstrap's small text (hints, notes, form help) is 87.5 %, too small for Japanese at this base size */
+.small, small, .form-text {
+  font-size: 0.9em;
 }
 
 .sortable {
