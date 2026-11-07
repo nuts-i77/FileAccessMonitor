@@ -46,7 +46,7 @@ jobs:
           rm -f build/server/*.a
           mkdir -p linux-dist "build/$agent" "build/$server"
           cp -a build/agent/. linux-agent/install.sh linux-agent/fileaccessmonitor-agent.service LICENSE README.md README.ja.md "build/$agent/"
-          cp -a build/server/. linux-server/install.sh linux-server/fileaccessmonitor.service linux-server/fileaccessmonitor-server \
+          cp -a build/server/. linux-server/install.sh linux-server/fileaccessmonitor.service linux-server/fileaccessmonitor-collector.service linux-server/fileaccessmonitor-server \
             LICENSE README.md README.ja.md "build/$server/"
           tar -czf "linux-dist/$agent.tar.gz" --owner=0 --group=0 -C build "$agent"
           tar -czf "linux-dist/$server.tar.gz" --owner=0 --group=0 -C build "$server"

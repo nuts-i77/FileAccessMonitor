@@ -219,6 +219,8 @@ window.I18N_EN = {
   'agents.remove': 'Remove (records are kept)',
   'agents.confirmRemove': 'Remove the agent "{n}"? Its records are kept. To send records again, register the server again.',
   'agents.none': 'No agents registered.',
+  'agents.localCollector': 'collector service of this server',
+  'agents.localCollectorOff': 'The collector service of this server (File Access Monitor Collector) is not connected. Until it runs, accesses on this server are not recorded and auditing cannot be set up or checked. Start the service on the server.',
   'agents.notReady': 'The agent port is not available (its certificate could not be created). Check the service log.',
   'agents.featureOff': 'The agent port {p} is turned off in settings.json ("Agents": { "Enabled": false }). Remove that setting and restart the service to use agents.',
   'audit.a.agent.featureOn': 'Agent feature turned on',

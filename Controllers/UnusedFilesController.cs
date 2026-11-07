@@ -24,9 +24,12 @@ public class UnusedFilesController : ControllerBase
     private readonly UserScopeService _scopes;
     private readonly ServerConfigService _servers;
     private readonly AgentJobs _jobs;
+    private readonly LocalCollectorState _collector;
 
-    public UnusedFilesController(AccessDbContext db, UserScopeService scopes, ServerConfigService servers, AgentJobs jobs)
+    public UnusedFilesController(AccessDbContext db, UserScopeService scopes, ServerConfigService servers, AgentJobs jobs,
+        LocalCollectorState collector)
     {
+        _collector = collector;
         _db = db;
         _scopes = scopes;
         _servers = servers;
@@ -76,10 +79,19 @@ public class UnusedFilesController : ControllerBase
         bool truncated;
         if (local)
         {
-            if (!Directory.Exists(folder))
+            // The web service may not be allowed to read the shares: the collector service lists the folder
+            System.Text.Json.Nodes.JsonObject result;
+            try
+            {
+                result = await _collector.RunJobAsync(_jobs, "scan", new() { ["folder"] = folder }, ScanJobTimeout, ct);
+            }
+            catch (LocalCollectorException ex)
+            {
+                return StatusCode(ex.Status, new { error = ex.Reported ?? ex.Message });
+            }
+            if (result["exists"]?.GetValue<bool>() != true)
                 return BadRequest(new { error = Messages.Get("path.notFound", folder) });
-            var rules = new RecordingRules(RecordingSettings.Load());
-            (all, scanned, truncated) = await Task.Run(() => Scan(folder, used, rules, ct), ct);
+            (all, scanned, truncated) = FromAgentListing(result, used);
         }
         else
         {

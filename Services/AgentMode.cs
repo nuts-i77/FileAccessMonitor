@@ -12,7 +12,16 @@ namespace FileAccessMonitor.Services;
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public class WindowsAgentPlatform(SaclManagerService sacl, ILogger<WindowsAgentPlatform> logger) : IAgentPlatform
 {
-    public bool? AuditOk() => SaclManagerService.IsFileSystemAuditOn();
+    public bool? AuditOk()
+    {
+        try { return SaclManagerService.IsFileSystemAuditOn(); }
+        catch (Exception ex)
+        {
+            // Not elevated (a manual run): unknown, not a failed heartbeat
+            logger.LogDebug(ex, "Could not query the audit policy.");
+            return null;
+        }
+    }
 
     public JsonObject RunJob(AgentJob job, CancellationToken ct)
     {

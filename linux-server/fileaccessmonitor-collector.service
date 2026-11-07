@@ -1,0 +1,21 @@
+[Unit]
+Description=FileAccessMonitor collector (records this machine's Samba accesses for the monitoring server)
+# Enabled by fileaccessmonitor-server --collect; the web GUI and agent endpoint (fileaccessmonitor.service)
+# run without privileges, this part needs root to read the journal and set up Samba's auditing
+After=network-online.target smbd.service smb.service fileaccessmonitor.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/opt/fileaccessmonitor/FileAccessMonitor collector
+WorkingDirectory=/opt/fileaccessmonitor
+User=root
+# Its files in /var/lib/fileaccessmonitor/collector are for root only (key.hash is made readable on purpose)
+UMask=0077
+Restart=always
+RestartSec=10
+# Stop the collector first; it ends the journalctl it reads from itself
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

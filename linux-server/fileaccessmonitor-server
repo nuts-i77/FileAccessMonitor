@@ -2,14 +2,15 @@
 # Shows or changes how the FileAccessMonitor monitoring server runs on Linux (installed with the
 # deb/rpm package or with install.sh):
 #   fileaccessmonitor-server                  show the mode, port and service state
-#   fileaccessmonitor-server --collect        also record this machine's Samba accesses (runs as root)
-#   fileaccessmonitor-server --monitor-only   only show what agents send (runs as user fileaccessmonitor)
+#   fileaccessmonitor-server --collect        also record this machine's Samba accesses (the separate
+#                                             fileaccessmonitor-collector service, as root; the web GUI stays unprivileged)
+#   fileaccessmonitor-server --monitor-only   only show what agents send (no collector service)
 #   fileaccessmonitor-server --port 8080      web GUI port
 #   fileaccessmonitor-server --https on|off   HTTPS for the web GUI, on the same port (self-signed certificate)
 #       --pfx FILE [--pfx-password-file FILE]   use your own certificate (PFX) instead of the self-signed one
 #       --redirect-port 8081                    also listen on this port and send browsers to the HTTPS port (0 = none)
-# Changes are kept in systemd drop-ins (/etc/systemd/system/fileaccessmonitor.service.d) and
-# settings.json, so they survive upgrades.
+# Changes are kept in the port drop-in (/etc/systemd/system/fileaccessmonitor.service.d), the enabled
+# collector service and settings.json, so they survive upgrades.
 set -eu
 
 APP_DIR=/opt/fileaccessmonitor
@@ -39,10 +40,11 @@ https_state() {
 
 show() {
     if [ "$(mode)" = collect ]; then
-        echo "Mode:    also records this machine's Samba accesses (runs as root)"
+        echo "Mode:    also records this machine's Samba accesses (collector service: $(systemctl is-active fileaccessmonitor-collector 2>/dev/null || true), runs as root)"
     else
-        echo "Mode:    monitoring only (runs as user $SERVICE_USER)"
+        echo "Mode:    monitoring only"
     fi
+    echo "Web GUI runs as user $SERVICE_USER (no privileges)"
     case "$(https_state)" in
         on) echo "Web GUI: https://$(hostname -f 2>/dev/null || hostname):$(port) (self-signed certificates show a browser warning); agents connect to port 8443" ;;
         off) echo "Web GUI: http://$(hostname -f 2>/dev/null || hostname):$(port); agents connect to port 8443" ;;
@@ -103,7 +105,8 @@ if [ "$MODE" = collect ]; then
         echo "--collect records Samba accesses, but Samba (smbd) is not installed." >&2
         exit 1
     fi
-    printf '# Set by fileaccessmonitor-server --collect\n[Service]\nUser=root\n' > "$DROPIN_DIR/collect.conf"
+    # The root drop-in of 1.10 and older: the web GUI no longer runs as root
+    rm -f "$DROPIN_DIR/collect.conf"
     # journald drops lines from a service that logs very fast; let smbd's audit lines through.
     # Takes effect when smbd next restarts.
     mkdir -p "/etc/systemd/system/$SMB_UNIT.d"
@@ -132,12 +135,22 @@ if [ -n "$HTTPS" ] || [ -n "$REDIRECT" ]; then
     "$APP_DIR/FileAccessMonitor" "$@" >/dev/null
 fi
 
-# The data folder belongs to the account the service runs as, and only to it
-if [ -f "$DROPIN_DIR/collect.conf" ]; then chown -R root: "$DATA_DIR"; else chown -R "$SERVICE_USER": "$DATA_DIR"; fi
+# The data folder belongs to the web service account, and only to it; the collector's folder inside it stays
+# root's (its files are private, except key.hash, which the web service verifies the collector with)
+mkdir -p "$DATA_DIR/collector"
+find "$DATA_DIR" -path "$DATA_DIR/collector" -prune -o -exec chown "$SERVICE_USER": {} +
+chown root: "$DATA_DIR/collector"
+chmod 755 "$DATA_DIR/collector"
 chmod 700 "$DATA_DIR"
 
 systemctl daemon-reload
 systemctl try-restart fileaccessmonitor
+if [ "$MODE" = collect ]; then
+    systemctl enable fileaccessmonitor-collector >/dev/null 2>&1 || true
+    systemctl restart fileaccessmonitor-collector
+elif [ "$MODE" = monitor ]; then
+    systemctl disable --now fileaccessmonitor-collector >/dev/null 2>&1 || true
+fi
 show
 if [ "$MODE" = collect ]; then
     echo "Restart Samba when convenient (systemctl restart $SMB_UNIT) so that journald keeps all of its audit lines."

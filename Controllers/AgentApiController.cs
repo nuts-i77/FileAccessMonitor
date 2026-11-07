@@ -11,6 +11,8 @@ namespace FileAccessMonitor.Controllers;
 
 // Called by agents, on the agent HTTPS port only. Agents authenticate with the key they got at
 // registration ("Authorization: Bearer <agent id>.<secret>"), not with a user sign-in.
+// The local collector (the privileged process of this server, see LocalCollector) calls the same API over
+// loopback with its own credential "local.<secret>" and is handled as an agent named like this server.
 [ApiController]
 [Route("api/agent")]
 [AllowAnonymous]
@@ -23,10 +25,12 @@ public class AgentApiController : ControllerBase
     private readonly AuditLog _audit;
     private readonly IConfiguration _config;
     private readonly ILogger<AgentApiController> _logger;
+    private readonly LocalCollectorState _collector;
 
     public AgentApiController(AccessDbContext db, AlertService alerts, AuditLog audit, IConfiguration config,
-        ILogger<AgentApiController> logger)
+        ILogger<AgentApiController> logger, LocalCollectorState collector)
     {
+        _collector = collector;
         _db = db;
         _alerts = alerts;
         _audit = audit;
@@ -79,9 +83,19 @@ public class AgentApiController : ControllerBase
         if (await AuthenticateAsync() is not { } agent) return Unauthorized();
         if (batch.Records is { Count: > MaxRecordsPerBatch }) return BadRequest(new { error = "tooManyRecords" });
 
+        var isLocal = IsLocalCollector(agent);
         agent.LastSeenAt = DateTime.UtcNow;
+        if (isLocal)
+        {
+            _collector.Touch(agent.LastSeenAt.Value);
+            agent.LastBatchSeq = await LoadLocalSeqAsync();
+        }
         // Batches waiting behind this one, so a backlog shows in the GUI while it is being sent
-        if (int.TryParse(Request.Headers["X-Agent-Outbox"], out var waiting)) agent.OutboxCount = waiting;
+        if (int.TryParse(Request.Headers["X-Agent-Outbox"], out var waiting))
+        {
+            agent.OutboxCount = waiting;
+            if (isLocal) _collector.SetOutbox(waiting);
+        }
         if (batch.Seq <= agent.LastBatchSeq)
         {
             await _db.SaveChangesAsync();
@@ -99,6 +113,7 @@ public class AgentApiController : ControllerBase
         }
         _db.AccessRecords.AddRange(records);
         agent.LastBatchSeq = batch.Seq;
+        if (isLocal) await StoreLocalSeqAsync(batch.Seq);
         await _db.SaveChangesAsync(); // records and sequence number in one transaction
 
         if (records.Count > 0) _alerts.Observe(records);
@@ -117,6 +132,12 @@ public class AgentApiController : ControllerBase
     {
         if (!OnAgentPort) return NotFound();
         if (await AuthenticateAsync() is not { } agent) return Unauthorized();
+        if (IsLocalCollector(agent))
+        {
+            _collector.Heartbeat(req, DateTime.UtcNow);
+            var local = LocalCollector.ConfigFrom(LocalSettings());
+            return Ok(new { lastBatchSeq = await LoadLocalSeqAsync(), configVersion = LocalCollector.ConfigVersion(local), protocol = AgentProtocol.Version });
+        }
         agent.LastSeenAt = DateTime.UtcNow;
         agent.Version = req.Version;
         if (req.OutboxCount is { } count) agent.OutboxCount = count;
@@ -132,6 +153,17 @@ public class AgentApiController : ControllerBase
     {
         if (!OnAgentPort) return NotFound();
         if (await AuthenticateAsync() is not { } agent) return Unauthorized();
+        if (IsLocalCollector(agent))
+        {
+            // This machine's own settings. "position": where the collector inside the web service got to before
+            // the collector became a separate process (1.10 and older); a collector that has no position of its
+            // own continues there. Not offered once batches of the new collector have been saved.
+            var local = LocalCollector.ConfigFrom(LocalSettings());
+            var position = await _db.CollectorStates.AsNoTracking().AnyAsync(s => s.Key == LocalCollector.SeqStateKey)
+                ? ""
+                : (await _db.CollectorStates.AsNoTracking().FirstOrDefaultAsync(s => s.Key == LocalPositionKey))?.Value ?? "";
+            return Ok(new { version = LocalCollector.ConfigVersion(local), config = local, position });
+        }
         var config = string.IsNullOrEmpty(agent.Config) ? new JsonObject() : JsonNode.Parse(agent.Config)!.AsObject();
         return Ok(new { version = agent.ConfigVersion, config });
     }
@@ -142,6 +174,7 @@ public class AgentApiController : ControllerBase
     {
         if (!OnAgentPort) return NotFound();
         if (await AuthenticateAsync() is not { } agent) return Unauthorized();
+        if (IsLocalCollector(agent)) _collector.Touch(DateTime.UtcNow); // it asks every 25 seconds
         // End the wait when the service stops, rather than holding up the shutdown
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted, lifetime.ApplicationStopping);
         try
@@ -171,7 +204,43 @@ public class AgentApiController : ControllerBase
         if (!header.StartsWith("Bearer ", StringComparison.Ordinal)) return null;
         var parts = header["Bearer ".Length..].Split('.', 2);
         if (parts.Length != 2) return null;
+        if (parts[0] == LocalCollector.AgentId)
+        {
+            // The local collector: only from this machine, and only while this server collects
+            var loopback = HttpContext.Connection.RemoteIpAddress is { } ip && System.Net.IPAddress.IsLoopback(ip);
+            return loopback && ServerConfigService.LocalCollects && LocalCollector.Matches(parts[1], LocalFolder)
+                ? LocalCollector.PseudoAgent() : null;
+        }
         var agent = await _db.Agents.FindAsync(parts[0]);
         return agent != null && !agent.Disabled && AgentSecrets.Matches(parts[1], agent.KeyHash) ? agent : null;
+    }
+
+    // Where the collector's key.hash is looked for (the tests point it at a temporary folder)
+    internal static string? LocalFolder { get; set; }
+
+    // This machine's settings.json (the tests replace it)
+    internal static Func<JsonObject> LocalSettings { get; set; } = SettingsStore.Load;
+
+    private static bool IsLocalCollector(Agent agent) => agent.Id == LocalCollector.AgentId;
+
+    // The position the server's own collector saved in the database before it became a separate process
+    private const string LocalPositionKey = "LastRecordId";
+
+    // The batch sequence saved from the collector, valid for the key it was saved with (a collector that
+    // started over with a new key numbers its batches from 1 again)
+    private async Task<long> LoadLocalSeqAsync()
+    {
+        var row = await _db.CollectorStates.AsNoTracking().FirstOrDefaultAsync(s => s.Key == LocalCollector.SeqStateKey);
+        var hash = LocalCollector.ReadKeyHash(LocalFolder);
+        var parts = row?.Value.Split(':', 2);
+        return parts is { Length: 2 } && hash != null && parts[0] == hash && long.TryParse(parts[1], out var seq) ? seq : 0;
+    }
+
+    private async Task StoreLocalSeqAsync(long seq)
+    {
+        var value = $"{LocalCollector.ReadKeyHash(LocalFolder)}:{seq}";
+        var row = await _db.CollectorStates.FindAsync(LocalCollector.SeqStateKey);
+        if (row == null) _db.CollectorStates.Add(new CollectorState { Key = LocalCollector.SeqStateKey, Value = value });
+        else row.Value = value;
     }
 }

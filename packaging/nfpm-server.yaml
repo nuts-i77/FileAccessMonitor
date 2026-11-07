@@ -32,6 +32,8 @@ contents:
     type: symlink
   - src: linux-server/fileaccessmonitor.service
     dst: /usr/lib/systemd/system/fileaccessmonitor.service
+  - src: linux-server/fileaccessmonitor-collector.service
+    dst: /usr/lib/systemd/system/fileaccessmonitor-collector.service
 
 scripts:
   postinstall: packaging/server-postinstall.sh

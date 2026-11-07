@@ -4,57 +4,88 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace FileAccessMonitor.Services;
 
-// Self-signed server certificates kept by the machine: in the machine certificate store on Windows
-// (the private key must be persisted in the machine key store for Kestrel), as a PFX file in the
-// data folder on Linux (readable by the service account only). Shared by the agent endpoint and
-// the web GUI.
+// Self-signed server certificates kept as a PFX file in the data folder (readable by the service
+// account only). The web part runs as an unprivileged account (the virtual account
+// NT SERVICE\FileAccessMonitor on Windows), which can neither add to the machine certificate store
+// nor use a key that SYSTEM put in the machine key store; so the certificate is a file that the account
+// itself can read and write. On Windows the file is loaded into the machine key set (not persisted, so
+// nothing is left behind in the key store).
+// Certificates that an earlier version (service as LocalSystem) put in the machine store stay in use as
+// long as the account can use their key (the installer grants it read access to the key file), so the
+// agent endpoint certificate, which agents pin by fingerprint, does not change on an upgrade.
+// Shared by the agent endpoint and the web GUI.
 public static class SelfSignedCertificate
 {
     // Returns a stored certificate with this subject that isUsable accepts (the newest one), or
-    // creates one. replaceStale: certificates with the subject that are not usable are removed
-    // when a new one is made (the web certificate is renewed when the machine's names change; the
-    // agent certificate is never touched, agents pin its fingerprint).
+    // creates one. replaceStale: certificates with the subject that are not usable are replaced
+    // (the web certificate is renewed when the machine's names change; the agent certificate is
+    // never touched, agents pin its fingerprint).
     public static X509Certificate2 LoadOrCreate(string subject, string pfxFileName, IReadOnlyCollection<string> sanNames,
         int validityYears, Func<X509Certificate2, bool> isUsable, Serilog.ILogger log, string description,
         bool replaceStale = false)
     {
-        return OperatingSystem.IsWindows()
-            ? FromMachineStore(subject, sanNames, validityYears, isUsable, log, description, replaceStale)
-            : FromFile(Path.Combine(AppPaths.DataDir, pfxFileName), subject, sanNames, validityYears, isUsable, log, description);
+        var pfxFile = Path.Combine(AppPaths.DataDir, pfxFileName);
+        if (OperatingSystem.IsWindows() && !File.Exists(pfxFile))
+        {
+            var legacy = FindInMachineStore(subject, isUsable);
+            if (legacy != null && KeyIsUsable(legacy)) return legacy;
+            // The agent certificate is pinned by the agents: never replace it behind their back
+            if (legacy != null && !replaceStale)
+                throw new CryptographicException(
+                    "The agent endpoint certificate in the machine store cannot be used by this account (no access to its private key). " +
+                    "Run the installer again; it gives the service account access to the key.");
+        }
+        return FromFile(pfxFile, subject, sanNames, validityYears, isUsable, log, description);
     }
 
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static X509Certificate2 FromMachineStore(string subject, IReadOnlyCollection<string> sanNames, int validityYears,
-        Func<X509Certificate2, bool> isUsable, Serilog.ILogger log, string description, bool replaceStale)
+    // The newest usable certificate with this subject in the machine store (null when there is none or
+    // the store cannot be read)
+    internal static X509Certificate2? FindInMachineStore(string subject, Func<X509Certificate2, bool> isUsable)
     {
-        using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
-        store.Open(OpenFlags.ReadWrite);
-        var all = store.Certificates.Find(X509FindType.FindBySubjectDistinguishedName, subject, validOnly: false);
-        var existing = all.Where(isUsable).OrderByDescending(c => c.NotAfter).FirstOrDefault();
-        if (existing != null) return existing;
-
-        // Re-import so the private key is persisted in the machine key store (Kestrel needs that)
-        using var created = Create(subject, sanNames, validityYears);
-        var cert = X509CertificateLoader.LoadPkcs12(created.Export(X509ContentType.Pfx), null,
-            X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
-        store.Add(cert);
-        if (replaceStale)
-            foreach (var old in all) store.Remove(old);
-        log.Information("Created the {Description} certificate (SHA-256 {Fingerprint}).", description, AgentSecrets.Fingerprint(cert));
-        return cert;
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+            store.Open(OpenFlags.ReadOnly);
+            return store.Certificates.Find(X509FindType.FindBySubjectDistinguishedName, subject, validOnly: false)
+                .Where(isUsable).OrderByDescending(c => c.NotAfter).FirstOrDefault();
+        }
+        catch (CryptographicException)
+        {
+            return null;
+        }
     }
+
+    // Whether this account can sign with the certificate's private key (TLS needs that)
+    internal static bool KeyIsUsable(X509Certificate2 cert)
+    {
+        try
+        {
+            using var rsa = cert.GetRSAPrivateKey();
+            rsa?.SignData([1], HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            return rsa != null;
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
+
+    // Windows needs a key set that SChannel (Kestrel) can use
+    internal static X509KeyStorageFlags LoadFlags =>
+        OperatingSystem.IsWindows() ? X509KeyStorageFlags.MachineKeySet : X509KeyStorageFlags.DefaultKeySet;
 
     private static X509Certificate2 FromFile(string pfxFile, string subject, IReadOnlyCollection<string> sanNames, int validityYears,
         Func<X509Certificate2, bool> isUsable, Serilog.ILogger log, string description)
     {
         if (File.Exists(pfxFile))
         {
-            var existing = X509CertificateLoader.LoadPkcs12FromFile(pfxFile, null);
+            var existing = X509CertificateLoader.LoadPkcs12FromFile(pfxFile, null, LoadFlags);
             if (isUsable(existing)) return existing;
         }
         using var created = Create(subject, sanNames, validityYears);
         SecretStore.WriteProtected(pfxFile, created.Export(X509ContentType.Pfx));
-        var cert = X509CertificateLoader.LoadPkcs12FromFile(pfxFile, null);
+        var cert = X509CertificateLoader.LoadPkcs12FromFile(pfxFile, null, LoadFlags);
         log.Information("Created the {Description} certificate (SHA-256 {Fingerprint}).", description, AgentSecrets.Fingerprint(cert));
         return cert;
     }

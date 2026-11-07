@@ -18,9 +18,11 @@ public class AgentsController : ControllerBase
     private readonly AccessDbContext _db;
     private readonly AuditLog _audit;
     private readonly IConfiguration _config;
+    private readonly LocalCollectorState _collector;
 
-    public AgentsController(AccessDbContext db, AuditLog audit, IConfiguration config)
+    public AgentsController(AccessDbContext db, AuditLog audit, IConfiguration config, LocalCollectorState collector)
     {
+        _collector = collector;
         _db = db;
         _audit = audit;
         _config = config;
@@ -38,6 +40,10 @@ public class AgentsController : ControllerBase
             endpointReady = AgentEndpoint.Certificate != null,
             port = AgentEndpoint.Port(_config),
             serverVersion = SettingsController.AppVersion,
+            // This machine's own collector service (not an agent: it is not in the list below)
+            local = ServerConfigService.LocalCollects
+                ? new { name = ServerConfigService.LocalName, status = CollectorStatus.From(_collector) }
+                : null,
             agents = agents.Select(a => new { a.Id, a.Name, a.CreatedAt, a.LastSeenAt, a.Version, a.Disabled, a.OutboxCount, a.AuditPolicyOk, a.Os }),
         });
     }

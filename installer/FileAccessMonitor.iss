@@ -7,6 +7,11 @@
 ; Silent install of a monitoring server that does not collect on itself: add /ROLE=monitor
 ; Silent install as an agent (connection string from Settings > Agents on the monitoring server):
 ;   FileAccessMonitor-Setup-x.y.z.exe /VERYSILENT /SUPPRESSMSGBOXES /ROLE=agent /CONNECTION=FAM1.xxxx
+;
+; Services (service.ps1): "FileAccessMonitor" (web GUI and database) runs as the virtual account
+; NT SERVICE\FileAccessMonitor without privileges; "FileAccessMonitorCollector" (records accesses on this
+; server, started with the argument "collector") runs as LocalSystem, and is enabled only while local collection
+; is on. An agent install has the one service FileAccessMonitor as LocalSystem.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"

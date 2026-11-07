@@ -21,6 +21,11 @@ public class AgentConfig
     public string Fingerprint { get; set; } = "";
     public string Key { get; set; } = ""; // "<agent id>.<secret>"
 
+    // Where the fingerprint to trust comes from when it is not fixed: the collector of the server itself reads
+    // the server's certificate from the data folder (it may not exist yet when the collector starts)
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Func<string?>? FingerprintSource { get; set; }
+
     public static bool Exists => File.Exists(FilePath);
 
     public static AgentConfig Load() =>
@@ -40,18 +45,22 @@ public class AgentConfig
         }));
         writer.Write(JsonSerializer.Serialize(this));
 #else
-        SecretStore.WriteProtected(FilePath, JsonSerializer.Serialize(this));
+        SecretStore.WriteProtected(FilePath, JsonSerializer.Serialize(this), SecretStore.Audience.Administrators);
 #endif
     }
 
+    public HttpClient CreateClient() => CreateClient(ServerUrl, FingerprintSource ?? (() => Fingerprint));
+
     // HTTPS that trusts exactly the monitoring server's certificate (pinned by fingerprint)
-    public static HttpClient CreateClient(string serverUrl, string fingerprint) => new(new SocketsHttpHandler
+    public static HttpClient CreateClient(string serverUrl, string fingerprint) => CreateClient(serverUrl, () => fingerprint);
+
+    private static HttpClient CreateClient(string serverUrl, Func<string?> fingerprint) => new(new SocketsHttpHandler
     {
         SslOptions = new SslClientAuthenticationOptions
         {
             RemoteCertificateValidationCallback = (_, cert, _, _) =>
-                cert != null && string.Equals(Convert.ToHexString(SHA256.HashData(cert.GetRawCertData())),
-                    fingerprint, StringComparison.OrdinalIgnoreCase),
+                cert != null && fingerprint() is { } pinned && string.Equals(Convert.ToHexString(SHA256.HashData(cert.GetRawCertData())),
+                    pinned, StringComparison.OrdinalIgnoreCase),
         },
         PooledConnectionLifetime = TimeSpan.FromMinutes(10),
     })
@@ -217,8 +226,8 @@ public class AgentOutbox
         File.Exists(path) && long.TryParse(File.ReadAllText(path).Trim(), out var n) ? n : 0;
 }
 
-// Where a collector hands what it found: the local database on a monitoring server
-// (LocalRecordSink), the outbox on an agent (RemoteRecordSink)
+// Where a collector hands what it found: the outbox (RemoteRecordSink), from which AgentSender delivers it to
+// the monitoring server (the collector of the server itself reports over loopback, see LocalCollector)
 public interface IRecordSink
 {
     // Saves the records together with the position they were collected up to (Security log record
@@ -282,7 +291,7 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var client = AgentConfig.CreateClient(config.ServerUrl, config.Fingerprint);
+        using var client = config.CreateClient();
         client.DefaultRequestHeaders.Authorization = new("Bearer", config.Key);
         var wake = new SemaphoreSlim(0);
         outbox.Added += () => { if (wake.CurrentCount == 0) wake.Release(); };
@@ -396,7 +405,7 @@ public class AgentJobRunner(AgentConfig config, IAgentPlatform platform, ILogger
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var client = AgentConfig.CreateClient(config.ServerUrl, config.Fingerprint);
+        using var client = config.CreateClient();
         client.DefaultRequestHeaders.Authorization = new("Bearer", config.Key);
         while (!stoppingToken.IsCancellationRequested)
         {

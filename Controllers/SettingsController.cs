@@ -19,19 +19,19 @@ public class SettingsController : ControllerBase
     // Setting a SACL walks every file below the folder, which can take minutes on a large share
     private static readonly TimeSpan SaclJobTimeout = TimeSpan.FromMinutes(15);
 
-    // Sets up auditing on this machine (SACLs on Windows, Samba on Linux), the same way an agent
-    // does on its server; null when this machine does not collect
-    private readonly IAgentPlatform? _local;
+    // Setting up auditing on this machine (SACLs on Windows, Samba on Linux) needs privileges: the collector
+    // service does it, as a job, the same way an agent does on its server
+    private readonly LocalCollectorState _collector;
     private readonly DnsResolverService _dns;
     private readonly ServerConfigService _servers;
     private readonly AgentJobs _jobs;
     private readonly AuditLog _audit;
     private readonly ILogger<SettingsController> _logger;
 
-    public SettingsController(IServiceProvider services, DnsResolverService dns, ServerConfigService servers,
+    public SettingsController(LocalCollectorState collector, DnsResolverService dns, ServerConfigService servers,
         AgentJobs jobs, AuditLog audit, ILogger<SettingsController> logger)
     {
-        _local = services.GetService<IAgentPlatform>();
+        _collector = collector;
         _dns = dns;
         _servers = servers;
         _jobs = jobs;
@@ -54,6 +54,8 @@ public class SettingsController : ControllerBase
             auditApplied = AuditApplied.For(SettingsStore.Load(), ServerLabel(server)),
             auditVersion = AuditApplied.CurrentVersion,
             os = ServerConfigService.IsLocal(server) ? AppInfo.OsName : (await _servers.FindAgentAsync(server!))?.Os,
+            // This machine: whether the collector service is connected, and what it reports (null for an agent)
+            collector = ServerConfigService.IsLocal(server) ? CollectorStatus.From(_collector) : null,
         });
     }
 
@@ -298,19 +300,14 @@ public class SettingsController : ControllerBase
     private async Task<(JsonObject? Result, IActionResult? Error)> RunJobAsync(string? server, string type, JsonObject args)
     {
         if (!ServerConfigService.IsLocal(server)) return await RunOnAgentAsync(server!, type, args);
-        if (_local == null) return (null, BadRequest(new { error = Messages.Get("local.notCollecting") }));
-        JsonObject result;
         try
         {
-            result = await Task.Run(() => _local.RunJob(new AgentJob("local", type, args), HttpContext.RequestAborted));
+            return (await _collector.RunJobAsync(_jobs, type, args, SaclJobTimeout, HttpContext.RequestAborted), null);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (LocalCollectorException ex)
         {
-            // As an agent reports a failed job: the message instead of an error page
-            return (null, BadRequest(new { error = ex.Message }));
+            return (null, StatusCode(ex.Status, new { error = ex.Reported ?? ex.Message }));
         }
-        if (result["error"]?.GetValue<string>() is { } message) return (null, BadRequest(new { error = message }));
-        return (result, null);
     }
 
     private async Task<(JsonObject? Result, IActionResult? Error)> RunOnAgentAsync(string server, string type, JsonObject args)

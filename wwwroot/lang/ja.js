@@ -219,6 +219,8 @@ window.I18N_JA = {
   'agents.remove': '削除（記録は保持）',
   'agents.confirmRemove': 'エージェント「{n}」を削除しますか？記録は保持されます。このサーバーから再度送信するには、登録し直す必要があります。',
   'agents.none': 'エージェントは登録されていません。',
+  'agents.localCollector': 'このサーバーのコレクターサービス',
+  'agents.localCollectorOff': 'このサーバーのコレクターサービス（File Access Monitor Collector）に接続されていません。サービスが動作するまで、このサーバーのアクセスは記録されず、監査の設定や確認もできません。サーバー上でサービスを開始してください。',
   'agents.notReady': 'エージェント用のポートを使用できません（証明書を作成できませんでした）。サービスのログを確認してください。',
   'agents.featureOff': 'エージェント用ポート {p} は settings.json で無効化されています（"Agents": { "Enabled": false }）。エージェントを使用するには、この設定を削除してサービスを再起動してください。',
   'audit.a.agent.featureOn': 'エージェント機能の有効化',

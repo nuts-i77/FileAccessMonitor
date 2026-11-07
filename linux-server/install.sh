@@ -3,8 +3,9 @@
 # (The deb and rpm packages do the same through the package manager.)
 #
 #   sudo sh install.sh                    install (monitoring only) or upgrade (keeps the current mode and port)
-#   sudo sh install.sh --collect          also record Samba accesses on this server (runs as root)
-#   sudo sh install.sh --monitor-only     only show what agents send (runs as user fileaccessmonitor)
+#   sudo sh install.sh --collect          also record Samba accesses on this server (the separate
+#                                         fileaccessmonitor-collector service, as root; the web GUI stays unprivileged)
+#   sudo sh install.sh --monitor-only     only show what agents send (no collector service)
 #   sudo sh install.sh --port 8080        web GUI port
 #   sudo sh install.sh --https on|off     HTTPS for the web GUI (a new install uses HTTPS with a self-signed
 #                                         certificate; an upgrade keeps its setting)
@@ -17,6 +18,8 @@ APP_DIR=/opt/fileaccessmonitor
 DATA_DIR=/var/lib/fileaccessmonitor
 UNIT=fileaccessmonitor.service
 UNIT_FILE=/etc/systemd/system/$UNIT
+COLLECTOR_UNIT=fileaccessmonitor-collector.service
+COLLECTOR_UNIT_FILE=/etc/systemd/system/$COLLECTOR_UNIT
 DROPIN_DIR=/etc/systemd/system/$UNIT.d
 SERVICE_USER=fileaccessmonitor
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -27,8 +30,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if [ "${1:-}" = "--uninstall" ]; then
+    systemctl disable --now "$COLLECTOR_UNIT" 2>/dev/null || true
     systemctl disable --now "$UNIT" 2>/dev/null || true
-    rm -rf "$UNIT_FILE" "$DROPIN_DIR" "$APP_DIR" /usr/local/bin/fileaccessmonitor-server
+    rm -rf "$UNIT_FILE" "$COLLECTOR_UNIT_FILE" "$DROPIN_DIR" "$APP_DIR" /usr/local/bin/fileaccessmonitor-server
     for u in smbd.service smb.service; do rm -f "/etc/systemd/system/$u.d/fileaccessmonitor.conf"; done
     systemctl daemon-reload
     if [ "${2:-}" = "--purge" ]; then rm -rf "$DATA_DIR"; userdel "$SERVICE_USER" 2>/dev/null || true; fi
@@ -51,18 +55,19 @@ FIRST_INSTALL=false
 [ -f "$DATA_DIR/settings.json" ] || FIRST_INSTALL=true
 
 echo "Installing FileAccessMonitor to $APP_DIR ..."
-systemctl stop "$UNIT" 2>/dev/null || true
+systemctl stop "$COLLECTOR_UNIT" "$UNIT" 2>/dev/null || true
 id "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
 mkdir -p "$APP_DIR" "$DATA_DIR"
 cp -R "$HERE"/. "$APP_DIR"/
-rm -f "$APP_DIR/install.sh" "$APP_DIR/$UNIT"
+rm -f "$APP_DIR/install.sh" "$APP_DIR/$UNIT" "$APP_DIR/$COLLECTOR_UNIT"
 chmod 755 "$APP_DIR/FileAccessMonitor" "$APP_DIR/fileaccessmonitor-server"
 ln -sf "$APP_DIR/fileaccessmonitor-server" /usr/local/bin/fileaccessmonitor-server
 install -m 644 "$HERE/$UNIT" "$UNIT_FILE"
+install -m 644 "$HERE/$COLLECTOR_UNIT" "$COLLECTOR_UNIT_FILE"
 systemctl daemon-reload
 
 # A new install is monitoring only unless --collect is given; an upgrade keeps the mode in settings.json
-# (and the service account and drop-ins that go with it)
+# (an upgrade from 1.10 or older replaces the root drop-in with the collector service)
 HAS_MODE=false
 HAS_HTTPS=false
 for arg in "$@"; do

@@ -156,25 +156,10 @@ public static class WebTls
     {
         var file = Path.Combine(AppPaths.DataDir, Path.GetFileName(settings.PfxFile));
         var password = UnprotectPassword(settings.PfxPassword, dataProtection);
-        var cert = X509CertificateLoader.LoadPkcs12FromFile(file, password,
-            OperatingSystem.IsWindows() ? X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet : X509KeyStorageFlags.DefaultKeySet);
+        // The service account cannot add to the machine store, and does not need to: the key is loaded
+        // into the machine key set for the life of the process (see SelfSignedCertificate)
+        var cert = X509CertificateLoader.LoadPkcs12FromFile(file, password, SelfSignedCertificate.LoadFlags);
         if (!cert.HasPrivateKey) throw new CryptographicException($"{file} has no private key.");
-        return OperatingSystem.IsWindows() ? KeepInMachineStore(cert) : cert;
-    }
-
-    // Loading a PFX with a persisted key makes a key container each time; the store keeps one
-    private static X509Certificate2 KeepInMachineStore(X509Certificate2 cert)
-    {
-        if (!OperatingSystem.IsWindows()) return cert;
-        try
-        {
-            using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
-            store.Open(OpenFlags.ReadWrite);
-            var found = store.Certificates.Find(X509FindType.FindByThumbprint, cert.Thumbprint, validOnly: false);
-            if (found.Count > 0) { cert.Dispose(); return found[0]; }
-            store.Add(cert);
-        }
-        catch (Exception ex) when (ex is CryptographicException or UnauthorizedAccessException) { }
         return cert;
     }
 

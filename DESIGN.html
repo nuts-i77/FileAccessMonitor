@@ -387,7 +387,8 @@ tbody tr:hover td { background: var(--surface2); }
         <table>
           <thead><tr><th>役割</th><th>判定</th><th>動くもの</th></tr></thead>
           <tbody>
-            <tr><td>1 台構成 / 監視サーバー</td><td><code>agent.json</code> がない</td><td>ローカル収集（<code>LocalRecordSink</code>。Windows は <code>EventLogCollectorService</code>、Linux は <code>SambaAuditCollector</code>）、Web GUI と API、DB、通知、エージェント用ポート、エージェント監視</td></tr>
+            <tr><td>1 台構成 / 監視サーバー</td><td><code>agent.json</code> がない</td><td>Web GUI と API、DB、通知、エージェント用ポート、エージェント監視。権限なしのアカウントで動く（Windows は仮想サービスアカウント <code>NT SERVICE\FileAccessMonitor</code>、Linux はユーザー <code>fileaccessmonitor</code>）。ローカル収集は下の「コレクター」が行う</td></tr>
+            <tr><td>コレクター</td><td>引数 <code>collector</code> で起動（<code>CollectorHost</code>）。サービス <code>FileAccessMonitorCollector</code>（SYSTEM）/ systemd <code>fileaccessmonitor-collector</code>（root）。ローカル収集がオンのときだけ</td><td>組み込みのエージェント。収集（Windows は <code>EventLogCollectorService</code>、Linux は <code>SambaAuditCollector</code>。<code>RemoteRecordSink</code>）、送信（<code>AgentSender</code>）、指示の実行（<code>AgentJobRunner</code>。<code>WindowsAgentPlatform</code> / <code>SambaPlatform</code>）。接続先は <code>https://127.0.0.1:&lt;エージェント用ポート&gt;</code> で、証明書は <code>agent-endpoint.pfx</code>（または旧版がマシンのストアに作った証明書）のフィンガープリントで固定。状態はデータフォルダの <code>collector\</code>（<code>AppPaths.DataDir</code> がそのフォルダになる）。認証は登録ではなく、<code>collector\key.secret</code>（SYSTEM / root のみ）の秘密情報で、そのハッシュを <code>collector\key.hash</code> に置く（Web 側は読み取りのみ）。Web 側（<code>AgentApiController</code>）は <code>local.&lt;秘密&gt;</code> を、ループバックからに限り、Agents テーブルにない擬似エージェント（Id <code>local</code>、Name はこのサーバー名）として受け付ける。バッチはこのサーバー名で保存し、通し番号は <code>CollectorStates</code>（<code>LocalCollectorSeq</code>、鍵のハッシュ付き）に保存。設定（<code>MonitoredPaths</code> と <code>Recording</code>）は <code>settings.json</code> から作って版数をハッシュで付ける。GUI からの処理（SACL、未使用ファイルのスキャン、権限スキャン）は <code>AgentJobs</code> に Id <code>local</code> のジョブとして積み、<code>LocalCollectorState.RunJobAsync</code> が応答を待つ。最終接続・監査の状態・版数はメモリ上の <code>LocalCollectorState</code> に持ち、<code>AgentMonitorService</code> が停止を通知する</td></tr>
             <tr><td>監視サーバーのみ</td><td>上記で <code>settings.json</code> の <code>"LocalCollection": false</code></td><td>ローカル収集なし（監査ポリシーや SACL、smb.conf にも触れない）。サーバーの一覧に自分自身を出さない（<code>ServerConfigService.LocalCollects</code>）。起動時に読むので、切り替えは再起動で反映</td></tr>
             <tr><td>エージェント</td><td><code>%ProgramData%\FileAccessMonitor\agent.json</code> がある</td><td>収集（<code>RemoteRecordSink</code>）、送信（<code>AgentSender</code>）、指示の実行（<code>AgentJobRunner</code>）。Web GUI と DB はない（<code>AgentHost.RunAsync</code>）</td></tr>
             <tr><td>Linux エージェント</td><td>別の実行ファイル <code>fileaccessmonitor-agent</code>（<code>linux-agent/</code>）</td><td>Samba の監査ログの収集（<code>SambaAuditCollector</code>）、送信と指示の実行（Windows 版と共通）。<a href="#linux-agent">Linux エージェント</a>を参照</td></tr>
@@ -512,8 +513,8 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
   → Channel&lt;RawEvent&gt;（XML をここで解析して EventRecord を手放す）
   → 単一のコンシューマー: ProcessEvent → DeleteTracker / ReadMerger
   → 最大 500 件ずつ IRecordSink.SaveAsync(records, lastRecordId)
-       LocalRecordSink : 記録と読み取り位置を 1 トランザクションで DB に保存 → AlertService.Observe
-       RemoteRecordSink: 送信待ちフォルダに書いてから読み取り位置を保存（AgentSender が送る）</code></pre>
+       RemoteRecordSink: 送信待ちフォルダに書いてから読み取り位置を保存（AgentSender が送る）
+       → 監視サーバー側（AgentApiController.Batch）が記録と通し番号を 1 トランザクションで DB に保存 → AlertService.Observe</code></pre>
       <p>記録がない間も、読み取り位置は 5 秒ごとに保存します。保存に 3 回失敗したバッチは破棄してログに残します。</p>
 
       <h3>停止中の取りこぼし対策</h3>
@@ -663,7 +664,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       </ul>
       <h3>監視サーバー側</h3>
       <p><code>PathText</code> で Windows のパス（<code>\</code>、大文字小文字を区別しない）と Linux のパス（<code>/</code> で始まる、区別する）を扱います。閲覧範囲は Linux のパスを <code>substr</code> の完全一致で絞り、未使用ファイル・フォルダ別の名前も区切り文字に合わせます。</p>
-      <p>Samba の収集部分（<code>SambaAudit.cs</code>、<code>SambaConfig.cs</code>、<code>SambaPlatform.cs</code>）は本体の <code>Services/</code> にあり、Linux エージェントはそれをリンクします。収集部分は <code>IRecordSink</code> に渡すので、Linux 版の監視サーバーが自分自身を収集するときは DB（<code>LocalRecordSink</code>）に、エージェントでは送信待ち（<code>RemoteRecordSink</code>）に入ります。続きの位置は文字列（Windows はレコード ID、Linux はジャーナルのカーソル）です。</p>
+      <p>Samba の収集部分（<code>SambaAudit.cs</code>、<code>SambaConfig.cs</code>、<code>SambaPlatform.cs</code>）は本体の <code>Services/</code> にあり、Linux エージェントはそれをリンクします。収集部分は <code>IRecordSink</code> に渡すので、エージェントでも、Linux 版の監視サーバーが自分自身を収集するとき（別プロセスのコレクター）でも、送信待ち（<code>RemoteRecordSink</code>）に入ります。続きの位置は文字列（Windows はレコード ID、Linux はジャーナルのカーソル）です。</p>
     </section>
 
     <!-- Linux の監視サーバー -->
@@ -672,7 +673,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li>本体を linux-x64 の自己完結・単一ファイルで発行（<code>InvariantGlobalization</code>。書式は元々カルチャーに依存しないため libicu 不要）。<code>wwwroot</code> と <code>libe_sqlite3.so</code> は実行ファイルの隣に置く</li>
         <li>配置: <code>/opt/fileaccessmonitor</code>、systemd のサービス <code>fileaccessmonitor</code>（<code>Type=notify</code>、<code>WorkingDirectory</code> で Web のファイルの場所を指定、既定は専用ユーザー <code>fileaccessmonitor</code>）</li>
-        <li><code>fileaccessmonitor-server</code>（<code>linux-server/</code> のシェルスクリプト）: モードとポートの表示・変更。<code>--collect</code> は drop-in <code>collect.conf</code>（<code>User=root</code>）と smbd の journald 設定を書いて <code>local-collection on</code>、<code>--monitor-only</code> はその逆、<code>--port</code> は drop-in <code>port.conf</code>（<code>Kestrel__Endpoints__Http__Url</code> の環境変数）。drop-in は <code>/etc/systemd/system/fileaccessmonitor.service.d</code> にあるので更新で消えない。データフォルダの所有者を動作アカウントに合わせる</li>
+        <li><code>fileaccessmonitor-server</code>（<code>linux-server/</code> のシェルスクリプト）: モードとポートの表示・変更。<code>--collect</code> は smbd の journald 設定を書き、<code>local-collection on</code> にして、root で動く別のサービス <code>fileaccessmonitor-collector</code> を有効化（Web 側のサービスは常に <code>fileaccessmonitor</code> ユーザー。1.10 以前の drop-in <code>collect.conf</code> は削除）、<code>--monitor-only</code> はその逆、<code>--port</code> は drop-in <code>port.conf</code>（<code>Kestrel__Endpoints__Http__Url</code> の環境変数）。drop-in は <code>/etc/systemd/system/fileaccessmonitor.service.d</code> にあるので更新で消えない。データフォルダの所有者を動作アカウントに合わせる</li>
         <li>配布: deb / rpm（<code>packaging/nfpm-*.yaml</code>、nfpm で作成）と tar.gz（<code>linux-server/install.sh</code>）。パッケージの postinstall は、新規なら監視専用で起動、更新ならモードを保って再起動。tar.gz の collect 環境から移った場合は <code>collect.conf</code> を作って引き継ぐ。エージェントから置き換えた場合は <code>agent.json</code> を退避して監視専用で始める。<code>remove</code> ではデータを残し、<code>purge</code>（deb）で削除（もう一方のパッケージが入っていれば残す）</li>
         <li>エージェントと同じマシンには入れない: パッケージは互いに <code>Conflicts</code>、tar.gz のインストーラーは相手を見つけると拒否。Linux エージェントも同じく deb / rpm（<code>fileaccessmonitor-agent</code>。<code>/usr/bin/fileaccessmonitor-agent</code>、smbd 用の journald 設定は <code>/usr/lib/systemd/system/smbd.service.d</code> と <code>smb.service.d</code>）</li>
         <li>リリース: <code>release.yml</code> の Linux のジョブ（ubuntu-latest）で、両方の tar.gz・deb・rpm を作り（nfpm はチェックサムを固定して取得）、Windows のジョブがリリースに加える</li>
@@ -837,7 +838,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <thead><tr><th>クラス</th><th>役割</th></tr></thead>
           <tbody>
             <tr><td>EventLogCollectorService</td><td>Security ログの収集（上記）。ホステッドサービス</td></tr>
-            <tr><td>IRecordSink</td><td>保存先。<code>LocalRecordSink</code>（DB）/ <code>RemoteRecordSink</code>（送信待ちフォルダ）</td></tr>
+            <tr><td>IRecordSink</td><td>保存先。<code>RemoteRecordSink</code>（送信待ちフォルダ。エージェントとコレクター）</td></tr>
             <tr><td>DeleteTracker / ReadMerger / RecentFolders</td><td>削除・名前変更の判定、読み取りのまとめ、フォルダの判定（<code>RecordingRules.cs</code>）</td></tr>
             <tr><td>AlertService / AlertDetector</td><td>大量の削除・書き込み・読み取りの検知と通知、記録の途切れ・エージェントの無応答の通知。検知器はスレッドセーフでないため <code>Observe</code> はロックする</td></tr>
             <tr><td>AgentMonitorService</td><td>1 分ごとにエージェントの最終接続を確認し、無応答と復旧を通知（監視サーバーの起動直後は同じ時間だけ判定しない）</td></tr>
@@ -980,8 +981,9 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <tbody>
             <tr><td>settings.json</td><td>GUI で変更する設定: <code>MonitoredPaths</code>, <code>Recording</code>, <code>DnsServer</code>, <code>RetentionDays</code>, <code>Alerts</code>（Webhook URL、SMTP とプロキシのパスワードは暗号化）, <code>UpdateCheck</code>, <code>Agents</code>（Enabled, Port）。キー単位で読み書き</td></tr>
             <tr><td>fileaccess.db</td><td>SQLite</td></tr>
-            <tr><td>jwt.key · initial-admin-password.txt</td><td>SYSTEM / Administrators のみ読み取り可</td></tr>
-            <tr><td>chain.key</td><td>改ざん検知の鍵（32 バイト）（v1.10）。データベースと一緒にバックアップする。なければ古い記録は検証できない（<code>keyChanged</code>）。SYSTEM / Administrators のみ読み取り可</td></tr>
+            <tr><td>jwt.key · initial-admin-password.txt</td><td>SYSTEM / Administrators と Web サービスのアカウント（<code>NT SERVICE\FileAccessMonitor</code>）のみ読み取り可（<code>SecretStore.Audience.WebService</code>）。フォルダ自体も同アカウントに変更権限を付与（インストーラーが設定）</td></tr>
+            <tr><td>collector\</td><td>コレクターの状態。SYSTEM / Administrators のみ（Linux は root 所有・0755、ファイルは 0600）。<code>key.secret</code>、<code>key.hash</code>（Web アカウントに読み取りのみ。Linux は 0644）、<code>settings.json</code>（監視フォルダと記録ルールの写し）、<code>outbox\</code>、<code>agent-*.txt</code>、<code>logs\collector-*.log</code></td></tr>
+            <tr><td>chain.key</td><td>改ざん検知の鍵（32 バイト）（v1.10）。データベースと一緒にバックアップする。なければ古い記録は検証できない（<code>keyChanged</code>）。SYSTEM / Administrators と Web サービスのアカウントのみ読み取り可</td></tr>
             <tr><td>chain-head.json</td><td>改ざん検知が確認した各チェーンの末尾（Seq、Hash、keyId）（v1.10）。古い DB への巻き戻しを見つけるために使う。バックアップ対象</td></tr>
             <tr><td>permission-reports\</td><td>権限スキャンの最新結果（フォルダごとに 1 ファイルの JSON、v1.10）</td></tr>
             <tr><td>keys\</td><td>Data Protection の鍵（マシン DPAPI で保護）</td></tr>
@@ -995,7 +997,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
     <!-- 通知 -->
     <section id="alerts">
       <h2>通知</h2>
-      <p>Webhook（Teams Workflows / Slack / 汎用 JSON）とメール（SMTP）。通知が有効なときだけ送ります。送信結果は操作ログ <code>alert.sent</code> に残します。Webhook はプロキシ（URL・ユーザー・パスワード）を指定できます。サービスは SYSTEM で動くため Windows のユーザーのプロキシ設定は使えず、アプリ側で指定します（メールは使わない）。</p>
+      <p>Webhook（Teams Workflows / Slack / 汎用 JSON）とメール（SMTP）。通知が有効なときだけ送ります。送信結果は操作ログ <code>alert.sent</code> に残します。Webhook はプロキシ（URL・ユーザー・パスワード）を指定できます。サービスはサービスアカウントで動くため Windows のユーザーのプロキシ設定は使えず、アプリ側で指定します（メールは使わない）。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>種類</th><th>条件</th></tr></thead>

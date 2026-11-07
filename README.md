@@ -22,7 +22,7 @@ With one file server, install the monitoring server (standalone) on it and you a
 |---|---|---|---|---|
 | OS | Windows Server 2016 or later, Windows 10/11 | x86-64 Linux with systemd (tested on Rocky Linux 9.4) | Windows Server 2016 or later, Windows 10/11 | x86-64 Linux with systemd (tested on Ubuntu 24.04 and Rocky Linux 9.4) |
 | Records | When standalone: this server's shared folders (Windows audit log) | With `--collect`: this server's Samba shares | This server's shared folders (Windows audit log) | Samba 4.x shares (access through SMB) |
-| Rights | Administrator to install (the service runs as SYSTEM) | root to install (runs as its own user when monitoring only, as root with `--collect`) | Administrator to install (runs as SYSTEM) | root |
+| Rights | Administrator to install (the web GUI service runs without privileges; with local collection a second service, the collector, runs as SYSTEM) | root to install (the web GUI runs as its own user; with `--collect` a second service, the collector, runs as root) | Administrator to install (runs as SYSTEM) | root |
 | Network | Inbound TCP 8080 (web GUI) and 8443 (agents) | Inbound TCP 8080 and 8443 | Outbound to the monitoring server's 8443 only | Outbound to the monitoring server's 8443 only |
 | Download | `FileAccessMonitor-Setup-<version>.exe` | `fileaccessmonitor-server` rpm / deb (or tar.gz) | `FileAccessMonitor-Setup-<version>.exe` (choose **Agent**) | `fileaccessmonitor-agent` rpm / deb (or tar.gz) |
 | Steps | [Install with the installer](#install-with-the-installer-recommended) | [8. Monitoring server on Linux](#8-monitoring-server-on-linux) | [6. Collect from several file servers](#6-collect-from-several-file-servers-agents) | [7. Linux file servers](#7-linux-file-servers-samba-agent) |
@@ -38,7 +38,7 @@ With one file server, install the monitoring server (standalone) on it and you a
 Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.com/nuts-i77/FileAccessMonitor/releases) and run it on the Windows file server (or on the machine that will be the monitoring server, if that is a separate one). The installer does the following:
 
 - Installs to `C:\Program Files\FileAccessMonitor`
-- Registers and starts the `FileAccessMonitor` Windows service
+- Registers and starts the Windows services: `FileAccessMonitor` (web GUI and database; runs as the virtual account `NT SERVICE\FileAccessMonitor`, without privileges) and, unless you chose monitoring only, `FileAccessMonitorCollector` ("File Access Monitor Collector"; runs as SYSTEM, records accesses and sets up auditing). An agent install has the one service `FileAccessMonitor` (SYSTEM). See [Which account runs what](#which-account-runs-what)
 - Lets you choose how the server is used: **Standalone / monitoring server** (records accesses on this server and shows the web GUI), **Monitoring server only** (shows the web GUI and receives records from [agents](#6-collect-from-several-file-servers-agents), but does not record or change auditing on this server), or **Agent**
 - Lets you choose the web GUI port (default 8080) and, optionally, adds a firewall rule that allows FileAccessMonitor.exe (the web GUI port and the agent port 8443)
 
@@ -67,7 +67,7 @@ Copy `publish\` and `install-service.ps1` to the server, then run:
 
 This does two things:
 
-- Registers and starts a Windows service named `FileAccessMonitor`, with automatic startup
+- Registers and starts the Windows services `FileAccessMonitor` and `FileAccessMonitorCollector`, with automatic startup (see [Which account runs what](#which-account-runs-what))
 - Adds a Windows Firewall inbound rule for FileAccessMonitor.exe (TCP 8080, and 8443 for agents)
 
 If WinRM is available, you can build and deploy from your development PC in one step:
@@ -81,7 +81,7 @@ If WinRM is available, you can build and deploy from your development PC in one 
 Open `https://<server>:8080` in a browser (a new install uses HTTPS with a self-signed certificate, so the browser warns once; an install upgraded from before 1.9 stays on `http://` until you switch, see [Transport encryption](#security)) and sign in with:
 
 - User name: `admin`
-- Password: generated at random on first start and saved on the server in this file, which only SYSTEM and Administrators can read:
+- Password: generated at random on first start and saved on the server in this file, which only SYSTEM, Administrators and the web GUI service account can read:
 
   ```
   C:\ProgramData\FileAccessMonitor\initial-admin-password.txt
@@ -126,7 +126,7 @@ wevtutil sl Security /ms:1073741824   # 1 GB
 
 One install can show the records of several file servers. Install FileAccessMonitor normally on the server that will show the web GUI (the monitoring server); on each other file server, install it as an **agent**, which only collects and sends. The monitoring server can be one of the file servers, or a separate machine installed as **Monitoring server only** (on Windows or [Linux](#8-monitoring-server-on-linux)).
 
-To switch an existing monitoring server between recording accesses on itself and monitoring only, run `FileAccessMonitor.exe local-collection off` (or `on`) in an elevated PowerShell in `C:\Program Files\FileAccessMonitor` and restart the service (on Linux: `sudo fileaccessmonitor-server --collect` or `--monitor-only`). **Settings → App info** shows the current mode.
+To switch an existing monitoring server between recording accesses on itself and monitoring only, run `FileAccessMonitor.exe local-collection off` (or `on`) in an elevated PowerShell in `C:\Program Files\FileAccessMonitor` and restart the service. The command only changes the setting; also enable or disable the collector service: `sc.exe config FileAccessMonitorCollector start= auto` and `sc.exe start FileAccessMonitorCollector` (or `start= disabled` and `sc.exe stop FileAccessMonitorCollector`); running the installer again does it for you. On Linux, `sudo fileaccessmonitor-server --collect` or `--monitor-only` does all of it. **Settings → App info** shows the current mode.
 
 1. Make sure the file servers can reach the monitoring server on TCP port **8443** (the agent port). The monitoring server always listens on it, and the installer's firewall option allows it: the rule allows FileAccessMonitor.exe, so it covers both the web GUI port and the agent port.
 2. Under **Settings → Agents**, choose **Issue registration code**. If the file servers reach the monitoring server by another name or by IP address, change the address there and choose **Apply**. Copy the connection string; it is valid for 24 hours and can be used once.
@@ -210,7 +210,7 @@ A new install is **monitoring only** and runs as the user `fileaccessmonitor`. T
 
 ```sh
 fileaccessmonitor-server                        # mode, port and service state
-sudo fileaccessmonitor-server --collect         # also record this machine's Samba accesses (runs as root)
+sudo fileaccessmonitor-server --collect         # also record this machine's Samba accesses (collector service, runs as root)
 sudo fileaccessmonitor-server --monitor-only    # back to monitoring only
 sudo fileaccessmonitor-server --port 8090       # web GUI port (default 8080)
 sudo fileaccessmonitor-server --https on|off    # HTTPS for the web GUI (see Security)
@@ -218,7 +218,7 @@ sudo fileaccessmonitor-server --https on|off    # HTTPS for the web GUI (see Sec
 
 Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar.gz`: unpack it and run `sudo sh install.sh` (options: `--collect`, `--monitor-only`, `--port <number>`, `--https on|off`).
 
-- The server is installed to `/opt/fileaccessmonitor` and runs as the systemd service `fileaccessmonitor` (log: `journalctl -u fileaccessmonitor`). Records and settings are in `/var/lib/fileaccessmonitor`, readable by the service account only. The tamper-detection key `chain.key` and `chain-head.json` are there too: back them up with the database.
+- The server is installed to `/opt/fileaccessmonitor` and runs as the systemd service `fileaccessmonitor`, as the unprivileged user `fileaccessmonitor` (log: `journalctl -u fileaccessmonitor`). With `--collect`, the systemd service `fileaccessmonitor-collector` runs as root and records the machine's Samba accesses (log: `journalctl -u fileaccessmonitor-collector`); upgrading from 1.10 or older replaces its former root drop-in with it. Records and settings are in `/var/lib/fileaccessmonitor`, readable by the service account only; the collector keeps its own state in `/var/lib/fileaccessmonitor/collector` (root only, except `key.hash`). The tamper-detection key `chain.key` and `chain-head.json` are there too: back them up with the database.
 - Sign in at `https://<server>:8080` as `admin` (a new install uses HTTPS with a self-signed certificate; the browser warns once); the initial password is in `/var/lib/fileaccessmonitor/initial-admin-password.txt` (`sudo cat` it).
 - Open TCP 8080 and 8443 in the firewall if it is on, for example `firewall-cmd --permanent --add-port=8080/tcp --add-port=8443/tcp && firewall-cmd --reload` or `ufw allow 8080/tcp && ufw allow 8443/tcp`. The packages do not change the firewall.
 - Upgrades (installing a newer package, or running `install.sh` again) keep the mode and port.
@@ -228,7 +228,8 @@ Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar
 
 ## Security
 
-- **JWT signing key**: generated at random on first start and saved to `C:\ProgramData\FileAccessMonitor\jwt.key`, which only SYSTEM and Administrators can read. If you set a `Jwt:Key` of 32 bytes or more in `appsettings.json`, that key is used instead.
+- **Privilege separation**: the web GUI, the API and the database never run with elevated rights (see [Which account runs what](#which-account-runs-what)). What needs them (reading the Security log, setting SACLs, scanning shares and ACLs) is done by a second process, the collector, which has no web interface and listens on no port. The two talk over the loopback address on the agent port, and the collector proves itself with a random secret that only SYSTEM (root) can read; the web service holds only its hash.
+- **JWT signing key**: generated at random on first start and saved to `C:\ProgramData\FileAccessMonitor\jwt.key`, which only SYSTEM, Administrators and the web GUI service account can read. If you set a `Jwt:Key` of 32 bytes or more in `appsettings.json`, that key is used instead.
 - **Sign-in lockout**: after 5 failed sign-ins in a row, the account is locked for 15 minutes.
 - **Viewing scopes**: under **Settings → User Management**, an Admin can limit a Viewer to some folders, for example one department's share. That user then sees only records inside those folders, everywhere including CSV export and the Unused Files tab, and can be given an email address that receives alerts about those folders. Admins, and Viewers without folders, see everything. Changes apply on the user's next request.
 - **Sign-in sessions**: a sign-in stays valid for `Jwt:ExpiresHours` (default 24 hours), but ends immediately when the user is deleted, their role changes, or their password is changed or reset.
@@ -252,6 +253,16 @@ Without a package manager, use `FileAccessMonitor-<version>-linux-x64-server.tar
 
 To report a vulnerability, please follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
+### Which account runs what
+
+| | Windows | Linux |
+|---|---|---|
+| Web GUI, API, database, notifications, agent port | Service `FileAccessMonitor`, virtual account `NT SERVICE\FileAccessMonitor` (no password, no privileges) | systemd `fileaccessmonitor`, user `fileaccessmonitor` |
+| Recording on this server, setting up auditing, scanning folders and permissions (only while local collection is on) | Service `FileAccessMonitorCollector`, SYSTEM | systemd `fileaccessmonitor-collector`, root |
+| Agent | Service `FileAccessMonitor`, SYSTEM (unchanged) | systemd `fileaccessmonitor-agent`, root |
+
+The collector is the same program started with the argument `collector`. It works like a built-in agent: it sends its batches to `https://127.0.0.1:<agent port>` (trusting that certificate by its fingerprint), takes the monitored folders and recording rules from the web service, and runs the web GUI's jobs (setting SACLs, scanning for unused files, permission scans). It needs no registration. It shows in **Settings → Agents** as a row for this server (status only), and a stopped collector is notified like an offline agent. If it is not running, the GUI says so and records are not made until it is started again (the Security log keeps the events meanwhile, as when an agent is stopped). Its own state is in `collector\` below the data folder, which the web service cannot read.
+
 ## Configuration
 
 ### appsettings.json (in `publish\`)
@@ -271,9 +282,11 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | File | Contents |
 |---|---|
 | `settings.json` | Monitored folders, recorded access types, reverse-DNS server, retention, notifications (edited from the GUI); whether this server records accesses on itself (`LocalCollection`); HTTPS for the web GUI (`Web:Https`, written by `web-https`) |
-| `web-https.pfx` / `web-user.pfx` | The web GUI certificate (self-signed on Linux; the certificate you gave with `--pfx`). The self-signed one on Windows is kept in the machine certificate store |
+| `web-https.pfx` / `web-user.pfx` | The web GUI certificate (the self-signed one, or the certificate you gave with `--pfx`). Before 1.11 the self-signed one on Windows was kept in the machine certificate store; such a certificate is still used as long as it is there |
+| `agent-endpoint.pfx` | The agent port certificate (self-signed; agents pin its fingerprint). A certificate that 1.10 or older made in the machine store keeps being used, so the fingerprint does not change |
 | `fileaccess.db` | Access records (SQLite) |
-| `logs\app-YYYYMMDD.log` | Application log (kept for 14 days) |
+| `logs\app-YYYYMMDD.log` | Application log of the web service (kept for 14 days) |
+| `collector\` | State of the collector service, for SYSTEM and Administrators only (the web service may read `collector\key.hash`, the hash of the collector's secret): `key.secret`, `settings.json` (a copy of this server's monitored folders and recording rules), `outbox\`, `logs\collector-YYYYMMDD.log` |
 | `jwt.key` | JWT signing key |
 | `chain.key` | Key of the tamper-detection chains. Back it up with `fileaccess.db`; without it the old records cannot be verified |
 | `chain-head.json` | Last verified end of each chain (tamper detection). Back it up with `fileaccess.db` |
@@ -291,7 +304,7 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 | Permissions | Who may do what in a monitored folder as of the last scan: entries that are not simply inherited, broad access (Everyone, Authenticated Users, ...) and folders that do not inherit. Scans are started by Admins only; a Viewer with a folder scope sees the stored result for their folders |
 | Settings | Monitored folders, users, recording rules (exclusions and merging of repeated reads), reverse DNS, data retention, notifications, scheduled report, tamper detection, operation log |
 
-Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), when one user is refused access at least a set number of times (**denied burst**, 20 in 5 minutes by default), when a user's activity looks like ransomware (**high priority**, see below), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it); on Linux servers, journald dropped audit lines or the journal no longer had them. Agents that stop reporting are notified too. If the internet is reached through a proxy, set it in the notification settings (webhooks only; the service runs as SYSTEM, so the Windows proxy setting does not apply).
+Notifications (Teams, Slack, a webhook, or email) are sent when one user deletes, writes, or reads at least a set number of files within a few minutes (mass reads are off by default), when one user is refused access at least a set number of times (**denied burst**, 20 in 5 minutes by default), when a user's activity looks like ransomware (**high priority**, see below), and when recording was interrupted: Security log events were overwritten before they were collected, or the log was cleared (with the user who cleared it); on Linux servers, journald dropped audit lines or the journal no longer had them. Agents that stop reporting are notified too. If the internet is reached through a proxy, set it in the notification settings (webhooks only; the service runs as a service account, so a signed-in user's Windows proxy setting does not apply).
 
 **Ransomware-like behaviour** is checked per user over 2 minutes, by three rules: at least 20 files renamed to the same new extension (not a harmless one such as `.tmp`; needs the new path, so on Windows the USN journal), at least 100 writes together with at least 50 renames, and a ransom-note file name (`README_DECRYPT.txt`, `HOW_TO_RECOVER_FILES.html` and similar) created in at least 3 folders. Such an alert is sent with high priority (a "[HIGH PRIORITY]" mark; high importance for mail) and names the rule and the files. Nothing is blocked or disconnected automatically. It is on by default and can be turned off in the alert settings; the numbers are in `settings.json` under `Alerts`. Alerts must be turned on, as for the other alerts.
 
@@ -406,7 +419,7 @@ GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app
 
 ## Uninstall
 
-If you used the installer, uninstall **File Access Monitor** from **Settings → Apps**. The service and firewall rule are removed. Access records, settings, and keys stay in `C:\ProgramData\FileAccessMonitor\`; delete that folder if you no longer need them. To remove the audit entries (SACLs), run `C:\Program Files\FileAccessMonitor\scripts\restore-audit.ps1` before uninstalling.
+If you used the installer, uninstall **File Access Monitor** from **Settings → Apps**. The services and firewall rule are removed. Access records, settings, and keys stay in `C:\ProgramData\FileAccessMonitor\`; delete that folder if you no longer need them. To remove the audit entries (SACLs), run `C:\Program Files\FileAccessMonitor\scripts\restore-audit.ps1` before uninstalling.
 
 If you installed from source:
 
