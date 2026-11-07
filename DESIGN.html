@@ -356,7 +356,7 @@ tbody tr:hover td { background: var(--surface2); }
     <!-- アーキテクチャ概要 -->
     <section id="overview">
       <h2>アーキテクチャ概要</h2>
-      <p>FileAccessMonitor は Windows サービスとして動作し、Windows セキュリティイベントログからファイルアクセス（読取・書込・削除・名前変更）を収集して、REST API と SPA の Web GUI で可視化するツールです。1 台で完結する構成のほか、複数のファイルサーバーにエージェントを置き、1 台の監視サーバーに記録を集める構成をとれます。</p>
+      <p>FileAccessMonitor は Windows サービスとして動作し、Windows セキュリティイベントログからファイルアクセス（読み取り・書き込み・削除・名前変更）を収集して、REST API と SPA の Web GUI で可視化するツールです。1 台で完結する構成のほか、複数のファイルサーバーにエージェントを置き、1 台の監視サーバーに記録を集める構成をとれます。</p>
 
       <pre><code>[ファイルサーバー A]                [ファイルサーバー B]
   エージェント                        エージェント
@@ -442,7 +442,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <div class="field"><span class="field-name">FolderPath</span><span class="field-desc">string(2000) — 親フォルダ</span></div>
           <div class="field"><span class="field-name">UserName</span><span class="field-desc">string(200) — <code>DOMAIN\user</code></span></div>
           <div class="field"><span class="field-name">AccessType</span><span class="field-desc">string(20) — <code>Read</code> | <code>Write</code> | <code>Create</code> | <code>Delete</code> | <code>Rename</code>（名前変更・移動。<code>FilePath</code> は変更前のパス、変更後は <code>NewPath</code>）| <code>Permission</code>（権限・所有者の変更）。定数は <code>Models/AccessTypes.cs</code>。拒否は種別ではなく <code>Denied</code></span></div>
-          <div class="field"><span class="field-name">Denied</span><span class="field-desc">bool — アクセスが拒否された記録。<code>AccessType</code> は拒否された操作（Read / Write / Delete、Linux は Rename も）。統計・上位一覧・未使用ファイル・読取書込削除のしきい値には数えない（<code>!r.Denied</code>）。部分インデックス <code>IX_AccessRecords_Denied</code></span></div>
+          <div class="field"><span class="field-name">Denied</span><span class="field-desc">bool — アクセスが拒否された記録。<code>AccessType</code> は拒否された操作（Read / Write / Delete、Linux は Rename も）。統計・上位一覧・未使用ファイル・読み取り書き込み削除のしきい値には数えない（<code>!r.Denied</code>）。部分インデックス <code>IX_AccessRecords_Denied</code></span></div>
           <div class="field"><span class="field-name">NewPath</span><span class="field-desc">string(2000)? — Rename の移動先のフルパス。不明なら null。閲覧範囲が限られた Viewer には、範囲外の移動先を隠す</span></div>
           <div class="field"><span class="field-name">Detail</span><span class="field-desc">string(2000)? — Permission の変更内容（言語に依存しない短い文）。Windows は <code>owner: A -&gt; B</code>、<code>+ allow DOMAIN\user: Modify</code>、<code>inheritance: disabled</code> など。Linux は変更前後がなく null か <code>mode 0644</code> など。それ以外は null</span></div>
           <div class="field"><span class="field-name">ChainSeq</span><span class="field-desc">long? — 改ざん検知のチェーン上の位置（1 から連番、欠番なし）。1.10 より前の行は null で検証の対象外。一意インデックス <code>IX_AccessRecords_ChainSeq</code>（v1.10）</span></div>
@@ -539,7 +539,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <li>記録ルールの除外（ファイル名・ユーザー・プロセス）</li>
         <li>フォルダごとの記録種別（名前変更は「削除」の設定に従う）</li>
         <li>フォルダへのアクセスは、削除権限のもの以外は除外</li>
-        <li>連続した読取のまとめ（<code>ReadMerger</code>）。拒否の記録は別の <code>DeniedMerger</code>（ユーザー・パス・種別ごとに 60 秒、ReadMerger と混ぜない）</li>
+        <li>連続した読み取りのまとめ（<code>ReadMerger</code>）。拒否の記録は別の <code>DeniedMerger</code>（ユーザー・パス・種別ごとに 60 秒、ReadMerger と混ぜない）</li>
       </ol>
       <p>権限の変更（4670）と拒否（4656 失敗）も同じフィルタ（監視フォルダ、システムアカウント・除外、記録ルール、フォルダごとの記録種別）を通ります。ただし拒否はフォルダも記録し（入れないフォルダの一覧表示など）、<code>DeleteTracker</code> や 4660 は使わず、拒否された削除は Delete + Denied としてすぐ記録します（拒否された名前変更も Delete + Denied。区別できない）。</p>
 
@@ -565,7 +565,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       </div>
       <p>保留の期限は、新しいイベントの時刻（停止中の分を読み直しているとき）か実時間のどちらかで 2 秒を過ぎたときです。キューが空でも保留があれば、待機を 2 秒で切り上げて判定します。</p>
 
-      <p>名前変更の移動先（<code>NewPath</code>）と、書込が作成だったか（<code>Create</code>）は、Security ログにないため USN ジャーナルから補います（次の「拒否・権限変更・作成・USN」）。<code>DeleteTracker</code> が判定した後の Write と Rename が、突き合わせのために少しだけ保留されます。</p>
+      <p>名前変更の移動先（<code>NewPath</code>）と、書き込みが作成だったか（<code>Create</code>）は、Security ログにないため USN ジャーナルから補います（次の「拒否・権限変更・作成・USN」）。<code>DeleteTracker</code> が判定した後の Write と Rename が、突き合わせのために少しだけ保留されます。</p>
 
       <h3>フォルダの判定</h3>
       <p>イベントにはファイルかフォルダかの区別がないため、処理時点で <code>Directory.Exists</code> を確認し、さらに最近見たフォルダ（記録の親フォルダ、存在したフォルダ）を <code>RecentFolders</code> に覚えておきます。フォルダを削除すると中身が先に削除されるので、フォルダ自体が消えていても判定できます。空のフォルダで処理時点にすでに消えているものは判定できず、ファイルとして記録されます。</p>
@@ -581,7 +581,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <div class="field"><span class="field-name">ExcludeUsers</span><span class="field-desc"><code>DOMAIN\user</code>、またはユーザー名のみ（全ドメインに一致）</span></div>
           <div class="field"><span class="field-name">ExcludeProcesses</span><span class="field-desc">プロセス名。共有経由のアクセスにはプロセス名がないため、サーバー上で開いたものにだけ効く</span></div>
           <div class="field"><span class="field-name">RecordDenied</span><span class="field-desc">既定 true。拒否されたアクセスも記録する（Linux は再適用でエージェントの <code>full_audit:failure</code> が変わる）</span></div>
-          <div class="field"><span class="field-name">MergeReadMinutes</span><span class="field-desc">既定 5。同じユーザー・同じファイルの読取は、前回の読取からこの時間内なら記録しない（時間は読取のたびに数え直す。0 = すべて記録）</span></div>
+          <div class="field"><span class="field-name">MergeReadMinutes</span><span class="field-desc">既定 5。同じユーザー・同じファイルの読み取りは、前回の読み取りからこの時間内なら記録しない（時間は読み取りのたびに数え直す。0 = すべて記録）</span></div>
         </div>
       </div>
       <p>設定の変更は、<code>settings.json</code> の更新日時を 1 秒ごとに確認して反映します（監視フォルダも同じ）。記録済みのデータには影響しません。</p>
@@ -650,8 +650,8 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li>Samba の <code>full_audit</code> モジュールが syslog に出す行を、<code>journalctl --follow --output=json SYSLOG_IDENTIFIER=smbd_audit</code> で読む。続きの位置はジャーナルのカーソルで、送信待ちフォルダと一緒に保存（<code>agent-position.txt</code>）</li>
         <li>行の形式（<code>full_audit:prefix = %u|%I|%m|%S|%P</code>）: <code>ユーザー|接続元IP|端末名|共有名|共有のパス|操作|ok|引数…</code></li>
-        <li><code>create_file</code>: 要求したアクセスマスクで読取・書込を判定（Windows と同じビット）。<code>dir</code> ならフォルダとして覚える。<code>renameat</code> は名前変更（元のパスで記録）、<code>unlinkat</code> は削除。Samba 4.14 より前は <code>rename</code> / <code>unlink</code> / <code>rmdir</code></li>
-        <li>監視フォルダ・記録ルール・読取のまとめ・フォルダの扱い（削除・名前変更のみ記録）は Windows と同じ。パスは大文字と小文字を区別</li>
+        <li><code>create_file</code>: 要求したアクセスマスクで読み取り・書き込みを判定（Windows と同じビット）。<code>dir</code> ならフォルダとして覚える。<code>renameat</code> は名前変更（元のパスで記録）、<code>unlinkat</code> は削除。Samba 4.14 より前は <code>rename</code> / <code>unlink</code> / <code>rmdir</code></li>
+        <li>監視フォルダ・記録ルール・読み取りのまとめ・フォルダの扱い（削除・名前変更のみ記録）は Windows と同じ。パスは大文字と小文字を区別</li>
         <li>journald が流量制限で行を捨てると「Suppressed N messages」を記録するので、それを読んで記録の途切れ（<code>gap.journalSuppressed</code>）として通知。カーソルの位置がジャーナルから消えていた場合も通知（<code>gap.journalRotated</code>）。インストーラーは smbd に <code>LogRateLimitIntervalSec=0</code> の drop-in を追加</li>
       </ul>
       <h3>監査の設定（applySacl / removeSacl）</h3>
@@ -702,7 +702,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <h3>拒否の記録</h3>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li>4656 の Audit Failure。使う欄: <code>SubjectUserName/DomainName/LogonId</code>、<code>ObjectType</code>（File）、<code>ObjectName</code>、<code>AccessMask</code>、<code>ProcessName</code>。<code>Status</code> 欄があり <code>0xC0000022</code> 以外なら無視</li>
-        <li>種別（<code>ParseDeniedType</code>）: DELETE ビット → Delete、WriteData / AppendData / 汎用書込 → Write、ReadData / 汎用読取 → Read、それ以外（属性だけの要求など）は記録しない</li>
+        <li>種別（<code>ParseDeniedType</code>）: DELETE ビット → Delete、WriteData / AppendData / 汎用書き込み → Write、ReadData / 汎用読み取り → Read、それ以外（属性だけの要求など）は記録しない</li>
         <li><code>DeniedMerger</code>: 同じ (ユーザー, パス, 種別) は 60 秒（スライディング）で 1 件。辞書は上限付き</li>
         <li>Linux（<code>SambaAudit.cs</code>）: <code>full_audit:failure</code> に <code>create_file unlinkat renameat</code>（4.14 より前は <code>create_file unlink rename rmdir</code>）を追加（<code>RecordDenied</code> が false なら <code>none</code>）。行の状態欄は <code>ok</code> または <code>fail (strerror)</code>。失敗行は、<code>SambaErrno</code> の表の「Permission denied」「Operation not permitted」（日本語 glibc の文言も）なら拒否。<strong style="color:var(--fg)">「No such file or directory」は、そのパスが実在するときだけ拒否</strong>（Samba は独自の NT アクセス判定で拒否し、古い errno が残るため。<code>AuditAccess.OnlyIfExists</code>、収集側が <code>Exists</code> を確認）。実在しないパスの失敗（クライアントの探索）や busy などは捨てる。同じ (ユーザー, パス, 種別) は 60 秒で 1 件（<code>Services/DeniedMerger.cs</code>）。失敗の監査は存在しないパスの試行も journald に出すため、ジャーナルの量が増える</li>
       </ul>
@@ -739,7 +739,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           </tbody>
         </table>
       </div>
-      <p>通知は高優先度: メールは <code>MailPriority.High</code>（X-Priority: 1）と件名の印（「[HIGH PRIORITY]」/「【緊急】」）、Slack / Teams は本文の先頭に同じ印、汎用 Webhook は <code>priority: "high"</code>。しきい値の既定は <code>AlertSettings</code>（<code>RansomwareEnabled</code> は GUI、数値は settings.json の <code>Alerts</code> のみ）。拒否の連続（<code>DeniedThreshold</code>、既定 20 件・集計時間は <code>WindowMinutes</code>）は通常の優先度。拒否は従来のしきい値に数えず、Create は書込のしきい値に数える。</p>
+      <p>通知は高優先度: メールは <code>MailPriority.High</code>（X-Priority: 1）と件名の印（「[HIGH PRIORITY]」/「【緊急】」）、Slack / Teams は本文の先頭に同じ印、汎用 Webhook は <code>priority: "high"</code>。しきい値の既定は <code>AlertSettings</code>（<code>RansomwareEnabled</code> は GUI、数値は settings.json の <code>Alerts</code> のみ）。拒否の連続（<code>DeniedThreshold</code>、既定 20 件・集計時間は <code>WindowMinutes</code>）は通常の優先度。拒否は従来のしきい値に数えず、Create は書き込みのしきい値に数える。</p>
 
       <h3>再適用の通知（AuditApplied）</h3>
       <p>サーバー側の <code>settings.json</code> の <code>AuditApplied</code>（<code>"サーバー|パス"</code> → 版、現在は <code>19</code>）。<code>SettingsController</code> が、監視フォルダの追加時と applySacl の成功時に書き、削除時に消す。版が低い監視フォルダは一覧に「SACL の再適用が必要」（Linux は「再適用が必要」）を出し、設定画面に件数の帯を出す。再適用が必要なのは、新しい SACL（失敗・権限）と Samba の監査ブロックを、既存フォルダには管理者が押すまで反映しないため（所有者の決定）。</p>
@@ -782,7 +782,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <li>収集（Windows）: 各フォルダで <code>DirectoryInfo.GetAccessControl</code>（Access と Owner）。<code>AreAccessRulesProtected</code> で継承の中断を判定する。再解析点（ジャンクション、シンボリックリンク）はたどらない。SID は名前に 1 回だけ変換し、全体で 5 秒の予算を超えたら SID のまま。読めないフォルダは「読めない」の行。権限は <code>Read=1, Write=2, Delete=4, Perm=8, Exec=16</code> のビット。</li>
         <li>収集（Linux）: モードビットと所有者・グループ（libc を P/Invoke し、名前は <code>getpwuid_r</code> / <code>getgrgid_r</code> で解決）。POSIX ACL は <code>getxattr("system.posix_acl_access")</code> と <code>system.posix_acl_default</code> をバイナリとして解析する（<code>getfacl</code> は使わない。ツールがないマシンがあるため）。共有は <code>testparm -s</code> から、<code>guest ok</code>、<code>read only</code>、<code>valid users</code>、<code>write list</code>、<code>vfs objects</code> に <code>acl_xattr</code> / <code>acl_tdb</code> があるか（NT ACL 警告の判定）を読む。</li>
         <li>分類（<code>PermissionAnalysis</code>、サーバー側。エージェントを更新せずに規則を変えられる）: 広い主体は SID で判定する（Everyone <code>S-1-1-0</code>、Authenticated Users <code>S-1-5-11</code>、BUILTIN\Users <code>S-1-5-32-545</code>、Guests <code>S-1-5-32-546</code>、Anonymous <code>S-1-5-7</code>、Network <code>S-1-5-2</code>、Interactive <code>S-1-5-4</code>、ドメインの Users・Guests・Computers は <code>-513</code>・<code>-514</code>・<code>-515</code>）。名前は表示用で、判定には使わない（表示言語で変わるため）。Linux は <code>other</code> と広いグループ名、<code>settings.json</code> の <code>Permissions:BroadPrincipals</code>（追加の名前、大文字小文字を区別しない）。</li>
-        <li>重要度: 変更・削除・権限変更を許す（Write、Delete、Perm のいずれか）= <code>high</code>、読取りだけ = <code>medium</code>。拒否のエントリは警告にせず一覧に出すだけ。共有は <code>guestOk</code> かつ書込可 = <code>high</code>、<code>guestOk</code> かつ読取専用 = <code>medium</code>。</li>
+        <li>重要度: 変更・削除・権限変更を許す（Write、Delete、Perm のいずれか）= <code>high</code>、読み取りだけ = <code>medium</code>。拒否のエントリは警告にせず一覧に出すだけ。共有は <code>guestOk</code> かつ書き込み可 = <code>high</code>、<code>guestOk</code> かつ読み取り専用 = <code>medium</code>。</li>
         <li>結果（<code>Services/PermissionContract.cs</code>、ジョブ <code>permissions</code>）: 引数は <code>{ path, maxFolders, maxFiles, maxDepth, includeFiles, timeLimitSeconds }</code>。既定と上限は、フォルダ 5,000 / 20,000、ファイル 50,000 / 200,000、深さ 8 / 32、時間 300 / 900 秒（エージェントが上限に丸める）。行は最大 20,000（<code>MaxRows</code>）、エラーは最大 100。行のフラグ: 1 フォルダ、2 継承の中断、4 読めない、8 明示のエントリあり、16 POSIX ACL、32 既定の ACL、64 所有者が親と違う。打ち切りは <code>limit</code>（<code>folders</code>、<code>files</code>、<code>time</code>、<code>depth</code>、<code>rows</code>）で示す。</li>
         <li>保存: <code>&lt;データフォルダ&gt;/permission-reports/&lt;サーバー&gt;__&lt;root の SHA-1&gt;.json</code>。最新 1 回だけ。一時ファイルを経て置き換える。ジョブのタイムアウトは <code>timeLimitSeconds + 60</code> 秒（超えると 504 <code>agents.noAnswer</code>）。</li>
         <li>権限変更の印: 結果の各行について、同じサーバーの <code>AccessType = Permission</code>（拒否ではない）の最新の記録（時刻、ユーザー、記録 Id）を引く。スキャン時刻より新しければ <code>changedSinceScan</code>（「スキャン後に変更」）。</li>
@@ -808,13 +808,13 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li>鍵: <code>chain.key</code>（データフォルダ、32 バイトの乱数、<code>SecretStore.GetOrCreateChainKey()</code>）。Windows は SYSTEM / Administrators のみ読み取り可、Linux は所有者だけ読み書き可。<code>KeyId</code> は鍵の SHA-256 の先頭 8 桁（checkpoint に保存）。</li>
         <li>チェーン: 2 本（<code>access</code> = AccessRecords、<code>audit</code> = AuditLogs）。<code>ChainHash = HMAC-SHA256(鍵, 前のハッシュ || 正準形式)</code>。正準形式は、チェーン名、<code>ChainSeq</code>、サーバー名、UTC の ticks、種別、Denied、IsFolder、ユーザー、パス、ファイル名、フォルダ、IP、端末名、NewPath、Detail（audit は Time、ユーザー、Action、Detail、IP）を、フィールドごとに長さ（4 バイト）と UTF-8 の値で連ねたもの（null は長さ -1）。<code>Id</code> は含まない（DB が後で振るため）。</li>
-        <li>書込み（<code>ChainInterceptor</code>、<code>SaveChangesInterceptor</code>）: 追加された行があると、プロセス内のロック（<code>SemaphoreSlim</code>）を取り、連番を振ってヘッドの更新を同じ SaveChanges（同じトランザクション）に入れる。ロックは完了・失敗・キャンセルで解放し、30 秒のウォッチドッグで必ず解放する。失敗時はヘッドを DB から読み直す。チェーンの順は挿入の順で、AccessTime の順ではない（エージェントの遅れた送信のため。だから保持期間の削除も先頭からの接頭辞になる）。</li>
-        <li>検証（<code>IntegrityService</code>）: 増分は 15 分ごとに、前回の検証位置から。全件は毎日 03:30（ローカル時刻）と、手動（<code>POST verify</code>）。どちらも短いページ単位で読む（SQLite のロールバックジャーナルは長い読取りで書込みを止めるため）。検出の種類: <code>altered</code>、<code>missing</code>、<code>truncatedTail</code>、<code>headMismatch</code>、<code>headRollback</code>、<code>unchained</code>、<code>checkpoint</code>、<code>keyChanged</code>、<code>duplicate</code>。1 か所の改変は 1 件として報告し、以後の行は保存されたハッシュを前として続ける。</li>
+        <li>書き込み（<code>ChainInterceptor</code>、<code>SaveChangesInterceptor</code>）: 追加された行があると、プロセス内のロック（<code>SemaphoreSlim</code>）を取り、連番を振ってヘッドの更新を同じ SaveChanges（同じトランザクション）に入れる。ロックは完了・失敗・キャンセルで解放し、30 秒のウォッチドッグで必ず解放する。失敗時はヘッドを DB から読み直す。チェーンの順は挿入の順で、AccessTime の順ではない（エージェントの遅れた送信のため。だから保持期間の削除も先頭からの接頭辞になる）。</li>
+        <li>検証（<code>IntegrityService</code>）: 増分は 15 分ごとに、前回の検証位置から。全件は毎日 03:30（ローカル時刻）と、手動（<code>POST verify</code>）。どちらも短いページ単位で読む（SQLite のロールバックジャーナルは長い読み取りで書き込みを止めるため）。検出の種類: <code>altered</code>、<code>missing</code>、<code>truncatedTail</code>、<code>headMismatch</code>、<code>headRollback</code>、<code>unchained</code>、<code>checkpoint</code>、<code>keyChanged</code>、<code>duplicate</code>。1 か所の改変は 1 件として報告し、以後の行は保存されたハッシュを前として続ける。</li>
         <li><code>chain-head.json</code>（データフォルダ、SYSTEM / Administrators のみ）: 確認済みの各チェーンの末尾（Seq、Hash、keyId）。古い DB に戻されたこと（<code>headRollback</code>）を見つけるために使う。中身が改ざんされていれば無視して警告を出す。</li>
         <li>保持期間（<code>RetentionService.CleanupAsync</code>）: 鍵があるとき、チェーンの先頭から、保持期間内で最初に残す記録の直前までを削除し、<code>ChainCheckpoint</code>（reason <code>retention</code>、<code>Mac = HMAC(鍵, chain, UpToSeq, Hash, KeyId, 前の Mac)</code>）を書く。ChainSeq が null で <code>Id ≤ LegacyMaxId</code> の旧行は、従来どおり時刻で削除。遅れて届いた古い日付の記録は、前の記録が消えるまで残る。</li>
         <li>初回起動（<code>SchemaV110Integrity</code>）: 既存の行は計算しない。<code>LegacyMaxId</code> と <code>LegacyCount</code> を記録し、genesis の checkpoint とヘッド（Seq 0）を作る。新しい DB は件数 0。</li>
         <li>承認（<code>POST accept</code>）: 現在の検証済みの位置に、reason <code>accepted</code> の checkpoint を書く。検出は一覧に残る（承認済み）。</li>
-        <li>アンカー: 毎日 00:05（ローカル時刻）に 1 回。起動が遅れても、その日のうちに 1 回書く。行の形式は <code>FAM-ANCHOR v1 server=… chain=access seq=… hash=… time=… audit-seq=… audit-hash=…</code>。書込み先は、Windows はアプリケーションログのソース <code>FileAccessMonitor</code> のイベント 1100（ソースがなければ作成を試み、作れなければ Application ソースを使う）、Linux は <code>syslog</code>（facility local5、タグ <code>fileaccessmonitor</code>）、そして操作ログ <code>integrity.anchor</code>。<code>Integrity.AnchorNotify</code>（settings.json の <code>"Integrity": { "AnchorNotify": true }</code>、既定 false）がオンなら通知にも送る。定期レポートの本文にも入る。</li>
+        <li>アンカー: 毎日 00:05（ローカル時刻）に 1 回。起動が遅れても、その日のうちに 1 回書く。行の形式は <code>FAM-ANCHOR v1 server=… chain=access seq=… hash=… time=… audit-seq=… audit-hash=…</code>。書き込み先は、Windows はアプリケーションログのソース <code>FileAccessMonitor</code> のイベント 1100（ソースがなければ作成を試み、作れなければ Application ソースを使う）、Linux は <code>syslog</code>（facility local5、タグ <code>fileaccessmonitor</code>）、そして操作ログ <code>integrity.anchor</code>。<code>Integrity.AnchorNotify</code>（settings.json の <code>"Integrity": { "AnchorNotify": true }</code>、既定 false）がオンなら通知にも送る。定期レポートの本文にも入る。</li>
         <li>取り出しと照合: <code>GET anchor</code> は署名付き JSON（<code>format: fam-anchor-v1</code>、<code>mac</code> は鍵による署名）。<code>POST check-anchor</code> は行または JSON を受け、同じ seq の ChainHash と比べる。その位置が保持期間で消えていれば checkpoint と比べる。</li>
         <li>通知: 新しい検出（チェーン・種別・最初の seq で識別）は <code>NotifyAsync</code>（種別 <code>Integrity</code>、高優先度。通知が有効なときだけ）と、操作ログ <code>integrity.break</code>。未承認の間は 24 時間ごとに再通知（<code>Integrity.AlertedSignature</code>、<code>Integrity.AlertedAt</code>）。</li>
         <li>画面: 設定の「改ざん検知」カード（<code>#integritySettingsSection</code>、Admin）と、未承認の検出がある間の上部の赤い帯（<code>#integrityBanner</code>、全ての管理者画面）。</li>
@@ -838,8 +838,8 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
           <tbody>
             <tr><td>EventLogCollectorService</td><td>Security ログの収集（上記）。ホステッドサービス</td></tr>
             <tr><td>IRecordSink</td><td>保存先。<code>LocalRecordSink</code>（DB）/ <code>RemoteRecordSink</code>（送信待ちフォルダ）</td></tr>
-            <tr><td>DeleteTracker / ReadMerger / RecentFolders</td><td>削除・名前変更の判定、読取のまとめ、フォルダの判定（<code>RecordingRules.cs</code>）</td></tr>
-            <tr><td>AlertService / AlertDetector</td><td>大量の削除・書込・読取の検知と通知、記録の途切れ・エージェントの無応答の通知。検知器はスレッドセーフでないため <code>Observe</code> はロックする</td></tr>
+            <tr><td>DeleteTracker / ReadMerger / RecentFolders</td><td>削除・名前変更の判定、読み取りのまとめ、フォルダの判定（<code>RecordingRules.cs</code>）</td></tr>
+            <tr><td>AlertService / AlertDetector</td><td>大量の削除・書き込み・読み取りの検知と通知、記録の途切れ・エージェントの無応答の通知。検知器はスレッドセーフでないため <code>Observe</code> はロックする</td></tr>
             <tr><td>AgentMonitorService</td><td>1 分ごとにエージェントの最終接続を確認し、無応答と復旧を通知（監視サーバーの起動直後は同じ時間だけ判定しない）</td></tr>
             <tr><td>AgentSender / AgentJobRunner</td><td>エージェント側の送信と指示の実行</td></tr>
             <tr><td>ServerConfigService / AgentJobs</td><td>サーバーごとの設定の読み書き、エージェントへの指示のキュー</td></tr>
@@ -1000,7 +1000,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <table>
           <thead><tr><th>種類</th><th>条件</th></tr></thead>
           <tbody>
-            <tr><td>大量の削除・書込・読取</td><td>1 人のユーザーが集計時間（既定 5 分）内にしきい値以上（削除の既定 100、書込・読取は 0 = オフ）。読取はまとめた後の件数。フォルダは数えない。再通知までの間隔あり。通知にはサーバー名を含める</td></tr>
+            <tr><td>大量の削除・書き込み・読み取り</td><td>1 人のユーザーが集計時間（既定 5 分）内にしきい値以上（削除の既定 100、書き込み・読み取りは 0 = オフ）。読み取りはまとめた後の件数。フォルダは数えない。再通知までの間隔あり。通知にはサーバー名を含める</td></tr>
             <tr><td>記録の途切れ</td><td>Security ログの消去、または収集前の上書き</td></tr>
             <tr><td>エージェントの無応答・復旧</td><td>既定 15 分以上接続がない（<code>AgentOfflineMinutes</code>、0 = オフ）／再び接続した</td></tr>
             <tr><td>改ざん検知</td><td>新しい検出（チェーン・種別・最初の位置）。緊急（高優先度）として送り、未承認の間は 24 時間ごとに再通知（v1.10）。<code>alert.sent</code> の種別は <code>Integrity</code></td></tr>

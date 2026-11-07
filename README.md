@@ -283,7 +283,7 @@ With the installer, `appsettings.json` is in `C:\Program Files\FileAccessMonitor
 
 | Tab | Contents |
 |---|---|
-| Dashboard | Access trend chart, breakdown by type, a count of refused attempts, top files and folders |
+| Dashboard | Access trend chart, breakdown by type, a count of refused attempts, top files and folders. Click a value in a chart to open its records in Search, or the file or folder detail |
 | Files / Folders / Users | Rankings with detail dialogs |
 | Recent | Access log with client IP and machine name. Refused attempts have a red **Denied** mark and can be shown or hidden with the Result filter; a renamed file shows its new path; permission changes have an info button with what changed. Each file name has a clock button that opens its history (see below) |
 | Search | Search by keyword, period, type, or IP; export the results as CSV (up to 200,000 rows, opens in Excel) |
