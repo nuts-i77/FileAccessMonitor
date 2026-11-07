@@ -108,20 +108,36 @@ function Test-LocalCollection {
     }
 }
 
-# The web service account works in the data folder (database, settings, logs, keys, certificates). The collector\
-# folder is the exception: SYSTEM and Administrators only, plus read on key.hash (set by the collector itself).
-function Set-DataFolderAccess {
+function Invoke-Icacls {
+    $out = icacls.exe @args 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Warning "icacls $($args -join ' ') failed (exit code $LASTEXITCODE): $out" }
+}
+
+# The data folder holds every record, so it is not left readable by Users (as ProgramData would make it): SYSTEM,
+# Administrators and, on a monitoring server, the web service account, which works in it (database, settings, logs,
+# keys, certificates). The collector\ folder is the exception: SYSTEM and Administrators only, plus read on key.hash
+# (set by the collector itself).
+function Set-DataFolderAccess([switch]$Web) {
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+    $grants = @("${SystemSid}:(OI)(CI)F", "${AdminsSid}:(OI)(CI)F")
+    if ($Web) { $grants += "${WebAccount}:(OI)(CI)M" }
+    Invoke-Icacls $DataDir /inheritance:r /grant:r @grants /C /Q
+    if (-not $Web) { return }
+
     $collectorDir = Join-Path $DataDir 'collector'
     New-Item -ItemType Directory -Force -Path $collectorDir | Out-Null
-    icacls.exe $collectorDir /inheritance:r /grant:r "${SystemSid}:(OI)(CI)F" "${AdminsSid}:(OI)(CI)F" /C /Q | Out-Null
+    Invoke-Icacls $collectorDir /inheritance:r /grant:r "${SystemSid}:(OI)(CI)F" "${AdminsSid}:(OI)(CI)F" /C /Q
 
-    # The folder itself (new files inherit), then what is in it. Files that carry their own protected ACL (the keys,
-    # certificates, the initial password: SYSTEM and Administrators only before 1.11) do not inherit, so every item
-    # gets the entry itself; collector\ is skipped.
-    icacls.exe $DataDir /grant "${WebAccount}:(OI)(CI)M" /C /Q | Out-Null
+    # Files that carry their own protected ACL (the keys, certificates, the initial password: SYSTEM and
+    # Administrators only before 1.11) do not inherit, so they get the entry themselves. Inheritance flags are for
+    # folders only: a file given (OI)(CI) is refused.
     foreach ($item in Get-ChildItem -LiteralPath $DataDir -Force | Where-Object { $_.Name -ne 'collector' }) {
-        icacls.exe $item.FullName /grant "${WebAccount}:(OI)(CI)M" /T /C /Q | Out-Null
+        if ($item.PSIsContainer) {
+            Invoke-Icacls $item.FullName /grant "${WebAccount}:(OI)(CI)M" /C /Q
+            Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Force | ForEach-Object { Invoke-Icacls $_.FullName /grant "${WebAccount}:M" /C /Q }
+        } else {
+            Invoke-Icacls $item.FullName /grant "${WebAccount}:M" /C /Q
+        }
     }
 }
 
@@ -185,6 +201,7 @@ switch ($Action) {
             # An agent only collects and sends; it keeps LocalSystem. It has no collector service.
             Set-MonitorService $ServiceName $ServiceDisplay $ServiceDesc $binPath 'LocalSystem' 'auto'
             Remove-Service $CollectorName
+            Set-DataFolderAccess
         } else {
             # The web GUI and database run without privileges. 1.10 and older ran everything as LocalSystem, so an
             # upgrade switches the account here.
@@ -196,7 +213,7 @@ switch ($Action) {
                 Write-Warning "The web service keeps running as LocalSystem: $($_.Exception.Message)"
             }
             sc.exe sidtype $ServiceName unrestricted | Out-Null
-            Set-DataFolderAccess
+            Set-DataFolderAccess -Web
             Grant-CertificateKeyAccess
             Initialize-EventSource
 
