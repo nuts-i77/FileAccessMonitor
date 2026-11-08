@@ -107,7 +107,7 @@ public class AgentApiController : ControllerBase
         if (batch.Seq <= agent.LastBatchSeq)
         {
             await _db.SaveChangesAsync();
-            return Ok(new { duplicate = true }); // already saved; the response was lost
+            return Ok(new { duplicate = true, configVersion = ConfigVersionOf(agent, isLocal) }); // already saved; the response was lost
         }
 
         var records = (batch.Records ?? []).Select(r => r.ToRecord(agent.Name)).ToList();
@@ -131,7 +131,9 @@ public class AgentApiController : ControllerBase
             object[] args = gap.Args.Select(a => long.TryParse(a, out var n) ? n : (object)a).ToArray();
             _ = Task.Run(() => _alerts.NotifyGapAsync(agent.Name, gap.MessageKey, args));
         }
-        return Ok(new { saved = records.Count });
+        // The settings version comes with every answer: a busy agent sends no heartbeats, and must still
+        // notice a new monitored folder at once (its accesses are dropped until it has the folder)
+        return Ok(new { saved = records.Count, configVersion = ConfigVersionOf(agent, isLocal) });
     }
 
     // POST /api/agent/heartbeat  — sent when there is nothing to send, so the GUI shows the agent is alive
@@ -232,6 +234,9 @@ public class AgentApiController : ControllerBase
     internal static Func<JsonObject> LocalSettings { get; set; } = SettingsStore.Load;
 
     private static bool IsLocalCollector(Agent agent) => agent.Id == LocalCollector.AgentId;
+
+    private static int ConfigVersionOf(Agent agent, bool isLocal) =>
+        isLocal ? LocalCollector.ConfigVersion(LocalCollector.ConfigFrom(LocalSettings())) : agent.ConfigVersion;
 
     private (string Reason, string Message)? EnrollRefusal(string name, Agent? existing, AgentEnrollment code)
     {

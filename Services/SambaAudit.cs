@@ -181,6 +181,34 @@ public static class AuditInterpreter
         && long.TryParse(s.AsSpan(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var v) ? v : null;
 }
 
+// Office and many editors save over SMB by renaming the old file to a temporary name, renaming the new
+// file (written under another temporary name) into its place, and deleting the old one. The temporary
+// names are excluded (~*.tmp), so all that would be left is "doc.docx renamed to ~WRL0001.tmp", as if
+// the document had gone. Such a rename is held for a few seconds: when a file is renamed into its place,
+// it was a save, recorded as one write of doc.docx (as on Windows); otherwise it is recorded as it was.
+internal sealed class RenameSwap
+{
+    public static readonly TimeSpan Window = TimeSpan.FromSeconds(5);
+    private readonly List<(AccessRecord Record, DateTime AddedUtc)> _held = [];
+
+    public bool HasHeld => _held.Count > 0;
+
+    public void Hold(AccessRecord record, DateTime nowUtc) => _held.Add((record, nowUtc));
+
+    // A file was renamed to path: a held rename away from that path by the same user was part of the save
+    public bool Swap(string path, string user) =>
+        _held.RemoveAll(h => h.Record.FilePath == path && h.Record.UserName == user) > 0;
+
+    // Held renames that got no file in their place in time: by the journal time of the newest line, or by
+    // the clock (no more lines arrive)
+    public List<AccessRecord> Expire(DateTime newestLineUtc, DateTime nowUtc, bool force = false)
+    {
+        var expired = _held.Where(h => force || newestLineUtc - h.Record.AccessTime >= Window || nowUtc - h.AddedUtc >= Window).ToList();
+        foreach (var h in expired) _held.Remove(h);
+        return expired.Select(h => h.Record).ToList();
+    }
+}
+
 // Reads Samba's audit lines from the systemd journal (journalctl), turns them into access records
 // and hands them to the record sink: the outbox on a Linux agent, the database on a Linux
 // monitoring server that also collects. The journal cursor is saved with them, so after a restart
@@ -197,6 +225,8 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
     private readonly DeniedMerger _deniedMerger = new(DeniedMerger.DeniedWindow);
     private readonly DeniedMerger _permissionMerger = new(DeniedMerger.PermissionWindow);
     private readonly RecentFolders _recentFolders = new();
+    private readonly WriteMerger _writeMerger = new();
+    private readonly RenameSwap _swap = new();
     private (string Path, HashSet<string> EventTypes)[] _paths = [];
     private RecordingRules _rules = new(new RecordingSettings());
     private DateTime _settingsTime = DateTime.MinValue;
@@ -264,19 +294,26 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
         while (true)
         {
             pending ??= reader.ReadLineAsync(ct).AsTask();
-            // Write what has been collected when no more lines arrive for a second
-            if (batch.Count > 0 || lastCursor != null)
+            // Write what has been collected when no more lines arrive for a second. While a rename is held
+            // (RenameSwap), the cursor is not saved past it, so that a restart reads it again.
+            if (batch.Count > 0 || lastCursor != null || _swap.HasHeld)
             {
                 var done = await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(1), ct));
-                if (done != pending) { await FlushAsync(); continue; }
+                if (done != pending)
+                {
+                    batch.AddRange(ExpireHeld(DateTime.MinValue, DateTime.UtcNow));
+                    if (!_swap.HasHeld) await FlushAsync();
+                    continue;
+                }
             }
             var line = await pending;
             pending = null;
             if (line == null) break; // journalctl exited
 
             if (await HandleAsync(line, batch) is { } entryCursor) lastCursor = entryCursor;
-            if (batch.Count >= MaxBatchSize) await FlushAsync();
+            if (batch.Count >= MaxBatchSize && !_swap.HasHeld) await FlushAsync();
         }
+        batch.AddRange(ExpireHeld(DateTime.MinValue, DateTime.UtcNow, force: true));
         await FlushAsync();
         if (!ct.IsCancellationRequested)
             logger.LogWarning("journalctl exited (code {Code}).", process.HasExited ? process.ExitCode : -1);
@@ -307,6 +344,7 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
                    && long.TryParse(t.GetString(), out var micros)
             ? DateTime.UnixEpoch.AddTicks(micros * 10)
             : DateTime.UtcNow;
+        batch.AddRange(ExpireHeld(time, DateTime.UtcNow));
         if (ToRecord(message, time) is { } record && ShouldKeep(record))
             batch.Add(record);
         return cursor;
@@ -314,9 +352,10 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
 
     // Repeats are merged: reads (not the denied ones, which have their own merger), refused
     // accesses and permission changes
-    private bool ShouldKeep(AccessRecord record) =>
+    internal bool ShouldKeep(AccessRecord record) =>
         record.Denied ? _deniedMerger.ShouldRecord(record)
         : record.AccessType == AccessTypes.Permission ? _permissionMerger.ShouldRecord(record)
+        : record.AccessType is AccessTypes.Write or AccessTypes.Create ? _writeMerger.ShouldRecord(record)
         : _readMerger.ShouldRecord(record, _rules.MergeReadWindow);
 
     // MESSAGE is a string, or an array of bytes when it is not valid UTF-8
@@ -336,15 +375,30 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
         if (AuditLine.Parse(message) is not { } line || AuditInterpreter.Interpret(line) is not { } access) return null;
         RefreshSettings();
 
-        var path = access.Path;
-        if (access.IsFolder) _recentFolders.Add(path);
+        if (access.IsFolder) _recentFolders.Add(access.Path);
         if (access.Type.Length == 0) return null;
+
+        // Excluded (temporary) names. A rename counts by both names: from a temporary name to a real one is
+        // new content arriving under that name (a write of it); from a real name to a temporary one is held,
+        // as it may be the old file making room for a saved one (see RenameSwap).
+        var excluded = _rules.IsExcludedFile(NameOf(access.Path));
+        var fromTemporary = false;
+        var awayToTemporary = false;
+        if (access is { Type: AccessTypes.Rename, Denied: false, NewPath: { } newPath })
+        {
+            var excludedNew = _rules.IsExcludedFile(NameOf(newPath));
+            if (excluded && excludedNew) return null;
+            if (excluded) { access = access with { Path = newPath, Type = AccessTypes.Write, NewPath = null }; fromTemporary = true; }
+            else awayToTemporary = excludedNew;
+        }
+        else if (excluded) return null;
+        if (_rules.IsExcludedUser(line.User)) return null;
+
+        var path = access.Path;
         var matched = _paths.Length > 0 ? _paths.FirstOrDefault(p => IsUnderPath(path, p.Path)) : default;
         if (_paths.Length > 0 && matched == default) return null;
         var parent = ParentOf(path);
         _recentFolders.Add(parent);
-
-        if (_rules.IsExcludedFile(NameOf(path)) || _rules.IsExcludedUser(line.User)) return null;
         if (access.Denied && !_rules.Settings.RecordDenied) return null;
         // Reported as "no such file": a refusal only if it is there (otherwise it really was missing)
         if (access.OnlyIfExists && !PathExists(path)) return null;
@@ -359,7 +413,7 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
         isFolder |= _recentFolders.Contains(path);
         if (isFolder && !access.Denied && access.Type is "Read" or "Write" or "Create") return null;
 
-        return new AccessRecord
+        var record = new AccessRecord
         {
             FilePath = path, FileName = NameOf(path), FolderPath = parent,
             UserName = line.User, AccessType = access.Type, AccessTime = timeUtc,
@@ -371,7 +425,14 @@ public class SambaAuditCollector(IRecordSink sink, ILogger<SambaAuditCollector> 
             Detail = access.Detail,
             ServerName = Environment.MachineName, // used when collecting on the monitoring server itself
         };
+        if (awayToTemporary && !isFolder) { _swap.Hold(record, DateTime.UtcNow); return null; }
+        if (fromTemporary) _swap.Swap(record.FilePath, record.UserName); // the old file's rename away was part of this save
+        return record;
     }
+
+    // Held renames whose time is up (see RenameSwap); force: everything (journalctl ended)
+    internal List<AccessRecord> ExpireHeld(DateTime newestLineUtc, DateTime nowUtc, bool force = false) =>
+        _swap.Expire(newestLineUtc, nowUtc, force);
 
     // For tests: monitored folders and rules without settings.json
     internal void UseSettings((string Path, string[] EventTypes)[] paths, RecordingSettings rules)

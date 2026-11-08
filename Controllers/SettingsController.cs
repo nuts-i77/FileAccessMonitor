@@ -149,6 +149,7 @@ public class SettingsController : ControllerBase
             ExcludeProcesses = Clean(req.ExcludeProcesses),
             MergeReadMinutes = req.MergeReadMinutes,
             RecordDenied = req.RecordDenied,
+            AuditOpens = req.AuditOpens,
             Other = (await _servers.GetRecordingAsync(server)).Other,
         };
         if (new[] { settings.ExcludeFilePatterns, settings.ExcludeUsers, settings.ExcludeProcesses }
@@ -159,7 +160,7 @@ public class SettingsController : ControllerBase
         await _audit.WriteAsync(HttpContext, "recording.update",
             $"server={ServerLabel(server)}, files=[{string.Join(", ", settings.ExcludeFilePatterns)}], " +
             $"users=[{string.Join(", ", settings.ExcludeUsers)}], processes=[{string.Join(", ", settings.ExcludeProcesses)}], " +
-            $"mergeReadMinutes={settings.MergeReadMinutes}, recordDenied={settings.RecordDenied}");
+            $"mergeReadMinutes={settings.MergeReadMinutes}, recordDenied={settings.RecordDenied}, auditOpens={settings.AuditOpens}");
         return Ok(new { message = Messages.Get("recording.saved"), settings });
     }
 

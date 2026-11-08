@@ -54,6 +54,11 @@ public class AccessRecord
     // not a change by a user. A display label only (not part of the tamper-detection chain)
     public bool AtCreation { get; set; }
 
+    // Windows collector only, never stored: the file's name is excluded (a temporary name), kept so that a
+    // rename from it to a real name can be recorded as a write of that name (UsnCorrelator)
+    [NotMapped]
+    public bool ExcludedName { get; set; }
+
     // Tamper detection (1.10): position in the chain and the HMAC over the previous hash and this
     // row; null for records made before 1.10
     public long? ChainSeq { get; set; }

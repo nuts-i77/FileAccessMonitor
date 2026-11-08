@@ -334,6 +334,8 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
             {
                 // An old server is asked again now and then, so that it is noticed when it has been upgraded
                 var heartbeatFirst = !protocolKnown || (serverProtocol < AgentProtocol.Version && DateTime.UtcNow - lastHeartbeat >= HeartbeatInterval);
+                // Also while batches keep going: the GUI's status (outbox, audit policy) stays current
+                heartbeatFirst |= DateTime.UtcNow - lastHeartbeat >= HeartbeatInterval;
                 if (!heartbeatFirst && outbox.Oldest() is { } next)
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Post, "api/agent/batch")
@@ -347,6 +349,12 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
                         throw new AgentRejectedException();
                     response.EnsureSuccessStatusCode();
                     outbox.Remove(next.Path);
+                    // Settings changed on the server (a folder added): fetched now, not at the next heartbeat
+                    // (servers before 1.11.2 do not say)
+                    var saved = await response.Content.ReadFromJsonAsync<JsonElement>(stoppingToken);
+                    if (saved.ValueKind == JsonValueKind.Object && saved.TryGetProperty("configVersion", out var cv)
+                        && cv.TryGetInt32(out var version) && version != AgentSettingsSync.AppliedVersion)
+                        await AgentSettingsSync.FetchAsync(client, logger, stoppingToken);
                 }
                 else if (heartbeatFirst || DateTime.UtcNow - lastContact >= HeartbeatInterval)
                 {
@@ -448,6 +456,9 @@ public class AgentJobRunner(AgentConfig config, IAgentPlatform platform, ILogger
                     result = new JsonObject { ["error"] = ex.Message };
                 }
                 using var answer = await client.PostAsJsonAsync($"api/agent/jobs/{job.Id}", result, stoppingToken);
+                // Setting up a folder's auditing comes before the server saves the folder: its settings are
+                // fetched a moment later, so accesses to it are recorded from then on even when nothing else is sent
+                if (job.Type is "applySacl" or "removeSacl") _ = SyncSoonAsync(client, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception)
@@ -456,6 +467,20 @@ public class AgentJobRunner(AgentConfig config, IAgentPlatform platform, ILogger
                 try { await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken); } catch (OperationCanceledException) { break; }
             }
         }
+    }
+
+    private async Task SyncSoonAsync(HttpClient client, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), ct);
+            await AgentSettingsSync.FetchAsync(client, logger, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Fetching the settings after a job failed; the next heartbeat does it.");
+        }
+        catch (OperationCanceledException) { }
     }
 
     // The job's folder ("path", or "folder" for a scan)

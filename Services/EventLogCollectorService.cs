@@ -48,14 +48,13 @@ public class EventLogCollectorService : BackgroundService
     // 4663: object access (read/write/delete)
     // 4659: handle requested with intent to delete (fired specifically for DELETE on modern Windows)
     // 4660: object deleted (follows the 4663 DELETE access of a deletion, but not of a rename)
-    // 4656: handle requested, only the Audit Failure ones (refused access). The success ones are
-    //       not read, so the existing success auditing adds no load.
+    // 4656: handle requested. The Audit Failure ones are refused accesses; the success ones exist only
+    //       while opens are audited (RecordingSettings.AuditOpens) and tell who created or truncated a file
     // 4670: permissions on an object were changed
     // 4624: logon (for IP/machine caching)
     // 5140: network share access (for IP/machine caching)
-    // 4503599627370496 = 0x10000000000000, the Audit Failure keyword
     private const string XPathQuery = "*[System[(EventID=4663) or (EventID=4659) or (EventID=4660) or (EventID=4670)"
-        + " or (EventID=4656 and band(Keywords,4503599627370496)) or (EventID=4624) or (EventID=5140)]]";
+        + " or (EventID=4656) or (EventID=4624) or (EventID=5140)]]";
 
     private readonly IRecordSink _sink;
     private readonly ILogger<EventLogCollectorService> _logger;
@@ -97,7 +96,8 @@ public class EventLogCollectorService : BackgroundService
 
     // Used only by the consumer task
     private readonly ReadMerger _readMerger = new();
-    private readonly DeleteTracker _deleteTracker = new(path => File.Exists(path) || Directory.Exists(path));
+    private readonly DeleteTracker _deleteTracker = new(ExistsAsNamed);
+    private readonly WriteMerger _writeMerger = new();
     private readonly RecentFolders _recentFolders = new();
     private readonly DeniedMerger _deniedMerger = new();
     private readonly PermissionMerger _permissionMerger = new();
@@ -142,6 +142,23 @@ public class EventLogCollectorService : BackgroundService
         _dns = dns;
         _logger = logger;
         _config = config;
+        _usnCorrelator.TakesContentAt = path => !_rules.IsExcludedFile(Path.GetFileName(path))
+            && (GetPathConfigs() is not { Length: > 0 } configs || configs.Any(c => IsUnderPath(path, c.Path)));
+        _usnCorrelator.TakesUnexplainedAt = path => !_rules.IsExcludedFile(Path.GetFileName(path))
+            && GetPathConfigs().FirstOrDefault(c => IsUnderPath(path, c.Path)) is { Path: not null } config
+            && config.EventTypes.Contains(AccessTypes.Write) && !Directory.Exists(path);
+    }
+
+    // Something is at this path under this very name. Windows paths ignore case, so after a rename that
+    // only changed the case a file is still "there", but under another name: that was a rename.
+    internal static bool ExistsAsNamed(string path)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path)) return false;
+        var parent = Path.GetDirectoryName(path);
+        var name = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name)) return true;
+        try { return new DirectoryInfo(parent).EnumerateFileSystemInfos(name).Any(i => i.Name == name); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return true; }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -170,7 +187,7 @@ public class EventLogCollectorService : BackgroundService
         }, stoppingToken);
 
         GetPathConfigs(); // monitored folders and Recording settings, before the reader asks for them
-        _usnReader = new UsnJournalReader(_usnCorrelator, _logger, () => _usnRoots, () => _usnEnabled,
+        _usnReader = new UsnJournalReader(_usnCorrelator, _logger, () => { GetPathConfigs(); return _usnRoots; }, () => _usnEnabled,
             Path.Combine(AppPaths.DataDir, "usn-position.json"));
         _ = Task.Run(() => _usnReader.RunAsync(stoppingToken), stoppingToken);
 
@@ -365,8 +382,14 @@ public class EventLogCollectorService : BackgroundService
                 return;
             if (UsnCorrelator.NeedsCorrelation(record) && _usnReader?.Covers(record.FilePath) == true)
                 _usnCorrelator.Hold(record, DateTime.UtcNow); // waits for the change journal, see UsnCorrelator
-            else
-                batch.Add(record);
+            else if (!record.ExcludedName) // without the journal, a temporary name's new name is not known
+                Emit(record);
+        }
+
+        // Saving often writes a file more than once: one write per file and user within a moment
+        void Emit(AccessRecord record)
+        {
+            if (_writeMerger.ShouldRecord(record)) batch.Add(record);
         }
 
         while (await WaitForEventsAsync(reader))
@@ -386,7 +409,9 @@ public class EventLogCollectorService : BackgroundService
                 }
             }
             _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow).ForEach(Add);
-            batch.AddRange(_usnCorrelator.Release(DateTime.UtcNow));
+            // How far the Security log is processed: everything there is, when nothing waits in the queue
+            _usnCorrelator.SecurityLogUtc = reader.Count == 0 && !_deleteTracker.HasPending ? DateTime.UtcNow : newestEventUtc;
+            _usnCorrelator.Release(DateTime.UtcNow).ForEach(Emit);
 
             if (batch.Count > 0 || (lastRecordId != savedRecordId && sinceSave.Elapsed >= PositionSaveInterval))
             {
@@ -410,7 +435,7 @@ public class EventLogCollectorService : BackgroundService
         }
 
         _deleteTracker.Expire(newestEventUtc, DateTime.UtcNow, force: true).ForEach(Add);
-        batch.AddRange(_usnCorrelator.Release(DateTime.UtcNow, force: true));
+        _usnCorrelator.Release(DateTime.UtcNow, force: true).ForEach(Emit);
         if (batch.Count > 0 || lastRecordId != savedRecordId)
             await SaveUntilDoneAsync(batch, lastRecordId.ToString(), ct);
     }
@@ -438,7 +463,7 @@ public class EventLogCollectorService : BackgroundService
     // events, so they get resolved. Returns false once the queue is completed.
     private async Task<bool> WaitForEventsAsync(ChannelReader<RawEvent> reader)
     {
-        var held = _usnCorrelator.HasHeld;
+        var held = _usnCorrelator.HasHeld || _usnCorrelator.HasWaitingFacts;
         if (!_deleteTracker.HasPending && !held) return await reader.WaitToReadAsync();
         // Records held for the change journal are released as it catches up: look again every second
         using var timeout = new CancellationTokenSource(held ? TimeSpan.FromSeconds(1) : DeleteTracker.ConfirmTimeout);
@@ -461,8 +486,10 @@ public class EventLogCollectorService : BackgroundService
         if (ev.Id == 4663 && (ParseMask(data.GetValueOrDefault("AccessMask", "0x0")) & DeleteRight) != 0)
             _deleteTracker.Release(data.GetValueOrDefault("ProcessId", ""), data.GetValueOrDefault("HandleId", ""));
 
-        // 4656 with the failure keyword: a refused access (the XPath only lets those through)
-        if (ev.Id == 4656 && (!ev.Failure || !_rules.Settings.RecordDenied || !IsAccessRefused(data)))
+        // 4656 with the failure keyword: a refused access. A successful one is an open, used only to tell who
+        // created or truncated a file without writing to it (when opens are audited: RecordingSettings.AuditOpens)
+        var open = ev.Id == 4656 && !ev.Failure;
+        if (open ? !_rules.Settings.AuditOpens : ev.Id == 4656 && (!_rules.Settings.RecordDenied || !IsAccessRefused(data)))
             return null;
 
         var objectType = data.GetValueOrDefault("ObjectType", "");
@@ -490,21 +517,36 @@ public class EventLogCollectorService : BackgroundService
             return null;
         _recentFolders.Add(Path.GetDirectoryName(filePath));
 
+        // A write of an account or process that is not recorded still explains a new or truncated file
+        // (UsnCorrelator records the ones nothing explains)
+        var eventTime = ev.TimeCreated?.ToUniversalTime() ?? DateTime.UtcNow;
+        var writes = (ParseMask(data.GetValueOrDefault("AccessMask", "0x0")) & WriteRights) != 0;
+        AccessRecord? Skip()
+        {
+            if (writes && ev.Id == 4663) _usnCorrelator.Claim(filePath, eventTime);
+            else if (writes && open) _usnCorrelator.AddOpen(filePath, eventTime, null);
+            return null;
+        }
+
         var userName = data.GetValueOrDefault("SubjectUserName", "");
         if (excludeSystem && (userName.EndsWith("$") || SystemAccounts.Contains(userName)))
-            return null;
+            return Skip();
 
         var processName = Path.GetFileName(data.GetValueOrDefault("ProcessName", ""));
         if (excludeProcessSet.Contains(processName))
-            return null;
+            return Skip();
 
         var rules = _rules;
         var domainName = data.GetValueOrDefault("SubjectDomainName", "");
         var fullUserName = string.IsNullOrEmpty(domainName) || domainName == "-"
             ? userName
             : $@"{domainName}\{userName}";
-        if (rules.IsExcludedFile(Path.GetFileName(filePath)) || rules.IsExcludedUser(fullUserName)
-            || rules.IsExcludedProcess(processName))
+        if (rules.IsExcludedUser(fullUserName) || rules.IsExcludedProcess(processName))
+            return Skip();
+        // An excluded (temporary) name is still followed through a DELETE access: renamed to a real name,
+        // it is new content under that name (see UsnCorrelator)
+        var excludedName = rules.IsExcludedFile(Path.GetFileName(filePath));
+        if (excludedName && !(ev.Id == 4663 && (ParseMask(data.GetValueOrDefault("AccessMask", "0x0")) & DeleteRight) != 0))
             return null;
 
         var eventTypes = matchedConfig != default ? matchedConfig.EventTypes : AllEventTypes;
@@ -530,6 +572,13 @@ public class EventLogCollectorService : BackgroundService
                 IsFolder = isFolder,
                 ServerName = ServerName,
             };
+        }
+
+        // A successful open for writing: who, should the file turn out to be created or truncated without a write
+        if (open)
+        {
+            if (writes && !Directory.Exists(filePath)) _usnCorrelator.AddOpen(filePath, eventTime, NewRecord(AccessTypes.Write, false));
+            return null;
         }
 
         // Event 4670: permissions changed. Files and folders are recorded (the folder's own change
@@ -576,9 +625,16 @@ public class EventLogCollectorService : BackgroundService
             return null;
 
         var record = NewRecord(accessType, isFolder);
-        if (denied) record.Denied = true;
+        if (denied)
+        {
+            record.Denied = true;
+            // A refused delete may be retried and done by the same operation (ReplaceFile does): held briefly
+            if (accessType == AccessTypes.Delete) { _deleteTracker.HoldRefused(record, DateTime.UtcNow); return null; }
+        }
         if (!deleteAccess) return record;
 
+        _deleteTracker.Succeeded(record.UserName, filePath);
+        record.ExcludedName = excludedName;
         _deleteTracker.Add(data.GetValueOrDefault("ProcessId", ""), data.GetValueOrDefault("HandleId", ""),
             record, ParseAccessType(mask & ~DeleteRight), eventTypes, DateTime.UtcNow);
         return null;
@@ -730,10 +786,43 @@ public class EventLogCollectorService : BackgroundService
         catch (Exception ex) { _logger.LogDebug(ex, "SMB session refresh failed."); }
     }
 
+    // Opens are audited (Handle Manipulation, success) while the setting is on. Turned off only when this
+    // service turned it on, so that auditing an administrator set up for other reasons is left alone.
+    private bool _openAuditOn;
+
+    private void ApplyOpenAudit(bool on)
+    {
+        if (on == _openAuditOn || _pathConfigsFixed) return;
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo("auditpol.exe",
+                $"/set /subcategory:\"{SaclManagerService.HandleManipulationSubcategory}\" /success:{(on ? "enable" : "disable")} /failure:enable")
+            {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+            });
+            proc?.WaitForExit(5000);
+            _openAuditOn = on;
+            _logger.LogInformation("Auditing of file opens (Handle Manipulation, success) turned {State}.", on ? "on" : "off");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not change the auditing of file opens.");
+        }
+    }
+
     // Settings changes from the GUI take effect within a second, without re-reading the file per event.
+    // Also called by the change journal reader (its own thread), so that a folder just added is known there
+    // before the first event from it arrives
+    private readonly object _configGate = new();
+
     private (string Path, HashSet<string> EventTypes)[] GetPathConfigs()
     {
         if (_pathConfigsFixed) return _pathConfigs;
+        lock (_configGate) return ReloadPathConfigs();
+    }
+
+    private (string Path, HashSet<string> EventTypes)[] ReloadPathConfigs()
+    {
         if (_pathConfigsCheck.IsRunning && _pathConfigsCheck.Elapsed < TimeSpan.FromSeconds(1))
             return _pathConfigs;
         _pathConfigsCheck.Restart();
@@ -749,6 +838,7 @@ public class EventLogCollectorService : BackgroundService
                 .Select(c => (c.Path, new HashSet<string>(c.EventTypes, StringComparer.OrdinalIgnoreCase)))
                 .ToArray();
             _rules = new RecordingRules(RecordingSettings.Load());
+            ApplyOpenAudit(_rules.Settings.AuditOpens);
             _usnRoots = _pathConfigs.Select(c => c.Path).ToArray();
             _usnEnabled = UsnCorrelationEnabled();
         }
@@ -769,6 +859,9 @@ public class EventLogCollectorService : BackgroundService
     }
 
     // Tests: fixed monitored paths and rules instead of settings.json
+    // For tests: what the delete tracker gives out now (force: everything still held)
+    internal List<AccessRecord> ExpireForTest(bool force) => _deleteTracker.Expire(DateTime.MinValue, DateTime.UtcNow, force);
+
     internal void UseConfigForTest((string Path, HashSet<string> EventTypes)[] paths, RecordingRules rules)
     {
         _pathConfigs = paths;
@@ -813,6 +906,8 @@ public class EventLogCollectorService : BackgroundService
     }
 
     internal const long DeleteRight = 0x10000L;
+    // WriteData, AppendData, GENERIC_ALL, GENERIC_WRITE
+    internal const long WriteRights = 0x2L | 0x4L | 0x10000000L | 0x40000000L;
 
     // Types used when no monitored path is configured (all folders are recorded)
     private static readonly IReadOnlySet<string> AllEventTypes =

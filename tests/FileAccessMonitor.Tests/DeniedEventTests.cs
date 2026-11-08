@@ -83,7 +83,9 @@ public class DeniedEventTests
     [InlineData("0x10080", "Delete")]
     public void Failed_open_for_write_or_delete(string mask, string type)
     {
-        var r = Process(Service(), Event(4656, true, mask));
+        var s = Service();
+        // A refused delete is held briefly (it may be retried successfully), see the tests below
+        var r = Process(s, Event(4656, true, mask)) ?? s.ExpireForTest(force: true).SingleOrDefault();
         Assert.Equal(type, r?.AccessType);
         Assert.True(r?.Denied);
     }
@@ -153,11 +155,34 @@ public class DeniedEventTests
         Assert.Null(Process(Service(), Event(4656, true, "0x120089", user: "SYSTEM")));
 
     [Fact]
-    public void Denied_delete_is_recorded_at_once_without_the_delete_tracker()
+    public void Denied_delete_is_recorded_when_no_successful_retry_follows()
     {
-        var r = Process(Service(), Event(4656, true, "0x10000"));
-        Assert.Equal("Delete", r?.AccessType);
-        Assert.True(r?.Denied);
+        var s = Service();
+        Assert.Null(Process(s, Event(4656, true, "0x10000")));
+        Assert.Empty(s.ExpireForTest(force: false));           // held for the confirm timeout
+        var r = Assert.Single(s.ExpireForTest(force: true));
+        Assert.Equal("Delete", r.AccessType);
+        Assert.True(r.Denied);
+    }
+
+    // ReplaceFile (how File.Replace and many editors save) is refused DELETE access once, then gets it
+    [Fact]
+    public void Denied_delete_retried_successfully_by_the_same_user_is_dropped()
+    {
+        var s = Service();
+        Assert.Null(Process(s, Event(4656, true, "0x10000")));
+        Assert.Null(Process(s, Event(4663, false, "0x10000")));   // the successful DELETE access (pending in the tracker)
+        Assert.DoesNotContain(s.ExpireForTest(force: true), r => r.Denied);
+    }
+
+    [Fact]
+    public void Denied_delete_is_kept_when_another_user_or_file_succeeds()
+    {
+        var s = Service();
+        Process(s, Event(4656, true, "0x10000"));
+        Process(s, Event(4663, false, "0x10000", user: "bob"));
+        Process(s, Event(4663, false, "0x10000", path: @"C:\data\b.txt"));
+        Assert.Single(s.ExpireForTest(force: true), r => r.Denied);
     }
 
     private static AccessRecord Denied(string user, string path, string type, double seconds) => new()

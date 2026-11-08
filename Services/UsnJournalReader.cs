@@ -18,7 +18,9 @@ public readonly record struct UsnRecord(
 
 public static class UsnReasons
 {
+    public const uint DataTruncation = 0x4;
     public const uint FileCreate = 0x100;
+    public const uint Close = 0x80000000;
     public const uint RenameOldName = 0x1000;
     public const uint RenameNewName = 0x2000;
     public const uint DirectoryAttribute = 0x10;
@@ -154,6 +156,7 @@ public class UsnJournalReader
         public readonly Dictionary<UsnFileRef, string> ParentPaths = new();
         public readonly Dictionary<UsnFileRef, (string Path, DateTime Time)> OldNames = new();
         public readonly HashSet<UsnFileRef> Created = new();
+        public readonly HashSet<UsnFileRef> Truncated = new();
         public readonly Queue<(DateTime Time, long Usn)> History = new();
     }
 
@@ -179,6 +182,10 @@ public class UsnJournalReader
         _positionFile = positionFile;
         _saved = LoadPositions(positionFile);
     }
+
+    // Facts outside the monitored folders cannot match a record (and a create or truncation there must not
+    // be recorded on its own), so they are not kept
+    private bool Monitored(string path) => _roots().Any(r => EventLogCollectorService.IsUnderPath(path, r));
 
     // True if creates and renames below this path are reported by a working journal
     public bool Covers(string path)
@@ -216,13 +223,16 @@ public class UsnJournalReader
         var now = DateTime.UtcNow;
         lock (_gate)
         {
-            foreach (var letter in VolumesToWatch())
+            var watched = VolumesToWatch().ToList();
+            foreach (var letter in watched)
             {
                 if (!_volumes.TryGetValue(letter, out var volume)) _volumes[letter] = volume = new Volume(letter);
                 if (!volume.Available && now - volume.UnavailableSinceUtc >= RetryUnavailableAfter) Open(volume, now);
                 if (volume.Available) ReadVolume(volume, now);
             }
-            var caughtUp = _volumes.Values.Where(v => v.Available).Select(v => v.CaughtUpUtc).DefaultIfEmpty(DateTime.MinValue).Min();
+            // Only the volumes read now: one no longer watched (its folders were removed) stays where it stopped
+            var caughtUp = watched.Select(l => _volumes[l]).Where(v => v.Available).Select(v => v.CaughtUpUtc)
+                .DefaultIfEmpty(DateTime.MinValue).Min();
             _correlator.CaughtUpUtc = caughtUp;
         }
     }
@@ -311,7 +321,8 @@ public class UsnJournalReader
         {
             // READ_USN_JOURNAL_DATA_V1
             BinaryPrimitives.WriteInt64LittleEndian(input, v.NextUsn);
-            BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(8), UsnReasons.FileCreate | UsnReasons.RenameOldName | UsnReasons.RenameNewName);
+            BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(8),
+                UsnReasons.FileCreate | UsnReasons.RenameOldName | UsnReasons.RenameNewName | UsnReasons.DataTruncation);
             BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(12), 0); // also records of files still open
             BinaryPrimitives.WriteUInt64LittleEndian(input.AsSpan(16), 0); // timeout: do not wait
             BinaryPrimitives.WriteUInt64LittleEndian(input.AsSpan(24), 0); // bytes to wait for
@@ -379,8 +390,17 @@ public class UsnJournalReader
         if ((r.Reason & UsnReasons.FileCreate) != 0 && !r.IsDirectory && v.Created.Add(r.FileRef))
         {
             if (v.Created.Count > MaxTracked) { v.Created.Clear(); v.Created.Add(r.FileRef); }
-            if (ResolvePath(v, r) is { } created) _correlator.AddCreate(created, r.TimeUtc);
+            if (ResolvePath(v, r) is { } created && Monitored(created)) _correlator.AddCreate(created, r.TimeUtc);
         }
+
+        // Reasons add up until the file is closed: one truncation per open (a new file has none)
+        if ((r.Reason & UsnReasons.DataTruncation) != 0 && (r.Reason & UsnReasons.FileCreate) == 0 && !r.IsDirectory
+            && v.Truncated.Add(r.FileRef))
+        {
+            if (v.Truncated.Count > MaxTracked) { v.Truncated.Clear(); v.Truncated.Add(r.FileRef); }
+            if (ResolvePath(v, r) is { } truncated && Monitored(truncated)) _correlator.AddTruncate(truncated, r.TimeUtc);
+        }
+        if ((r.Reason & UsnReasons.Close) != 0) v.Truncated.Remove(r.FileRef);
 
         if ((r.Reason & UsnReasons.RenameOldName) != 0)
         {

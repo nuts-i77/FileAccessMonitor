@@ -22,6 +22,9 @@ public class RecordingSettings
     public int MergeReadMinutes { get; set; } = DefaultMergeReadMinutes;
     // Record accesses that were refused (access denied)
     public bool RecordDenied { get; set; } = true;
+    // Windows: audit every open (Handle Manipulation, success; about twice the Security log events) to tell
+    // who created an empty file or emptied one; without it such records have the user "(unknown)"
+    public bool AuditOpens { get; set; }
     // Settings this class does not know (e.g. read by the Windows collector from the same node):
     // kept when the GUI saves the rules
     [JsonExtensionData] public Dictionary<string, System.Text.Json.JsonElement>? Other { get; set; }
@@ -106,6 +109,28 @@ public class ReadMerger
     }
 }
 
+// Records one write per file and user within a couple of seconds: saving a file often opens it for
+// writing more than once (or creates it and writes it), which is one change for the trail. Create and
+// Write count as the same; the first one is kept.
+public class WriteMerger
+{
+    public static readonly TimeSpan Window = TimeSpan.FromSeconds(2);
+    private readonly Dictionary<(string User, string Path), DateTime> _last = new();
+    private DateTime _newest = DateTime.MinValue;
+
+    public bool ShouldRecord(AccessRecord record)
+    {
+        if (record.Denied || record.IsFolder || record.AccessType is not (AccessTypes.Write or AccessTypes.Create)) return true;
+        var key = (record.UserName.ToUpperInvariant(), record.FilePath.ToUpperInvariant());
+        var merged = _last.TryGetValue(key, out var last) && (record.AccessTime - last).Duration() < Window;
+        if (!merged) _last[key] = record.AccessTime;
+        if (record.AccessTime > _newest) _newest = record.AccessTime;
+        if (_last.Count > 50_000)
+            foreach (var k in _last.Where(kv => _newest - kv.Value >= Window).Select(kv => kv.Key).ToList()) _last.Remove(k);
+        return !merged;
+    }
+}
+
 // Folders seen recently, as a folder or as the parent of a file. A folder can already be gone when
 // its deletion is processed; its contents are deleted before it, so it is known from them.
 public class RecentFolders
@@ -133,11 +158,21 @@ public class DeleteTracker
     private sealed record Pending(AccessRecord Record, string? OtherType, IReadOnlySet<string> EventTypes, DateTime AddedUtc);
 
     private readonly Dictionary<(string ProcessId, string HandleId), Pending> _pending = new();
+    // Refused deletes, held for ConfirmTimeout: ReplaceFile (how many editors save) asks for DELETE access,
+    // is refused, and then gets it on a second try. A refusal followed by the same user's successful DELETE
+    // access to the same path was such a retry, not a refused attempt.
+    private readonly List<(AccessRecord Record, DateTime AddedUtc)> _refused = [];
     private readonly Func<string, bool> _pathExists;
 
     public DeleteTracker(Func<string, bool> pathExists) => _pathExists = pathExists;
 
-    public bool HasPending => _pending.Count > 0;
+    public bool HasPending => _pending.Count > 0 || _refused.Count > 0;
+
+    public void HoldRefused(AccessRecord record, DateTime nowUtc) => _refused.Add((record, nowUtc));
+
+    // A successful DELETE access: a refusal of the same user for the same path just before was a retry
+    public void Succeeded(string user, string path) =>
+        _refused.RemoveAll(r => r.Record.UserName == user && string.Equals(r.Record.FilePath, path, StringComparison.OrdinalIgnoreCase));
 
     // otherType: what the same access would be without the DELETE right (Read/Write/null).
     // eventTypes: the types monitored for the record's folder.
@@ -165,7 +200,7 @@ public class DeleteTracker
     {
         if (!_pending.Remove((processId, handleId), out var p)) return null;
         p.Record.AccessType = "Delete";
-        return p.EventTypes.Contains("Delete") ? p.Record : null;
+        return p.EventTypes.Contains("Delete") && !p.Record.ExcludedName ? p.Record : null;
     }
 
     // Resolves accesses that got no 4660 in time: by the time of the newest event seen (catching up
@@ -187,6 +222,12 @@ public class DeleteTracker
         foreach (var p in Resolved)
             if (Resolve(p) is { } r) records.Add(r);
         Resolved.Clear();
+        foreach (var r in _refused.Where(r => force
+                     || newestEventUtc - r.Record.AccessTime >= ConfirmTimeout || nowUtc - r.AddedUtc >= ConfirmTimeout).ToList())
+        {
+            _refused.Remove(r);
+            records.Add(r.Record);
+        }
         return records.OrderBy(r => r.AccessTime).ToList();
     }
 
@@ -195,15 +236,18 @@ public class DeleteTracker
     // Not deleted: if nothing is at the old path any more, the file was renamed or moved away.
     // If something is (Office saves by renaming the old file away and a new one into its place),
     // the access counts as whatever it was apart from DELETE, or as a write.
+    // A temporary (excluded) name counts only when it was renamed: as a write of its new name, which the
+    // change journal tells (UsnCorrelator), so it follows the Write setting.
     private AccessRecord? Resolve(Pending p)
     {
         string type;
         if (!_pathExists(p.Record.FilePath))
         {
             type = "Rename";
-            if (!p.EventTypes.Contains("Delete")) return null; // renames follow the Delete setting
+            // renames follow the Delete setting (a temporary name's, the Write setting)
+            if (!p.EventTypes.Contains(p.Record.ExcludedName ? "Write" : "Delete")) return null;
         }
-        else if (p.Record.IsFolder)
+        else if (p.Record.IsFolder || p.Record.ExcludedName)
         {
             return null; // folder still there: neither deleted nor renamed
         }

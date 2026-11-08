@@ -19,10 +19,13 @@ public class SaclManagerService
     // when this is on too, as a test on Windows 11 showed; its successes would only add noise.
     // Authorization Policy Change: event 4670 (permissions changed) is documented under this
     // subcategory, although File System auditing is said to log it for files too, so both are on.
+    // (Its successes are turned on by the collector while RecordingSettings.AuditOpens is set.)
+    internal const string HandleManipulationSubcategory = "{0CCE9223-69AE-11D9-BED3-505054503030}";
+
     private static readonly (string Subcategory, bool Success)[] AuditSubcategories =
     [
         ("{0CCE921D-69AE-11D9-BED3-505054503030}", true),
-        ("{0CCE9223-69AE-11D9-BED3-505054503030}", false),
+        (HandleManipulationSubcategory, false),
         ("{0CCE9231-69AE-11D9-BED3-505054503030}", true),
     ];
 

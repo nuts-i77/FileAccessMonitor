@@ -594,7 +594,7 @@
                   <input type="number" id="recMergeReadMinutes" class="form-control" min="0" max="1440">
                   <span class="input-group-text" data-i18n="recording.minutes">分</span>
                 </div>
-                <div class="form-text" data-i18n="recording.mergeHint">同じユーザーが同じファイルを、前回の読み取りから指定時間内に再度読み取った場合は記録しません（0 = すべて記録）。書き込み・削除・名前変更は常に記録します。</div>
+                <div class="form-text" data-i18n="recording.mergeHint">同じユーザーが同じファイルを、前回の読み取りから指定時間内に再度読み取った場合は記録しません（0 = すべて記録）。同じユーザーによる同じファイルへの書き込みは、2 秒以内なら 1 件にまとめます。削除・名前変更は常に記録します。</div>
               </div>
               <div class="col-12 col-md-6">
                 <div class="form-check form-switch">
@@ -602,6 +602,13 @@
                   <label class="form-check-label small" for="recRecordDenied" data-i18n="settings.recordDenied">拒否されたアクセスも記録する</label>
                 </div>
                 <div class="form-text" id="recRecordDeniedHelp" data-i18n="settings.recordDeniedHelp">権限不足で拒否された読み取り・書き込み・削除の試行も記録します。Windows では、アップグレード後に一度［SACL 再適用］を実行する必要があります。Linux では、［SACL 再適用］の実行後に有効になります。</div>
+              </div>
+              <div class="col-12 col-md-6">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="recAuditOpens">
+                  <label class="form-check-label small" for="recAuditOpens" data-i18n="settings.auditOpens">ファイルを開く操作も監査する（Windows）</label>
+                </div>
+                <div class="form-text" data-i18n="settings.auditOpensHelp">空のファイルの作成と、上書きで空にした操作を、誰が行ったかまで記録します。オフでは、これらはユーザー「(unknown)」で記録します。オンにすると Security ログの量がおよそ 2 倍になるため、ログのサイズを大きくしてください。Linux には関係ありません。</div>
               </div>
               <div class="col-12 d-flex gap-2">
                 <button class="btn btn-primary btn-sm" onclick="saveRecordingSettings()">

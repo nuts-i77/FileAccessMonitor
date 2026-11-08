@@ -2390,6 +2390,7 @@ async function loadRecordingSettings() {
     setLines('recExcludeProcesses', s.excludeProcesses);
     document.getElementById('recMergeReadMinutes').value = s.mergeReadMinutes;
     document.getElementById('recRecordDenied').checked = s.recordDenied !== false;
+    document.getElementById('recAuditOpens').checked = !!s.auditOpens;
   } catch (e) {
     showRecordingAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
   }
@@ -2405,7 +2406,8 @@ async function saveRecordingSettings() {
         excludeUsers: linesOf('recExcludeUsers'),
         excludeProcesses: linesOf('recExcludeProcesses'),
         mergeReadMinutes: parseInt(document.getElementById('recMergeReadMinutes').value, 10) || 0,
-        recordDenied: document.getElementById('recRecordDenied').checked
+        recordDenied: document.getElementById('recRecordDenied').checked,
+        auditOpens: document.getElementById('recAuditOpens').checked
       })
     });
     showRecordingAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`);
