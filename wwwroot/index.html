@@ -606,9 +606,9 @@
               <div class="col-12 col-md-6">
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="recAuditOpens">
-                  <label class="form-check-label small" for="recAuditOpens" data-i18n="settings.auditOpens">ファイルを開く操作も監査する（Windows）</label>
+                  <label class="form-check-label small" for="recAuditOpens" data-i18n="settings.auditOpens">空のファイルの作成者も記録する（Windows）</label>
                 </div>
-                <div class="form-text" data-i18n="settings.auditOpensHelp">空のファイルの作成と、上書きで空にした操作を、誰が行ったかまで記録します。オフでは、これらはユーザー「(unknown)」で記録します。オンにすると Security ログの量がおよそ 2 倍になるため、ログのサイズを大きくしてください。Linux には関係ありません。</div>
+                <div class="form-text" data-i18n="settings.auditOpensHelp">エクスプローラーの［新規作成］など、Security ログに書き込みが残らない空のファイルの作成と、上書きで空にした操作について、誰が行ったかまで記録します。そのために、ファイルを開く操作も監査します（ハンドルの操作の成功の監査）。開く操作そのものは記録に残りません。オフでは、これらはユーザー「(unknown)」で記録します。オンにすると Security ログの量がおよそ 2 倍になるため、ログのサイズを大きくしてください。Linux には関係ありません。</div>
               </div>
               <div class="col-12 d-flex gap-2">
                 <button class="btn btn-primary btn-sm" onclick="saveRecordingSettings()">
