@@ -10,7 +10,7 @@ public static class Messages
     public static readonly IReadOnlyDictionary<string, string> En = new Dictionary<string, string>
     {
         ["auth.invalid"] = "Incorrect user name or password.",
-        ["auth.lockedOut"] = "This account is temporarily locked after repeated failed sign-ins. Try again later.",
+        ["auth.lockedOut"] = "Sign-in is paused after repeated failed attempts. Try again in about 15 minutes.",
         ["password.changed"] = "Password changed.",
         ["password.required"] = "Enter a password.",
         ["password.bothRequired"] = "Enter the current and new passwords.",
@@ -54,6 +54,9 @@ public static class Messages
         ["agents.portOff"] = "The agent port is turned off (\"Agents\": { \"Enabled\": false } in settings.json). Remove that setting and restart the service to register agents.",
         ["agents.badUrl"] = "Enter an https:// address.",
         ["agents.notFound"] = "Agent not found.",
+        ["agents.nameIsServer"] = "\"{0}\" is the name of the monitoring server itself. An agent cannot be registered under it.",
+        ["agents.nameTaken"] = "An agent named \"{0}\" is already registered. To register it again (for example after a reinstall), issue a code from that agent's row under Agents on the monitoring server.",
+        ["agents.codeForOther"] = "This registration code is only for registering \"{0}\" again. It cannot be used on another server.",
         ["agents.isDisabled"] = "The agent \"{0}\" is disabled. Enable it first.",
         ["agents.noAnswer"] = "The agent \"{0}\" did not respond. Check that it is online (Settings > Agents).",
         ["agents.jobFailed"] = "The agent \"{0}\" reported an error: {1}",
@@ -129,7 +132,7 @@ public static class Messages
     public static readonly IReadOnlyDictionary<string, string> Ja = new Dictionary<string, string>
     {
         ["auth.invalid"] = "ユーザー名またはパスワードが正しくありません。",
-        ["auth.lockedOut"] = "ログインの失敗が続いたため、アカウントが一時的にロックされています。しばらく待ってから再度実行してください。",
+        ["auth.lockedOut"] = "ログインの失敗が続いたため、しばらくログインできません。15 分ほど待ってから再度実行してください。",
         ["password.changed"] = "パスワードを変更しました。",
         ["password.required"] = "パスワードを入力してください。",
         ["password.bothRequired"] = "現在のパスワードと新しいパスワードを入力してください。",
@@ -173,6 +176,9 @@ public static class Messages
         ["agents.portOff"] = "エージェント用ポートが無効化されています（settings.json の \"Agents\": { \"Enabled\": false }）。エージェントを登録するには、この設定を削除してサービスを再起動してください。",
         ["agents.badUrl"] = "https:// で始まるアドレスを入力してください。",
         ["agents.notFound"] = "エージェントが見つかりません。",
+        ["agents.nameIsServer"] = "「{0}」は監視サーバー自身の名前のため、エージェントとして登録できません。",
+        ["agents.nameTaken"] = "「{0}」という名前のエージェントはすでに登録されています。再インストールなどで登録し直す場合は、監視サーバーの［エージェント］で、そのエージェントの行から登録コードを発行してください。",
+        ["agents.codeForOther"] = "この登録コードは「{0}」の再登録専用です。ほかのサーバーには使えません。",
         ["agents.isDisabled"] = "エージェント「{0}」は無効です。先に有効にしてください。",
         ["agents.noAnswer"] = "エージェント「{0}」から応答がありません。接続状態を確認してください（［設定］>［エージェント］）。",
         ["agents.jobFailed"] = "エージェント「{0}」でエラーが発生しました: {1}",

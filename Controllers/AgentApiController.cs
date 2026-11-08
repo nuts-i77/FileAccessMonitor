@@ -55,10 +55,17 @@ public class AgentApiController : ControllerBase
             await _audit.WriteAsync(HttpContext, "agent.enrollFailed", $"name={name}", "-");
             return Unauthorized(new { error = Messages.Get("agents.badCode") });
         }
+        // Registering a server again (reinstall) replaces its key; its records stay under the same name.
+        // Only a code issued for that agent can do it, so a code for a new server cannot take over another
+        // one, and nothing can register under this server's own name. A refused code stays usable.
+        var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Name.ToUpper() == name.ToUpper());
+        if (EnrollRefusal(name, agent, enrollment) is { } refusal)
+        {
+            await _audit.WriteAsync(HttpContext, "agent.enrollFailed", $"name={name} reason={refusal.Reason}", "-");
+            return Conflict(new { error = refusal.Message });
+        }
         _db.AgentEnrollments.Remove(enrollment);
 
-        // Registering a server again (reinstall) replaces its key; its records stay under the same name
-        var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Name.ToUpper() == name.ToUpper());
         if (agent == null)
             _db.Agents.Add(agent = new Agent { Id = Guid.NewGuid().ToString("N"), Name = name, CreatedAt = DateTime.UtcNow });
         var secret = AgentSecrets.NewSecret();
@@ -225,6 +232,20 @@ public class AgentApiController : ControllerBase
     internal static Func<JsonObject> LocalSettings { get; set; } = SettingsStore.Load;
 
     private static bool IsLocalCollector(Agent agent) => agent.Id == LocalCollector.AgentId;
+
+    private (string Reason, string Message)? EnrollRefusal(string name, Agent? existing, AgentEnrollment code)
+    {
+        if (ServerConfigService.IsLocal(name))
+            return ("serverName", Messages.Get("agents.nameIsServer", name));
+        if (code.AgentId != null && existing?.Id != code.AgentId)
+        {
+            var target = _db.Agents.Find(code.AgentId);
+            return ("codeForOther", target == null ? Messages.Get("agents.badCode") : Messages.Get("agents.codeForOther", target.Name));
+        }
+        if (existing != null && code.AgentId == null)
+            return ("nameTaken", Messages.Get("agents.nameTaken", existing.Name));
+        return null;
+    }
 
     // The position the server's own collector saved in the database before it became a separate process
     private const string LocalPositionKey = "LastRecordId";

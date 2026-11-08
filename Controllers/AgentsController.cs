@@ -48,29 +48,33 @@ public class AgentsController : ControllerBase
         });
     }
 
-    // POST /api/agents/enrollment  — a one-time registration code, valid for 24 hours
+    // POST /api/agents/enrollment  — a one-time registration code, valid for 24 hours, for a server not
+    // registered yet; with ?agentId= only for registering that agent again (after a reinstall)
     [HttpPost("enrollment")]
-    public async Task<IActionResult> CreateEnrollment()
+    public async Task<IActionResult> CreateEnrollment([FromQuery] string? agentId = null)
     {
         if (!AgentEndpoint.Active)
             return Conflict(new { error = Messages.Get("agents.portOff") });
         if (AgentEndpoint.Certificate is not { } cert)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = Messages.Get("agents.noEndpoint") });
+        var target = agentId == null ? null : await _db.Agents.FindAsync(agentId);
+        if (agentId != null && target == null) return NotFound(new { error = Messages.Get("agents.notFound") });
 
         await _db.AgentEnrollments.Where(e => e.ExpiresAt < DateTime.UtcNow).ExecuteDeleteAsync();
         var code = AgentSecrets.NewSecret();
         var expiresAt = DateTime.UtcNow.Add(CodeLifetime);
-        _db.AgentEnrollments.Add(new AgentEnrollment { CodeHash = AgentSecrets.Hash(code), ExpiresAt = expiresAt });
+        _db.AgentEnrollments.Add(new AgentEnrollment { CodeHash = AgentSecrets.Hash(code), ExpiresAt = expiresAt, AgentId = target?.Id });
         await _db.SaveChangesAsync();
 
         // The host name the Admin reached the GUI with is usually reachable from file servers too;
         // it can be edited in the GUI before copying
         var host = Request.Host.Host;
         var url = $"https://{(host.Contains(':') ? $"[{host}]" : host)}:{AgentEndpoint.Port(_config)}";
-        await _audit.WriteAsync(HttpContext, "agent.code", $"expiresAt={expiresAt:O}");
+        await _audit.WriteAsync(HttpContext, "agent.code",
+            target == null ? $"expiresAt={expiresAt:O}" : $"for={target.Name} expiresAt={expiresAt:O}");
         return Ok(new
         {
-            url, fingerprint = AgentSecrets.Fingerprint(cert), code, expiresAt,
+            url, fingerprint = AgentSecrets.Fingerprint(cert), code, expiresAt, forAgent = target?.Name,
             connection = new AgentConnection(url, AgentSecrets.Fingerprint(cert), code).ToString(),
         });
     }

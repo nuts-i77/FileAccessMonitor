@@ -52,4 +52,17 @@ public class AgentEnrollment
     public string CodeHash { get; set; } = "";
 
     public DateTime ExpiresAt { get; set; }
+
+    // Set: the code only registers this agent again (after a reinstall); null: only a server not registered yet
+    [MaxLength(32)]
+    public string? AgentId { get; set; }
+}
+
+// A sign-in token ended before its time (signed out); kept until the token would have expired
+public class RevokedToken
+{
+    [Key, MaxLength(64)]
+    public string Jti { get; set; } = "";
+
+    public DateTime ExpiresAt { get; set; }
 }

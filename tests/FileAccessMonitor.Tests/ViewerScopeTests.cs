@@ -109,7 +109,7 @@ public class ViewerScopeTests : IDisposable
             Assert.Equal(0, Json(await c.Search(new SearchFilter(), 1, 50)).GetProperty("total").GetInt32());
             Assert.Equal(0, Json(await c.Recent(1, 50)).GetProperty("total").GetInt32());
             Assert.Equal(0, Json(await c.Summary(30)).GetProperty("total").GetInt32());
-            Assert.Empty(Json(await c.Servers()).EnumerateArray());
+            Assert.Empty(Json(await c.Servers(null!)).EnumerateArray());
         }
     }
 
@@ -122,7 +122,7 @@ public class ViewerScopeTests : IDisposable
         {
             Assert.Equal(2, Json(await c.Search(new SearchFilter(), 1, 50)).GetProperty("total").GetInt32());
             Assert.Equal(2, Json(await c.Recent(1, 50)).GetProperty("total").GetInt32());
-            Assert.Single(Json(await c.Servers()).EnumerateArray());
+            Assert.Single(Json(await c.Servers(null!)).EnumerateArray());
         }
     }
 

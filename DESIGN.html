@@ -607,7 +607,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <li>管理者が登録コードを発行（24 時間有効・1 回限り。DB には SHA-256 のハッシュだけを保存）</li>
         <li>接続文字列 <code>FAM1.</code> + base64url(<code>{"u": URL, "f": 証明書の指紋, "c": コード}</code>) を作る。URL は GUI で書き換えて作り直せる</li>
         <li>エージェントが <code>enroll</code> で <code>POST /api/agent/enroll</code>。成功すると <code>エージェントID.秘密</code> のキーを受け取り、<code>agent.json</code>（SYSTEM / Administrators のみ読み取り可）に保存</li>
-        <li>同じサーバー名で登録し直すと、キーを入れ替えて通し番号をリセット（記録は同じ名前のまま続く）</li>
+        <li>登録し直せるのは、そのエージェント用に発行したコード（<code>AgentEnrollments.AgentId</code>）だけ。キーを入れ替えて通し番号をリセットする（記録は同じ名前のまま続く）。新規用のコードで既存の名前を指定したとき、監視サーバー自身の名前を指定したときは 409 で拒否し、コードは消費しない</li>
       </ol>
 
       <h3>送信（AgentSender）</h3>
@@ -863,7 +863,8 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
 
       <h3>認証 — <code>AuthController</code> / <code>MeController</code></h3>
       <div class="card">
-        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/auth/login</span><span class="endpoint-desc">JWT を返す。5 回失敗で 15 分ロック</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/auth/login</span><span class="endpoint-desc">JWT を返す。同じユーザー名・同じ接続元から 15 分に 5 回失敗すると 15 分止める（アカウントはロックしない。LoginThrottle）</span></div>
+        <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/auth/logout</span><span class="endpoint-desc">このトークンの jti を RevokedTokens に入れて無効にする（期限まで保持）</span></div>
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/auth/me</span><span class="endpoint-desc">ユーザー情報と閲覧範囲（scopePaths）</span></div>
         <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/me/change-password</span><span class="endpoint-desc">自分のパスワード変更。新しいトークンを返す</span></div>
       </div>
@@ -967,7 +968,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       <h3>appsettings.json（インストール先・基本設定）</h3>
       <pre><code>{
   "Kestrel": { "Endpoints": { "Http": { "Url": "http://0.0.0.0:8080" } } },
-  "Jwt": { "Issuer": "FileAccessMonitor", "Audience": "FileAccessMonitor", "ExpiresHours": 24 },
+  "Jwt": { "Issuer": "FileAccessMonitor", "Audience": "FileAccessMonitor", "ExpiresHours": 8 },
   "MonitoredPaths": [],
   "ExcludeSystemAccounts": true,
   "ExcludeProcessNames": ["System", "svchost.exe", "SearchIndexer.exe"]

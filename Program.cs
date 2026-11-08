@@ -176,8 +176,7 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
     options.Password.RequireUppercase = false;
     options.Password.RequireNonAlphanumeric = false;
     options.Password.RequiredLength = 8;
-    options.Lockout.MaxFailedAccessAttempts = 5;
-    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+    // Failed sign-ins are limited by LoginThrottle (per name and client address), not by locking the account
 })
 .AddEntityFrameworkStores<AccessDbContext>()
 .AddErrorDescriber<LocalizedIdentityErrorDescriber>()
@@ -221,7 +220,8 @@ builder.Services.AddAuthentication(options =>
         OnTokenValidated = async context =>
         {
             var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
-            if (!await TokenService.IsCurrentAsync(context.Principal!, userManager))
+            var db = context.HttpContext.RequestServices.GetRequiredService<AccessDbContext>();
+            if (!await TokenService.IsCurrentAsync(context.Principal!, userManager, db))
                 context.Fail("Token has been revoked.");
         }
     };
@@ -246,6 +246,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<DnsResolverService>();
 builder.Services.AddSingleton<AuditLog>();
+builder.Services.AddSingleton(new LoginThrottle());
 builder.Services.AddSingleton<AlertService>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<UserScopeService>();

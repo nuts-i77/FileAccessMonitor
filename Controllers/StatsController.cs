@@ -35,10 +35,24 @@ public class StatsController : ControllerBase
     private string? VisibleNewPath(string? newPath, string server) =>
         newPath == null || _scopes.Get(User) is not { } scope || AccessScope.Contains(scope, server, newPath) ? newPath : null;
 
-    // GET /api/stats/servers  — file servers with records the user may see
+    // GET /api/stats/servers  — file servers with records the user may see. ?filter=true: the choices of the
+    // server filter, which leaves out removed agents when an Admin turned that on (their records stay)
     [HttpGet("servers")]
-    public async Task<IActionResult> Servers() =>
-        Ok(await _scopes.Records(User).Select(r => r.ServerName).Distinct().OrderBy(s => s).ToListAsync());
+    public async Task<IActionResult> Servers([FromServices] AccessDbContext db, [FromQuery] bool filter = false)
+    {
+        var names = await _scopes.Records(User).Select(r => r.ServerName).Distinct().OrderBy(s => s).ToListAsync();
+        if (!filter || !SettingsController.HideRemovedServers()) return Ok(names);
+        var agents = await db.Agents.Select(a => a.Name).ToListAsync();
+        return Ok(WithoutRemoved(names, agents, ServerConfigService.LocalCollects ? ServerConfigService.LocalName : null));
+    }
+
+    // This server (when it collects) and the registered agents, disabled ones included
+    internal static List<string> WithoutRemoved(IEnumerable<string> names, IEnumerable<string> agents, string? local)
+    {
+        var registered = new HashSet<string>(agents, StringComparer.OrdinalIgnoreCase);
+        if (local != null) registered.Add(local);
+        return names.Where(registered.Contains).ToList();
+    }
 
     // GET /api/stats/summary?days=7
     [HttpGet("summary")]

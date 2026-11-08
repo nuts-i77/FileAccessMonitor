@@ -47,14 +47,14 @@
         </li>
         <li><hr class="dropdown-divider"></li>
         <li>
-          <a class="dropdown-item text-danger" href="#" onclick="logout(); return false;">
+          <a class="dropdown-item text-danger" href="#" onclick="signOut(); return false;">
             <i class="bi bi-box-arrow-right me-2"></i><span data-i18n="nav.logout">ログアウト</span>
           </a>
         </li>
       </ul>
     </div>
     <button class="btn btn-sm btn-outline-secondary" id="langToggleBtn" onclick="toggleLang()">EN</button>
-    <button class="btn btn-sm btn-outline-secondary d-sm-none" onclick="logout()">
+    <button class="btn btn-sm btn-outline-secondary d-sm-none" onclick="signOut()">
       <i class="bi bi-box-arrow-right"></i>
     </button>
   </div>
@@ -684,6 +684,13 @@
               </table>
             </div>
             <div id="agentsAlert" class="px-3 pt-2"></div>
+            <div class="px-3 pb-3 pt-1">
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="hideRemovedServers" onchange="saveServerFilter(this.checked)">
+                <label class="form-check-label small" for="hideRemovedServers" data-i18n="agents.hideRemoved">削除したエージェントを、画面右上のサーバーの絞り込みに表示しない</label>
+              </div>
+              <div class="form-text" data-i18n="agents.hideRemovedHint">削除したエージェントの記録は残り、「全サーバー」では引き続き表示されます。</div>
+            </div>
           </div>
         </div>
       </div>
@@ -993,6 +1000,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body small">
+        <div id="enrollFor" class="alert alert-info py-2 d-none"></div>
         <div class="mb-3">
           <label class="form-label" for="enrollUrl" data-i18n="agents.serverUrl">このサーバーのアドレス（ファイルサーバーからの接続先）</label>
           <div class="input-group input-group-sm">

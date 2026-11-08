@@ -94,7 +94,20 @@ public class SettingsController : ControllerBase
     {
         version = AppVersion, updateCheck = UpdateCheckEnabled(),
         localCollection = ServerConfigService.LocalCollects, os = AppInfo.OsName,
+        hideRemovedServers = HideRemovedServers(),
     });
+
+    // PUT /api/settings/server-filter  — leave removed agents out of the server filter (off by default)
+    [HttpPut("server-filter")]
+    public async Task<IActionResult> PutServerFilter([FromBody] ServerFilterRequest req)
+    {
+        SettingsStore.Update(root => root["HideRemovedServers"] = req.HideRemovedServers);
+        await _audit.WriteAsync(HttpContext, "app.serverFilter", $"hideRemoved={req.HideRemovedServers}");
+        return Ok(new { hideRemovedServers = req.HideRemovedServers });
+    }
+
+    internal static bool HideRemovedServers() =>
+        SettingsStore.Load()["HideRemovedServers"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
     [HttpPut("app")]
     public async Task<IActionResult> PutApp([FromBody] AppSettingsRequest req)
@@ -350,3 +363,4 @@ public record PathRequest(string Path, string[]? EventTypes = null, string? Serv
 public record EventTypesRequest(string Path, string[] EventTypes, string? Server = null);
 public record DnsRequest(string? DnsServer);
 public record AppSettingsRequest(bool UpdateCheck);
+public record ServerFilterRequest(bool HideRemovedServers);

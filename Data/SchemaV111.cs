@@ -20,6 +20,15 @@ public static class SchemaV111
             ["OutboxFull"] = @"ALTER TABLE ""Agents"" ADD COLUMN ""OutboxFull"" INTEGER NOT NULL DEFAULT 0",
             ["OutboxBytes"] = @"ALTER TABLE ""Agents"" ADD COLUMN ""OutboxBytes"" INTEGER NOT NULL DEFAULT 0",
         });
+        // 1.11.1: a registration code for registering one agent again; tokens ended by signing out
+        await AddColumnsAsync(db, "AgentEnrollments", new()
+        {
+            ["AgentId"] = @"ALTER TABLE ""AgentEnrollments"" ADD COLUMN ""AgentId"" TEXT NULL",
+        });
+        await db.Database.ExecuteSqlRawAsync(@"
+CREATE TABLE IF NOT EXISTS ""RevokedTokens"" (
+    ""Jti"" TEXT NOT NULL CONSTRAINT ""PK_RevokedTokens"" PRIMARY KEY,
+    ""ExpiresAt"" TEXT NOT NULL)");
 
         await ConvertEmptyViewerScopesAsync(db);
     }

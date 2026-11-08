@@ -1,3 +1,4 @@
+using FileAccessMonitor.Data;
 using FileAccessMonitor.Models;
 using FileAccessMonitor.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -13,12 +14,14 @@ public class AuthController : ControllerBase
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly TokenService _tokens;
     private readonly AuditLog _audit;
+    private readonly LoginThrottle _throttle;
 
-    public AuthController(UserManager<ApplicationUser> userManager, TokenService tokens, AuditLog audit)
+    public AuthController(UserManager<ApplicationUser> userManager, TokenService tokens, AuditLog audit, LoginThrottle throttle)
     {
         _userManager = userManager;
         _tokens = tokens;
         _audit = audit;
+        _throttle = throttle;
     }
 
     // POST /api/auth/login
@@ -28,28 +31,26 @@ public class AuthController : ControllerBase
         var invalid = Unauthorized(new { error = Messages.Get("auth.invalid") });
         var lockedOut = StatusCode(StatusCodes.Status429TooManyRequests,
             new { error = Messages.Get("auth.lockedOut") });
+        var name = req.Username ?? "";
+        var address = HttpContext.Connection.RemoteIpAddress;
 
-        var user = await _userManager.FindByNameAsync(req.Username);
-        if (user == null)
+        // Too many failures from this address (or for this name): the password is not even checked
+        if (_throttle.IsBlocked(name, address))
         {
-            await _audit.WriteAsync(HttpContext, "auth.loginFailed", "reason=unknownUser", req.Username);
-            return invalid;
-        }
-        if (await _userManager.IsLockedOutAsync(user))
-        {
-            await _audit.WriteAsync(HttpContext, "auth.loginFailed", "reason=lockedOut", user.UserName);
+            await _audit.WriteAsync(HttpContext, "auth.loginFailed", "reason=lockedOut", name);
             return lockedOut;
         }
 
-        if (!await _userManager.CheckPasswordAsync(user, req.Password))
+        var user = await _userManager.FindByNameAsync(name);
+        if (user == null || !await _userManager.CheckPasswordAsync(user, req.Password))
         {
-            await _userManager.AccessFailedAsync(user);
-            var nowLocked = await _userManager.IsLockedOutAsync(user);
+            _throttle.Failed(name, address);
+            var nowLocked = _throttle.IsBlocked(name, address);
             await _audit.WriteAsync(HttpContext, nowLocked ? "auth.lockedOut" : "auth.loginFailed",
-                "reason=badPassword", user.UserName);
+                user == null ? "reason=unknownUser" : "reason=badPassword", user?.UserName ?? name);
             return nowLocked ? lockedOut : invalid;
         }
-        await _userManager.ResetAccessFailedCountAsync(user);
+        _throttle.Succeeded(name, address);
         await _audit.WriteAsync(HttpContext, "auth.login", null, user.UserName);
 
         return Ok(new
@@ -59,6 +60,16 @@ public class AuthController : ControllerBase
             displayName = user.DisplayName,
             roles = await _userManager.GetRolesAsync(user)
         });
+    }
+
+    // POST /api/auth/logout  — ends this sign-in's token on the server (other sign-ins of the user stay)
+    [HttpPost("logout")]
+    [Authorize]
+    public async Task<IActionResult> Logout([FromServices] AccessDbContext db)
+    {
+        await TokenService.RevokeAsync(User, db);
+        await _audit.WriteAsync(HttpContext, "auth.logout");
+        return Ok();
     }
 
     // GET /api/auth/me

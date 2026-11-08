@@ -47,6 +47,14 @@ function isTokenValid() {
   } catch { return false; }
 }
 
+// The sign-out button: the server ends this token too, so a copy of it cannot be used until it expires
+async function signOut() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders(), keepalive: true });
+  } catch { /* signed out here anyway; the token still ends at its expiry */ }
+  logout();
+}
+
 function logout() {
   localStorage.removeItem('jwt_token');
   localStorage.removeItem('jwt_user');
@@ -1009,7 +1017,20 @@ async function loadUnusedFolders() {
 let lastUnused = null;
 let unusedView = 'folders';
 
-async function searchUnused(folderOverride) {
+// A subfolder opened from the list is a browser history entry, so Back shows the folder above again.
+// Results seen are kept for that (a scan can take long); the Search button always scans again.
+const unusedSeen = new Map();
+
+window.addEventListener('popstate', e => {
+  const s = e.state?.unused;
+  if (!s || currentTab !== 'unused') return;
+  document.getElementById('unusedServer').value = s.server;
+  document.getElementById('unusedDays').value = s.days;
+  document.getElementById('unusedCriterion').value = s.criterion;
+  searchUnused(s.folder, true);
+});
+
+async function searchUnused(folderOverride, fromHistory = false) {
   const input = document.getElementById('unusedFolder');
   if (folderOverride) input.value = folderOverride;
   const folder = input.value.trim();
@@ -1019,12 +1040,26 @@ async function searchUnused(folderOverride) {
   const btn = document.getElementById('unusedSearchBtn');
   if (!folder) { el.innerHTML = `<div class="alert alert-warning py-2 small">${t('msg.pathRequired')}</div>`; return; }
 
+  const server = document.getElementById('unusedServer').value;
+  const query = { server, folder, days, criterion };
+  const key = JSON.stringify(query);
+  if (!fromHistory) {
+    if (folderOverride) history.pushState({ unused: query }, '', location.href);
+    else history.replaceState({ unused: query }, '', location.href);
+  } else if (unusedSeen.has(key)) {
+    lastUnused = unusedSeen.get(key);
+    renderUnused();
+    return;
+  }
+
   btn.disabled = true;
   el.innerHTML = `<div class="text-center py-4"><div class="spinner-border"></div><div class="small text-muted mt-2">${t('unused.scanning')}</div></div>`;
   try {
-    const server = document.getElementById('unusedServer').value;
     lastUnused = await api(`/api/unused-files?folder=${encodeURIComponent(folder)}&days=${days}&criterion=${criterion}` +
       (server ? `&server=${encodeURIComponent(server)}` : ''));
+    unusedSeen.delete(key);
+    unusedSeen.set(key, lastUnused);
+    if (unusedSeen.size > 20) unusedSeen.delete(unusedSeen.keys().next().value);
     renderUnused();
   } catch (e) {
     el.innerHTML = `<div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</div>`;
@@ -1099,7 +1134,7 @@ function unusedFoldersTable(d) {
     const pct = f.size > 0 ? Math.round(f.unusedSize / f.size * 100) : 0;
     const name = f.isSelf
       ? `<i class="bi bi-files text-muted me-1"></i>${t('unused.directFiles')}`
-      : `<i class="bi bi-folder-fill text-warning me-1"></i><a href="#" data-path="${esc(f.path)}" onclick="searchUnused(this.dataset.path); return false;">${esc(f.path.slice(f.path.lastIndexOf('\\') + 1))}</a>`;
+      : `<i class="bi bi-folder-fill text-warning me-1"></i><a href="#" data-path="${esc(f.path)}" onclick="searchUnused(this.dataset.path); return false;">${esc(f.path.slice(Math.max(f.path.lastIndexOf('\\'), f.path.lastIndexOf('/')) + 1))}</a>`;
     return `<tr>
       <td title="${esc(f.path)}">${name}</td>
       <td class="text-end">${fmtNum(f.files)}</td>
@@ -1158,6 +1193,7 @@ async function loadAppInfo() {
   document.getElementById('appVersion').textContent =
     appInfo.version === '0.0.0' ? t('app.devBuild') : `v${appInfo.version}`;
   document.getElementById('appUpdateCheck').checked = appInfo.updateCheck;
+  document.getElementById('hideRemovedServers').checked = !!appInfo.hideRemovedServers;
   document.getElementById('appLocalCollection').textContent =
     `${t(appInfo.localCollection ? 'app.localOn' : 'app.localOff')} — ${appInfo.os || ''}`;
   showLatest(readStore(UPDATE_CACHE_KEY));
@@ -1311,18 +1347,39 @@ async function saveUpdateCheck(enabled) {
   }
 }
 
+async function saveServerFilter(hide) {
+  try {
+    await api('/api/settings/server-filter', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hideRemovedServers: hide })
+    });
+    const before = selectedServer();
+    await loadServers();
+    if (selectedServer() !== before) loadAll();   // the chosen server was removed from the choices
+    loadAuditLog(1);
+  } catch (e) {
+    showAgentsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
 // ── File servers (filter) ─────────────────────────────────────────
 // The server filter appears once records come from more than one file server
 let knownServers = [];
 
 async function loadServers() {
-  try { knownServers = await api('/api/stats/servers'); } catch { knownServers = []; }
+  // All servers with records (names are shown next to paths), and the filter's choices: an Admin
+  // can leave removed agents out of those
+  let choices;
+  try {
+    [knownServers, choices] = await Promise.all([api('/api/stats/servers'), api('/api/stats/servers?filter=true')]);
+  } catch { knownServers = []; choices = []; }
   const sel = document.getElementById('serverFilter');
   const current = sel.value;
   sel.innerHTML = `<option value="">${t('servers.all')}</option>` +
-    knownServers.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-  sel.value = knownServers.includes(current) ? current : '';
-  sel.classList.toggle('d-none', knownServers.length < 2);
+    choices.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  sel.value = choices.includes(current) ? current : '';
+  sel.classList.toggle('d-none', choices.length < 2);
   document.body.classList.toggle('single-server', knownServers.length < 2);
 }
 
@@ -1407,6 +1464,8 @@ async function loadAgents() {
       <td class="text-end">${outbox(a)}</td>
       <td>${auditPolicy(a)}</td>
       <td><div class="d-flex gap-1">
+        <button class="btn btn-sm btn-outline-secondary py-0" title="${t('agents.reEnroll')}"
+          onclick="createEnrollment('${esc(a.id)}')"><i class="bi bi-key"></i></button>
         <button class="btn btn-sm btn-outline-secondary py-0" title="${t(a.disabled ? 'agents.enable' : 'agents.disable')}"
           onclick="setAgentDisabled('${esc(a.id)}', ${!a.disabled})"><i class="bi ${a.disabled ? 'bi-play' : 'bi-pause'}"></i></button>
         <button class="btn btn-sm btn-outline-danger py-0" title="${t('agents.remove')}"
@@ -1474,9 +1533,13 @@ function showAgentUpdateSteps({ name, os, version }) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById('detailModal')).show();
 }
 
-async function createEnrollment() {
+// Without agentId: a code for a server not registered yet. With it: a code that only registers that agent again
+async function createEnrollment(agentId) {
   try {
-    enrollment = await api('/api/agents/enrollment', { method: 'POST' });
+    enrollment = await api('/api/agents/enrollment' + (agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''), { method: 'POST' });
+    const forAgent = document.getElementById('enrollFor');
+    forAgent.classList.toggle('d-none', !enrollment.forAgent);
+    forAgent.textContent = enrollment.forAgent ? t('agents.reEnrollFor', { n: enrollment.forAgent }) : '';
     document.getElementById('enrollUrl').value = enrollment.url;
     showConnection(enrollment.connection);
     document.getElementById('enrollExpires').textContent = fmtDate(enrollment.expiresAt);
