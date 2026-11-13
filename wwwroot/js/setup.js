@@ -3,6 +3,9 @@
 // wizard was not finished; the button in Settings opens it at any time. Keys of lang/setup.js start with 'setup.'.
 window.StartupHooks = window.StartupHooks || {};
 window.StartupHooks.setup = () => { if (isAdmin()) setupStartup(); };
+// The Security log card under the per-server settings (the same job as the wizard's step)
+window.ServerSettingsHooks = window.ServerSettingsHooks || {};
+window.ServerSettingsHooks.securityLog = () => loadSecurityLogCard();
 
 const SETUP_LATER_KEY = 'setupWizardLater';   // "Later" in this browser session
 const SETUP_POLL_MS = 5000;
@@ -316,6 +319,67 @@ function setupWatch() {
   };
   st.poll = setInterval(poll, SETUP_POLL_MS);
   poll();
+}
+
+// ── Security log card (Settings, per server) ─────────────────────
+const LOG_CARD_SIZES = [256, 512, 1024, 2048, 4096, 8192].map(mb => mb * 1024 * 1024);
+
+async function loadSecurityLogCard() {
+  const el = document.getElementById('securityLogSection');
+  if (!el) return;
+  // pathAudit.os: the OS of the server picked in Settings (app.js); a Linux server has no Security log
+  if (/\S/.test(pathAudit?.os || '') && !/^windows/i.test(pathAudit.os)) { el.classList.add('d-none'); return; }
+  el.classList.remove('d-none');
+  const server = settingsServer();
+  el.innerHTML = `<div class="card">
+      <div class="card-header fw-semibold"><i class="bi bi-journal-text me-1"></i>${esc(t('setup.card.title'))}</div>
+      <div class="card-body">
+        <p class="small text-muted mb-2">${esc(t('setup.card.hint'))}</p>
+        <div id="logCardInfo" class="small"><span class="spinner-border spinner-border-sm"></span></div>
+      </div>
+    </div>`;
+  let d;
+  try { d = await api(`/api/settings/security-log${server ? `?server=${encodeURIComponent(server)}` : ''}`); }
+  catch (e) {
+    // An old agent, a collector that is not connected, ...: say why, there is nothing to set
+    document.getElementById('logCardInfo').innerHTML = `<div class="alert alert-warning py-2 small mb-0">${esc(e.message)}</div>`;
+    return;
+  }
+  if (settingsServer() !== server) return;   // another server was picked meanwhile
+  const sizes = [...new Set([...LOG_CARD_SIZES, d.maxBytes])].sort((a, b) => a - b);
+  const options = sizes.map(b => `<option value="${b}" ${b === Math.max(d.maxBytes, d.recommendedBytes) ? 'selected' : ''}>${setupSize(b)}</option>`).join('');
+  let html = `<div><strong>${esc(t('setup.log.current', { size: setupSize(d.maxBytes) }))}</strong>`;
+  if (d.usedBytes != null) html += ` <span class="text-muted">(${esc(t('setup.log.used', { size: setupSize(d.usedBytes), n: fmtNum(d.records) }))})</span>`;
+  html += '</div>';
+  if (d.maxBytes < d.recommendedBytes)
+    html += `<div class="text-warning-emphasis mt-1"><i class="bi bi-exclamation-triangle me-1"></i>${esc(t('setup.card.small', { size: setupSize(d.recommendedBytes) }))}</div>`;
+  if (d.mode && d.mode !== 'Circular') html += `<div class="alert alert-warning py-2 small mt-2 mb-0">${esc(t('setup.log.notCircular', { mode: d.mode }))}</div>`;
+  html += `<div class="d-flex align-items-center gap-2 mt-2">
+      <label class="small mb-0" for="logCardSize">${esc(t('setup.log.size'))}</label>
+      <select id="logCardSize" class="form-select form-select-sm" style="width:auto">${options}</select>
+      <button class="btn btn-primary btn-sm" id="logCardBtn" onclick="saveSecurityLogCard()">${esc(t('setup.log.set'))}</button>
+    </div>
+    <div id="logCardMsg" class="mt-2"></div>`;
+  document.getElementById('logCardInfo').innerHTML = html;
+}
+
+async function saveSecurityLogCard() {
+  const maxBytes = parseInt(document.getElementById('logCardSize').value, 10);
+  const server = settingsServer();
+  if (!confirm(t('setup.card.confirm', { s: server || serverList?.local || '', size: setupSize(maxBytes) }))) return;
+  const btn = document.getElementById('logCardBtn');
+  btn.disabled = true;
+  try {
+    const d = await api('/api/settings/security-log', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ maxBytes, server: server || null }),
+    });
+    await loadSecurityLogCard();
+    document.getElementById('logCardMsg').innerHTML =
+      `<div class="alert alert-success py-2 small mb-0"><i class="bi bi-check-circle me-1"></i>${esc(t('setup.log.done', { size: setupSize(d.maxBytes) }))}</div>`;
+  } catch (e) {
+    document.getElementById('logCardMsg').innerHTML = `<div class="alert alert-danger py-2 small mb-0">${esc(e.message)}</div>`;
+    btn.disabled = false;
+  }
 }
 
 async function setupFinish() {

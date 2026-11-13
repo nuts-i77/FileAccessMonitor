@@ -118,7 +118,7 @@ fsutil usn createjournal m=33554432 a=8388608 D:
 
 ### 5. Enlarge the Security log (recommended)
 
-By default the Windows Security log holds only about 20 MB. On a busy server, older events are overwritten within hours. FileAccessMonitor collects events in real time, but events overwritten while the service was stopped cannot be recorded, and a larger log lets you check the original events later. The Security log step of the setup wizard sets it (for an agent's server too, from the monitoring server's GUI). By command:
+By default the Windows Security log holds only about 20 MB. On a busy server, older events are overwritten within hours. FileAccessMonitor collects events in real time, but events overwritten while the service was stopped cannot be recorded, and a larger log lets you check the original events later. The Security log step of the setup wizard, or the **Security log** card under the per-server settings on the **Settings** tab, sets it per server (for an agent's server too, from the monitoring server's GUI; that needs a Windows agent of 1.12 or later). By command:
 
 ```powershell
 wevtutil sl Security /ms:1073741824   # 1 GB

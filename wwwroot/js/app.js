@@ -1799,6 +1799,7 @@ async function loadServerSettings() {
     document.getElementById('monitoredPathsList').innerHTML =
       `<div class="alert alert-info small mb-0">${t('settings.monitorOnly')}</div>`;
     try { document.getElementById('dnsServerInput').value = (await api('/api/settings')).dnsServer || ''; } catch { }
+    document.getElementById('securityLogSection')?.classList.add('d-none');
     return;
   }
   try {
@@ -1818,7 +1819,11 @@ async function loadServerSettings() {
     document.getElementById('monitoredPathsList').innerHTML =
       `<div class="text-danger small">${esc(e.message)}</div>`;
   }
-  if (isAdmin()) loadRecordingSettings();
+  if (isAdmin()) {
+    loadRecordingSettings();
+    // Per-server cards of feature scripts (js/setup.js: the Security log)
+    Object.values(window.ServerSettingsHooks || {}).forEach(load => load());
+  }
 }
 
 // ── Retention Policy ──────────────────────────────────────────────

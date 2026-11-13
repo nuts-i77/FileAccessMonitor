@@ -853,6 +853,9 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <li>動作確認の前に、そのサーバーの <code>auditPolicyOk</code> が false（このウィザードでフォルダを追加していない場合）と、除外ユーザーを表示する。各手順の画面要素は描画のあとに読み込む（<code>after</code>）。</li>
       </ul>
 
+      <h3>Security ログの欄（v1.12、<code>setup.js</code>）</h3>
+      <p>［設定］のサーバーごとの設定に <code>#securityLogSection</code> を置き、<code>window.ServerSettingsHooks.securityLog</code>（<code>loadServerSettings</code> の後に呼ぶ）で、選んだサーバーの <code>GET /api/settings/security-log</code> を表示する。<code>pathAudit.os</code> が Windows でなければ隠す。エラー（古いエージェント、コレクター未接続）はその文言を表示する。設定は確認のあと <code>PUT</code>。ウィザードと同じジョブを使う。</p>
+
       <h3>CSV 出力（v1.12、<code>CsvExport</code>）</h3>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
         <li>検索・ファイルの履歴・アクセス権・定期レポートの添付の改行は CRLF（RFC 4180）。どの OS の監視サーバーでも同じ。</li>

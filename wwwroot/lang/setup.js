@@ -50,6 +50,10 @@ Object.assign(window.I18N_EN, {
   'setup.chk.timeout': 'No record arrived in 3 minutes. Check that the collector or agent is online (Settings → Agents) and that the file was opened by a user, not by a service account.',
   'setup.chk.again': 'Wait again',
   'setup.chk.done': 'Setup is finished. Records are listed under Recent and counted on the dashboard. Notifications, viewers and reports are in Settings.',
+  'setup.card.title': 'Security log',
+  'setup.card.hint': 'The Windows Security log this server records from. When it is full, Windows overwrites the oldest events; what is overwritten while the collector is stopped is lost (a recording gap). The space is taken on the system drive.',
+  'setup.card.small': 'Smaller than the recommended {size}.',
+  'setup.card.confirm': 'Set the maximum size of the Security log on {s} to {size}?',
 });
 
 Object.assign(window.I18N_JA, {
@@ -103,4 +107,8 @@ Object.assign(window.I18N_JA, {
   'setup.chk.timeout': '3 分間、記録が届きませんでした。コレクターまたはエージェントがオンラインか（［設定］→［エージェント］）、ファイルをサービスのアカウントではなくユーザーが開いたかを確認してください。',
   'setup.chk.again': 'もう一度待つ',
   'setup.chk.done': '導入は完了です。記録は［最新アクセス］に一覧され、ダッシュボードに集計されます。通知、閲覧者、レポートは［設定］にあります。',
+  'setup.card.title': 'Security ログ',
+  'setup.card.hint': 'このサーバーが記録を読み取る Windows の Security ログです。いっぱいになると古いイベントから上書きされ、コレクターが止まっている間に上書きされた分は記録できません（記録の途切れ）。容量はシステムドライブを使います。',
+  'setup.card.small': '推奨の {size} より小さくなっています。',
+  'setup.card.confirm': '{s} の Security ログの上限を {size} にしますか。',
 });
