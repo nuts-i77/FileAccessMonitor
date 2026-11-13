@@ -203,11 +203,24 @@ async function loadSummary() {
   document.getElementById('uniqueFiles').textContent = fmtNum(d.uniqueFiles);
   document.getElementById('uniqueUsers').textContent = fmtNum(d.uniqueUsers);
   document.getElementById('deniedCount').textContent = fmtNum(d.denied);
-  const badges = (d.byType || []).map(tp =>
-    `<span class="badge me-1" style="background:${TYPE_COLORS[tp.type] || '#6c757d'}">${TYPE_LABELS[tp.type] || tp.type}: ${fmtNum(tp.count)}</span>`
-  ).join('');
-  document.getElementById('accessTypesBadge').innerHTML = badges;
+  // Every type, also with 0 (a missing badge looked like a type that is not recorded), each with what it means
+  const counts = Object.fromEntries((d.byType || []).map(tp => [tp.type, tp.count]));
+  const types = [...Object.keys(TYPE_HELP), ...Object.keys(counts).filter(k => !(k in TYPE_HELP))];
+  const badges = types.map(type => {
+    const n = counts[type] || 0;
+    const help = TYPE_HELP[type] ? ` title="${esc(t(TYPE_HELP[type]))}" data-bs-toggle="tooltip"` : '';
+    return `<span class="badge me-1 mb-1"${help} style="background:${TYPE_COLORS[type] || '#6c757d'};cursor:help${n ? '' : ';opacity:.45'}">${TYPE_LABELS[type] || type}: ${fmtNum(n)}</span>`;
+  }).join('');
+  const el = document.getElementById('accessTypesBadge');
+  el.innerHTML = badges;
+  el.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(b => bootstrap.Tooltip.getOrCreateInstance(b));
 }
+
+// What each access type means, in the order of the dashboard card
+const TYPE_HELP = {
+  Read: 'typeHelp.read', Write: 'typeHelp.write', Create: 'typeHelp.create',
+  Delete: 'typeHelp.delete', Rename: 'typeHelp.rename', Permission: 'typeHelp.permission',
+};
 
 // ── Timeline Chart ────────────────────────────────────────────────
 async function loadTimeline() {
@@ -602,7 +615,7 @@ async function loadRecent(page = 1) {
       <td>${recordNameHtml(r)}</td>
       <td class="col-server">${esc(r.serverName || '')}</td>
       <td class="path-cell text-muted" title="${esc(r.folderPath)}">${esc(r.folderPath)}</td>
-      <td>${esc(r.userName)}</td>
+      <td>${userHtml(r.userName)}</td>
       <td>${recordTypeHtml(r)}</td>
       ${srcCell}
     </tr>`;
@@ -709,6 +722,14 @@ function searchQuery() {
   return qs;
 }
 
+// The CSV exports say in a header when they had to stop at their row limit ("<rows>;<matched>"): the text to show, or null
+function csvTruncatedText(res) {
+  const h = res.headers.get('X-Export-Truncated');
+  if (!h) return null;
+  const [rows, total] = h.split(';');
+  return total ? t('csv.truncated', { n: fmtNum(+rows), total: fmtNum(+total) }) : t('csv.truncatedPart', { n: fmtNum(+rows) });
+}
+
 async function exportSearchCsv() {
   const btn = document.getElementById('exportCsvBtn');
   btn.disabled = true;
@@ -717,7 +738,7 @@ async function exportSearchCsv() {
     const server = serverParam() ? `&${serverParam()}` : '';
     const res = await fetch(`/api/stats/search/export?tzOffsetMinutes=${tz}${searchQuery()}${server}`, { headers: authHeaders() });
     if (res.status === 401) { logout(); return; }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
     const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || 'file-access.csv';
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement('a');
@@ -727,6 +748,9 @@ async function exportSearchCsv() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    const cut = csvTruncatedText(res);
+    if (cut) document.getElementById('searchResults').insertAdjacentHTML('afterbegin',
+      `<div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${esc(cut)}</div>`);
   } catch (e) {
     document.getElementById('searchResults').insertAdjacentHTML('afterbegin',
       `<div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</div>`);
@@ -759,7 +783,7 @@ async function loadSearch(page = 1) {
         <td>${recordNameHtml(r)}</td>
         <td class="col-server">${esc(r.serverName || '')}</td>
         <td class="path-cell text-muted" title="${esc(r.folderPath)}">${esc(r.folderPath)}</td>
-        <td>${esc(r.userName)}</td>
+        <td>${userHtml(r.userName)}</td>
         <td>${recordTypeHtml(r)}</td>
         <td class="text-muted small">${srcParts.join('<br>') || '-'}</td>
       </tr>`;
@@ -858,7 +882,7 @@ function buildDetailHtml(d, mode) {
   ).join('');
 
   const recentRows = (d.recent || []).slice(0, 30).map(r =>
-    `<tr><td class="text-muted">${fmtDate(r.accessTime)}</td><td>${esc(r.userName)}</td><td>${recordTypeHtml(r)}${r.newPath ? `<div class="small text-muted">-> ${esc(r.newPath)}</div>` : ""}</td></tr>`
+    `<tr><td class="text-muted">${fmtDate(r.accessTime)}</td><td>${userHtml(r.userName)}</td><td>${recordTypeHtml(r)}${r.newPath ? `<div class="small text-muted">-> ${esc(r.newPath)}</div>` : ""}</td></tr>`
   ).join('');
 
   const topFilesSection = mode === 'folder' && d.topFiles ? `
@@ -1663,6 +1687,16 @@ function esc(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// A record's user; "(unknown)" (an empty create or a truncation that Windows did not log) links to the README
+// passage that explains it
+const UNKNOWN_USER = '(unknown)';
+function userHtml(name) {
+  if (name !== UNKNOWN_USER) return esc(name);
+  const doc = getLang() === 'en' ? 'README.md#limitations' : 'README.ja.md#制限事項';
+  return `${esc(name)} <a href="https://github.com/nuts-i77/FileAccessMonitor/blob/main/${doc}" target="_blank" rel="noopener noreferrer"
+    class="text-muted" title="${esc(t('user.unknownHelp'))}"><i class="bi bi-question-circle"></i></a>`;
 }
 
 function filterTable(tableId, query) {

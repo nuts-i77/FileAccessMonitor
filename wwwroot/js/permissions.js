@@ -240,6 +240,9 @@ async function permExport() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    const cut = csvTruncatedText(res);
+    if (cut) document.getElementById('permResults').insertAdjacentHTML('afterbegin',
+      `<div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${esc(cut)}</div>`);
   } catch (e) {
     document.getElementById('permResults').insertAdjacentHTML('afterbegin',
       `<div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</div>`);

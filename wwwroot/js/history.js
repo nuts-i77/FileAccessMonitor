@@ -121,7 +121,7 @@ function histStepHtml(s) {
   return `<li class="position-relative pb-3">
     <span class="position-absolute rounded-circle" style="left:-1.6rem;top:.2rem;width:.9rem;height:.9rem;background:${info.color};border:2px solid var(--bs-body-bg)"></span>
     <div class="d-flex flex-wrap align-items-baseline gap-2"><strong style="color:${info.color}">${what}</strong>${denied}${atCreation}${detailBtn}
-      <span class="text-muted small">${esc(when)}</span><span class="small">${esc(s.user || '')}</span>${client}</div>${extra}</li>`;
+      <span class="text-muted small">${esc(when)}</span><span class="small">${userHtml(s.user || '')}</span>${client}</div>${extra}</li>`;
 }
 
 function renderFileHistory() {
@@ -209,6 +209,8 @@ async function historyExportCsv() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    const cut = csvTruncatedText(res);
+    if (cut) alert(cut);
   } catch (e) {
     alert(e.message);
   }

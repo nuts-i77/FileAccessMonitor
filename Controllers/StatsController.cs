@@ -399,11 +399,15 @@ public class StatsController : ControllerBase
     // CSV (UTF-8 with BOM so Excel detects the encoding). Times are shown in the
     // browser's time zone, with a UTC column for unambiguous processing.
     [HttpGet("search/export")]
-    public async Task Export([FromQuery] SearchFilter filter, [FromQuery] int tzOffsetMinutes = 0)
+    public async Task<IActionResult> Export([FromQuery] SearchFilter filter, [FromQuery] int tzOffsetMinutes = 0)
     {
-        var query = ApplyFilter(AllRecords.AsNoTracking(), filter)
-            .OrderByDescending(r => r.AccessTime)
-            .Take(MaxExportRows);
+        using var slot = CsvExport.TryEnter();
+        if (slot == null) return StatusCode(StatusCodes.Status429TooManyRequests, new { error = Messages.Get("export.busy") });
+        var ct = HttpContext.RequestAborted;
+        var filtered = ApplyFilter(AllRecords.AsNoTracking(), filter);
+        // Counted first, so a cut result can be said in a header before the rows go out
+        var total = await filtered.CountAsync(ct);
+        var query = filtered.OrderByDescending(r => r.AccessTime).Take(MaxExportRows);
 
         var offset = TimeSpan.FromMinutes(Math.Clamp(tzOffsetMinutes, -14 * 60, 14 * 60));
         var offsetLabel = (offset < TimeSpan.Zero ? "-" : "+") + offset.ToString(@"hh\:mm");
@@ -411,29 +415,41 @@ public class StatsController : ControllerBase
 
         Response.ContentType = "text/csv; charset=utf-8";
         Response.Headers.ContentDisposition = $"attachment; filename=\"{fileName}\"";
-
-        await using var writer = new StreamWriter(Response.Body, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-        await writer.WriteLineAsync(CsvLine(
-            $"{Messages.Get("csv.time")} (UTC{offsetLabel})", Messages.Get("csv.timeUtc"), Messages.Get("csv.user"),
-            Messages.Get("csv.type"), Messages.Get("csv.kind"), Messages.Get("csv.fileName"), Messages.Get("csv.folder"), Messages.Get("csv.path"),
-            Messages.Get("csv.ip"), Messages.Get("csv.machine"), Messages.Get("csv.server"),
-            Messages.Get("csv.result"), Messages.Get("csv.newPath"), Messages.Get("csv.detail")));
+        if (total > MaxExportRows) Response.Headers[CsvExport.TruncatedHeader] = $"{MaxExportRows};{total}";
 
         string kindFile = Messages.Get("csv.kindFile"), kindFolder = Messages.Get("csv.kindFolder");
         string permAtCreation = Messages.Get("csv.permissionAtCreation"), resultDenied = Messages.Get("csv.resultDenied"), resultOk = Messages.Get("csv.resultOk");
         var rows = 0;
-        await foreach (var r in query.AsAsyncEnumerable())
+        var completed = false;
+        try
         {
-            var utc = DateTime.SpecifyKind(r.AccessTime, DateTimeKind.Utc);
+            await using var writer = new StreamWriter(Response.Body, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true))
+                { NewLine = CsvExport.NewLine };
             await writer.WriteLineAsync(CsvLine(
-                utc.Add(offset).ToString("yyyy-MM-dd HH:mm:ss"), utc.ToString("yyyy-MM-ddTHH:mm:ssZ"), r.UserName,
-                r.AtCreation ? permAtCreation : r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine, r.ServerName,
-                r.Denied ? resultDenied : resultOk, VisibleNewPath(r.NewPath, r.ServerName), r.Detail));
-            rows++;
+                $"{Messages.Get("csv.time")} (UTC{offsetLabel})", Messages.Get("csv.timeUtc"), Messages.Get("csv.user"),
+                Messages.Get("csv.type"), Messages.Get("csv.kind"), Messages.Get("csv.fileName"), Messages.Get("csv.folder"), Messages.Get("csv.path"),
+                Messages.Get("csv.ip"), Messages.Get("csv.machine"), Messages.Get("csv.server"),
+                Messages.Get("csv.result"), Messages.Get("csv.newPath"), Messages.Get("csv.detail")));
+            await foreach (var r in query.AsAsyncEnumerable().WithCancellation(ct))
+            {
+                var utc = DateTime.SpecifyKind(r.AccessTime, DateTimeKind.Utc);
+                await writer.WriteLineAsync(CsvLine(
+                    utc.Add(offset).ToString("yyyy-MM-dd HH:mm:ss"), utc.ToString("yyyy-MM-ddTHH:mm:ssZ"), r.UserName,
+                    r.AtCreation ? permAtCreation : r.AccessType, r.IsFolder ? kindFolder : kindFile, r.FileName, r.FolderPath, r.FilePath, r.ClientIp, r.ClientMachine, r.ServerName,
+                    r.Denied ? resultDenied : resultOk, VisibleNewPath(r.NewPath, r.ServerName), r.Detail));
+                rows++;
+            }
+            await writer.FlushAsync(ct);
+            completed = true;
         }
-        await writer.FlushAsync();
-
-        await _audit.WriteAsync(HttpContext, "export.csv", $"rows={rows}, filter={filter.Describe()}");
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* the browser went away */ }
+        finally
+        {
+            // Also when the download broke off: what left the server is on record
+            await _audit.WriteAsync(HttpContext, "export.csv",
+                $"rows={rows}, total={total}, truncated={total > MaxExportRows}, completed={completed}, filter={filter.Describe()}");
+        }
+        return new EmptyResult();
     }
 
     internal const int MaxExportRows = 200_000;

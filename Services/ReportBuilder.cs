@@ -349,7 +349,7 @@ public static class ReportAttachments
     public static (MailAttachmentData File, bool Truncated) Csv(string name, string[] header, IEnumerable<string?[]> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(StatsController.CsvLine(header));
+        sb.Append(StatsController.CsvLine(header)).Append(CsvExport.NewLine);
         var count = 0;
         var truncated = false;
         foreach (var row in rows)
@@ -359,7 +359,7 @@ public static class ReportAttachments
                 truncated = true;
                 break;
             }
-            sb.AppendLine(StatsController.CsvLine(row));
+            sb.Append(StatsController.CsvLine(row)).Append(CsvExport.NewLine);
             count++;
         }
         var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true).GetPreamble()

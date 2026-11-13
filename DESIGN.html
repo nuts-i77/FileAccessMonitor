@@ -337,6 +337,7 @@ tbody tr:hover td { background: var(--surface2); }
       <a class="nav-link" href="#alerts">通知</a>
       <a class="nav-link" href="#https">Web GUI の HTTPS</a>
       <a class="nav-link" href="#v110">v1.10 の追加</a>
+      <a class="nav-link" href="#v112">v1.11.2・v1.12 の追加</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">フロントエンド</div>
@@ -637,6 +638,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
             <tr><td>removeSacl</td><td>SACL の削除</td><td>15 分</td></tr>
             <tr><td>permissions</td><td>フォルダ以下の権限を読み、結果を最新 1 回分として保存（v1.10）。Windows は DACL・継承・所有者、Linux はモード・POSIX ACL・Samba の共有設定。行は最大 20,000、上限で打ち切る。1.10 以上のエージェントだけが実行する</td><td>制限時間 + 60 秒（既定 6 分）</td></tr>
             <tr><td>scan</td><td>未使用ファイル用のフォルダ一覧（最大 10 万件、<code>[パス, サイズ, 更新日時]</code>）。記録との照合は監視サーバーで行う</td><td>10 分</td></tr>
+            <tr><td>securityLog</td><td>Security ログの上限・使用量・件数・保持方式を返す。<code>maxBytes</code> があれば上限を設定してから返す（20 MB〜64 GB、64 KB 単位に切り上げ、範囲外はログを開く前に拒否）。Windows の 1.12 以上だけ。監視サーバーは Linux と 1.12 未満のエージェントには送らない（1.11 の Windows エージェントはフォルダのないジョブとみなして <code>exists: false</code> を返すため）。v1.12</td><td>15 分</td></tr>
           </tbody>
         </table>
       </div>
@@ -830,6 +832,42 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
       </ul>
     </section>
 
+    <!-- v1.11.2・v1.12 の追加 -->
+    <section id="v112">
+      <h2>v1.11.2・v1.12 の追加（証跡の修正・導入ウィザード）</h2>
+
+      <h3>証跡の修正（v1.11.2）</h3>
+      <p>Windows のローカル、Windows から Samba、smbclient から Samba の 3 経路で 31 種類の操作を行い、残るべき記録と突き合わせた結果の修正です。</p>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li><code>WriteMerger</code>（<code>RecordingRules.cs</code>）: 同じユーザー・同じパスの Write と Create を 2 秒以内なら 1 件に。Windows は <code>EventLogCollectorService.Emit</code>、Linux は <code>SambaAudit.ShouldKeep</code> で使う。</li>
+        <li><code>DeleteTracker</code>: 拒否された削除はすぐ出さずに保留し（<code>HoldRefused</code>）、同じユーザーが同じファイルの DELETE を 2 秒以内に得たら捨てる（<code>Succeeded</code>。ReplaceFile は最初の要求を拒否し、2 回目で許可するため）。除外される名前は 4663 の DELETE のときだけ通し、<code>AccessRecord.ExcludedName</code>（保存しない）で印を付け、名前変更で記録される名前になったら Write、それ以外は捨てる。大文字小文字だけの名前変更は、存在確認を大文字小文字を区別して行い Rename にする（<code>ExistsAsNamed</code>）。</li>
+        <li>Samba（<code>SambaAudit.ToRecord</code>）: 除外される名前から記録される名前への名前変更は新しい名前への Write。記録される名前から除外される名前への名前変更は 5 秒保留し（<code>RenameSwap</code>）、同じ名前に別のファイルが入れば捨てる（Office の保存）。</li>
+        <li><code>UsnCorrelator</code>: 作成（<code>FileCreate</code>）と切り詰め（<code>DataTruncation</code>）の事実を保持し、Security ログの書き込みで説明されないまま <code>CreateLead</code>（30 秒）を過ぎたものを Create / Write として出す。ユーザーは近い 4656 の成功（開いた記録）から取り、なければ <code>UnknownUser</code>（<code>(unknown)</code>）。4656 の成功は <code>RecordingSettings.AuditOpens</code> のときだけ処理し、そのときだけコレクターが「ハンドルの操作」の成功の監査をオンにする（自分でオンにしたものだけオフに戻す）。除外アカウントが開いたものは捨てる。</li>
+        <li>設定の配布: 記録の送信（batch）の応答に <code>configVersion</code> を含め、ハートビートは忙しくても 1 分ごと、<code>applySacl</code> / <code>removeSacl</code> の 3 秒後にも設定を取り直す。USN の「読み終えた時刻」は監視フォルダのあるボリュームだけで計算し、読み取り側は監視フォルダを <code>GetPathConfigs()</code> から都度取る（追加直後の最初の作成を落とさない）。</li>
+      </ul>
+
+      <h3>導入ウィザード（v1.12、<code>setup.js</code>、<code>lang/setup.js</code>）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>Admin のログイン時（<code>StartupHooks.setup</code>）に <code>GET /api/settings/setup</code> を読み、<code>done</code> でなく監視フォルダが全サーバーで 0 件なら <code>#setupModal</code> を開く。［あとで］はそのブラウザーのセッションだけ（<code>sessionStorage</code>）、［今後表示しない］と［完了］は <code>PUT /api/settings/setup/done</code>。［設定］の <code>#setupOpenBtn</code> でいつでも開く。</li>
+        <li>手順: パスワード（<code>initial-admin-password.txt</code> があるときだけ。<code>/api/me/change-password</code> で変え、新しいトークンに差し替え）→ ファイルサーバー（候補が 1 台でなければ。未接続・無効は選べない）→ 監視フォルダ（<code>POST /api/settings/paths</code>。既存なら一覧を出し、最初のフォルダを動作確認に使う。409 は既存として扱う）→ Security ログ（Windows だけ。<code>Circular</code> 以外なら警告）→ 動作確認（5 秒ごとに <code>/api/stats/search</code> を、そのサーバー・フォルダ・この手順に入る 1 分前以降で探す。3 分で案内）。</li>
+        <li>動作確認の前に、そのサーバーの <code>auditPolicyOk</code> が false（このウィザードでフォルダを追加していない場合）と、除外ユーザーを表示する。各手順の画面要素は描画のあとに読み込む（<code>after</code>）。</li>
+      </ul>
+
+      <h3>CSV 出力（v1.12、<code>CsvExport</code>）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>検索・ファイルの履歴・アクセス権・定期レポートの添付の改行は CRLF（RFC 4180）。どの OS の監視サーバーでも同じ。</li>
+        <li>検索・履歴・アクセス権の出力は同時に 2 本まで（<code>SemaphoreSlim</code>。超えたら 429 と <code>export.busy</code>）。</li>
+        <li>上限で打ち切ったら <code>X-Export-Truncated</code>（検索は <code>行数;一致件数</code>、ほかは <code>行数;</code>）。画面が警告を出す。CSV の中には書かない（ほかのツールで読めなくなるため）。</li>
+        <li>検索の出力は <code>RequestAborted</code> で読み出しを止め、途中で切れても <code>finally</code> で操作ログに書く（<code>rows, total, truncated, completed</code>）。履歴は全文を作ってから記録して送る。</li>
+      </ul>
+
+      <h3>そのほか（v1.12）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>ユーザーが <code>(unknown)</code> の記録は、最新アクセス・検索・詳細・履歴で、README の制限事項への「？」のリンクを付ける（<code>userHtml</code>）。</li>
+        <li>エージェントの互換: 1.12 のサーバーは 1.11 のエージェントでも動く。Security ログの手順だけが「エージェントを 1.12 に更新」と返す（<code>AgentAtLeast</code>。<code>-rc</code> 付きは本体の版で比べ、<code>0.0.0</code> は手元のビルドとして通す）。</li>
+      </ul>
+    </section>
+
     <!-- サービス -->
     <section id="services">
       <h2>サービス</h2>
@@ -880,7 +918,7 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/file-detail · folder-detail · user-detail</span><span class="endpoint-desc">詳細（server を付けて 1 台に絞る）</span></div>
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/recent?page=&amp;pageSize=</span><span class="endpoint-desc">{total, page, pageSize, items}</span></div>
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/search?q=&amp;days=&amp;dateFrom=&amp;dateTo=&amp;type=&amp;ip=</span><span class="endpoint-desc">複数キーワードの横断検索</span></div>
-        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/search/export?…&amp;tzOffsetMinutes=</span><span class="endpoint-desc">CSV（UTF-8 BOM、最大 20 万行、数式インジェクション対策）。操作ログに記録</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/stats/search/export?…&amp;tzOffsetMinutes=</span><span class="endpoint-desc">CSV（UTF-8 BOM、CRLF、最大 20 万行、数式インジェクション対策）。先に件数を数え、上限を超えたら <code>X-Export-Truncated: 行数;一致件数</code>。同時に 2 本まで（超えたら 429）。送信が途中で切れても操作ログに記録（<code>completed=False</code>）。v1.12</span></div>
       </div>
 
       <h3>未使用ファイル — <code>UnusedFilesController</code> <span class="badge badge-tag">Admin / 範囲を持つ Viewer</span></h3>
@@ -898,6 +936,9 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/settings/recording?server=</span><span class="endpoint-desc">記録ルール（PUT で保存）</span></div>
         <div class="endpoint"><span class="badge badge-post">POST</span><span class="endpoint-path">/api/settings/dns</span><span class="endpoint-desc">逆引き DNS サーバー</span></div>
         <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/settings/app</span><span class="endpoint-desc">{version, updateCheck}（PUT で更新確認のオン・オフ）</span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/settings/setup</span><span class="endpoint-desc">導入ウィザードの状態 {initialPasswordPending, done, local, agents, folders}。サーバーごとに OS・接続・監視フォルダ数・<code>auditPolicyOk</code>・除外ユーザー（v1.12）</span></div>
+        <div class="endpoint"><span class="badge badge-put">PUT</span><span class="endpoint-path">/api/settings/setup/done</span><span class="endpoint-desc"><code>settings.json</code> の <code>SetupDone</code> を true に（自動では開かなくなる）。操作ログ <code>setup.done</code></span></div>
+        <div class="endpoint"><span class="badge badge-get">GET</span><span class="endpoint-path">/api/settings/security-log?server=</span><span class="endpoint-desc">ジョブ <code>securityLog</code> の結果。PUT {maxBytes, server} で上限を設定（操作ログ <code>securityLog.update</code>）</span></div>
       </div>
 
       <h3>エージェント管理 — <code>AgentsController</code> <span class="badge badge-admin">Admin 専用</span></h3>

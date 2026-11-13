@@ -34,22 +34,23 @@ public class FileHistoryController(AccessDbContext db, UserScopeService scopes, 
         [FromQuery] int days = 0, [FromQuery] bool collapse = true, [FromQuery] int tzOffsetMinutes = 0)
     {
         if (string.IsNullOrWhiteSpace(path)) return BadRequest(new { error = Messages.Get("hist.pathRequired") });
+        using var slot = CsvExport.TryEnter();
+        if (slot == null) return StatusCode(StatusCodes.Status429TooManyRequests, new { error = Messages.Get("export.busy") });
         var outcome = await BuildAsync(server, path, at, days, collapse, FileHistory.MaxEvents);
         if (outcome.Status == HistoryStatus.Outside) return StatusCode(403, new { error = Messages.Get("scope.outside") });
         if (outcome.Status == HistoryStatus.None) return NotFound(new { error = Messages.Get("hist.none") });
         var result = outcome.Result!;
+        var truncated = result.Truncated.Events || result.Truncated.Hops || result.Truncated.Window;
 
         var offset = TimeSpan.FromMinutes(Math.Clamp(tzOffsetMinutes, -14 * 60, 14 * 60));
         var fileName = $"file-history-{DateTime.UtcNow.Add(offset):yyyyMMdd-HHmm}.csv";
-        Response.ContentType = "text/csv; charset=utf-8";
-        Response.Headers.ContentDisposition = $"attachment; filename=\"{fileName}\"";
-
-        await using var writer = new StreamWriter(Response.Body, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-        await writer.WriteLineAsync(CsvText(result, offset));
-        await writer.FlushAsync();
-
-        await audit.WriteAsync(HttpContext, "export.csv", $"history rows={result.Steps.Count}, server={result.Server}, path={result.Path}");
-        return new EmptyResult();
+        // The whole text is built before anything is sent: the audit entry comes first
+        var text = CsvText(result, offset);
+        await audit.WriteAsync(HttpContext, "export.csv",
+            $"history rows={result.Steps.Count}, truncated={truncated}, server={result.Server}, path={result.Path}");
+        if (truncated) Response.Headers[CsvExport.TruncatedHeader] = $"{result.Steps.Count};";
+        return File(new System.Text.UTF8Encoding(true).GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(text)).ToArray(),
+            "text/csv; charset=utf-8", fileName);
     }
 
     // The CSV of a history: one line per step (the language follows the request)
@@ -57,19 +58,21 @@ public class FileHistoryController(AccessDbContext db, UserScopeService scopes, 
     {
         var offsetLabel = (offset < TimeSpan.Zero ? "-" : "+") + offset.ToString(@"hh\:mm");
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine(StatsController.CsvLine(
+        sb.Append(StatsController.CsvLine(
             $"{Messages.Get("csv.time")} (UTC{offsetLabel})", Messages.Get("csv.timeUtc"), Messages.Get("hist.csv.step"), Messages.Get("csv.user"),
             Messages.Get("csv.type"), Messages.Get("csv.path"), Messages.Get("csv.newPath"), Messages.Get("hist.csv.via"), Messages.Get("csv.detail"),
-            Messages.Get("hist.csv.count"), Messages.Get("csv.ip"), Messages.Get("csv.machine"), Messages.Get("csv.server"), Messages.Get("csv.result")));
+            Messages.Get("hist.csv.count"), Messages.Get("csv.ip"), Messages.Get("csv.machine"), Messages.Get("csv.server"), Messages.Get("csv.result")))
+            .Append(CsvExport.NewLine);
         foreach (var s in result.Steps)
         {
             var utc = s.Time;
             var count = s.Count > 1 ? $"{s.Count} ({Local(s.FirstTime, offset)} - {Local(s.LastTime, offset)})" : "";
-            sb.AppendLine(StatsController.CsvLine(
+            sb.Append(StatsController.CsvLine(
                 Local(utc, offset), utc?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                 Messages.Get(s.Kind == "gap" ? "hist.gap." + s.Gap?.Reason : "hist.kind." + s.Kind),
                 s.User, s.AtCreation ? Messages.Get("hist.csv.permissionAtCreation") : s.Type, s.Path, s.NewPath, s.ViaFolder, s.Detail, count, s.ClientIp, s.ClientMachine, result.Server,
-                s.Kind == "gap" ? "" : Messages.Get(s.Denied ? "csv.resultDenied" : "csv.resultOk")));
+                s.Kind == "gap" ? "" : Messages.Get(s.Denied ? "csv.resultDenied" : "csv.resultOk")))
+                .Append(CsvExport.NewLine);
         }
         return sb.ToString();
     }

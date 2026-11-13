@@ -44,6 +44,8 @@ Download `FileAccessMonitor-Setup-<version>.exe` from [Releases](https://github.
 
 When you run a newer installer, it upgrades the existing install and keeps your settings. Then continue with [3. First sign-in](#3-first-sign-in).
 
+After the first sign-in the **setup wizard** opens. It changes the admin password, picks the file server (when there are agents), adds the first monitored folder, enlarges the Security log (Windows; 1 GB is recommended) and waits for the first record. **Later** closes it; the **Setup wizard** button on the Settings tab opens it again at any time. Sections 3 to 5 describe what the wizard does.
+
 > [!NOTE]
 > The installer is not code-signed, so Windows SmartScreen may show a warning. Choose **More info** → **Run anyway**. To check that the download is genuine, see [Verifying downloads](#verifying-downloads).
 
@@ -116,7 +118,7 @@ fsutil usn createjournal m=33554432 a=8388608 D:
 
 ### 5. Enlarge the Security log (recommended)
 
-By default the Windows Security log holds only about 20 MB. On a busy server, older events are overwritten within hours. FileAccessMonitor collects events in real time, so its own records are not lost. A larger log still lets you check the original events later.
+By default the Windows Security log holds only about 20 MB. On a busy server, older events are overwritten within hours. FileAccessMonitor collects events in real time, but events overwritten while the service was stopped cannot be recorded, and a larger log lets you check the original events later. The Security log step of the setup wizard sets it (for an agent's server too, from the monitoring server's GUI). By command:
 
 ```powershell
 wevtutil sl Security /ms:1073741824   # 1 GB
@@ -431,7 +433,6 @@ To build the installer locally, install [Inno Setup 6](https://jrsoftware.org/is
 To run a second instance for development or demos without touching an installed one, set the `FILEACCESSMONITOR_DATA` environment variable to another data folder (default `C:\ProgramData\FileAccessMonitor`) and another port, e.g. `$env:Kestrel__Endpoints__Http__Url = 'http://localhost:5099'`.
 
 GitHub Actions (`.github/workflows/ci.yml`) builds, tests, and publishes the app on every push and pull request. Pushing a tag such as `v1.0.0` runs `.github/workflows/release.yml`, which builds the installer, a portable zip, and the Linux agent's and monitoring server's tar.gz and publishes them as a GitHub Release.
-
 ## Uninstall
 
 If you used the installer, uninstall **File Access Monitor** from **Settings → Apps**. The services and firewall rule are removed. Access records, settings, and keys stay in `C:\ProgramData\FileAccessMonitor\`; delete that folder if you no longer need them. To remove the audit entries (SACLs), run `C:\Program Files\FileAccessMonitor\scripts\restore-audit.ps1` before uninstalling.

@@ -150,7 +150,7 @@ public class FileHistoryDbTests : IDisposable
             ],
         };
         var csv = FileHistoryController.CsvText(result, TimeSpan.FromHours(9));
-        var lines = csv.TrimEnd().Split(Environment.NewLine);
+        var lines = csv.TrimEnd().Split("\r\n");   // CRLF on every OS
         Assert.Equal(3, lines.Length);
         Assert.Contains("\"'=cmd|' /C calc'!A0\"", lines[1]);
         Assert.Contains("2026-11-01 09:00:00", lines[1]);

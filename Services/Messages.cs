@@ -34,6 +34,11 @@ public static class Messages
         ["local.collectorOff"] = "The collector service of this server (File Access Monitor Collector) is not connected. Start it, then try again.",
         ["local.noAnswer"] = "The collector service of this server did not respond. Check that it is running.",
         ["local.jobFailed"] = "The collector service reported an error: {0}",
+        ["securityLog.invalidSize"] = "The Security log size must be between {0} MB and {1} GB.",
+        ["securityLog.notWindows"] = "This is a Linux server: there is no Security log to set.",
+        ["securityLog.agentTooOld"] = "The agent \"{0}\" cannot set its Security log until it is updated to {1} or later. Update it, or set the size on that server with wevtutil.",
+        ["securityLog.noAnswer"] = "The server did not report the size of its Security log. Update its agent to the version of the monitoring server.",
+        ["export.busy"] = "Another CSV export is running. Try again when it has finished.",
         ["path.addedSamba"] = "Added. Samba auditing is on for {0} share(s); accesses are recorded from new connections to the share.",
         ["path.removedSaclSamba"] = "Removed from monitoring and turned Samba auditing off for {0} share(s).",
         ["path.saclAppliedSamba"] = "Samba auditing is on for {0} share(s).",
@@ -155,6 +160,11 @@ public static class Messages
         ["local.notCollecting"] = "このサーバーは自身のアクセスを記録しません（監視専用）。エージェントのサーバーを選択してください。",
         ["local.collectorOff"] = "このサーバーのコレクターサービス（File Access Monitor Collector）に接続されていません。サービスを開始してから、もう一度お試しください。",
         ["local.noAnswer"] = "このサーバーのコレクターサービスから応答がありません。サービスが動作しているか確認してください。",
+        ["securityLog.invalidSize"] = "Security ログのサイズは {0} MB から {1} GB の範囲で指定してください。",
+        ["securityLog.notWindows"] = "Linux のサーバーです。設定する Security ログはありません。",
+        ["securityLog.agentTooOld"] = "エージェント「{0}」は、{1} 以降に更新するまで Security ログを設定できません。エージェントを更新するか、そのサーバーで wevtutil で設定してください。",
+        ["securityLog.noAnswer"] = "サーバーから Security ログのサイズが返されませんでした。エージェントを監視サーバーと同じ版に更新してください。",
+        ["export.busy"] = "ほかの CSV 出力を実行中です。終わってからもう一度お試しください。",
         ["local.jobFailed"] = "コレクターサービスでエラーが発生しました: {0}",
         ["path.addedSamba"] = "追加しました。{0} 個の共有で Samba の監査を有効にしました（共有への新しい接続から記録されます）。",
         ["path.removedSaclSamba"] = "監視フォルダから削除し、{0} 個の共有で Samba の監査を無効にしました。",
@@ -251,7 +261,9 @@ public static class Messages
         ["csv.detail"] = "詳細",
     };
 
-    public static bool IsJapanese => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ja";
+    // By the culture's name: the Linux build runs with invariant globalization, where every culture reports
+    // the invariant language ("iv") and only the name is kept
+    public static bool IsJapanese => CultureInfo.CurrentUICulture.Name.StartsWith("ja", StringComparison.OrdinalIgnoreCase);
 
     // These tables plus one per feature (MessagesPermissions, ...), each with its own key prefix
     private static readonly Lazy<IReadOnlyDictionary<string, string>> AllEnLazy = new(() => Merge(

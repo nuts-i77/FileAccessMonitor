@@ -11,6 +11,7 @@ public class FeatureLanguageFileTests
         { "history", "hist." },
         { "reports", "report." },
         { "integrity", "integrity." },
+        { "setup", "setup." },
     };
 
     [Theory]

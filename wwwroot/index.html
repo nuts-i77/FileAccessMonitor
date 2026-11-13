@@ -503,6 +503,9 @@
               <select id="settingsServer" class="form-select form-select-sm" style="width:auto" onchange="loadServerSettings()"></select>
             </span>
             <span class="small text-muted" data-i18n="settings.perServerHint">監視フォルダと記録ルールは、選択したサーバーにのみ適用されます。</span>
+            <button type="button" id="setupOpenBtn" class="btn btn-sm btn-outline-primary ms-auto d-none" onclick="openSetupWizard()">
+              <i class="bi bi-magic me-1"></i><span data-i18n="setup.open">導入ウィザード</span>
+            </button>
           </div>
           <div class="row g-3">
       <div class="col-12 col-lg-7">
@@ -1188,6 +1191,20 @@
   </div>
 </div>
 
+<!-- Setup wizard (js/setup.js) -->
+<div class="modal fade" id="setupModal" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-magic me-1"></i><span data-i18n="setup.title">導入ウィザード</span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="setupBody"></div>
+      <div class="modal-footer py-2" id="setupFooter"></div>
+    </div>
+  </div>
+</div>
+
 <script src="lib/bootstrap/bootstrap.bundle.min.js"></script>
 <script src="lib/chartjs/chart.umd.min.js"></script>
 <script src="lang/ja.js"></script>
@@ -1197,11 +1214,13 @@
 <script src="lang/history.js"></script>
 <script src="lang/reports.js"></script>
 <script src="lang/integrity.js"></script>
+<script src="lang/setup.js"></script>
 <!-- Feature scripts: functions and hook registrations only (TabHooks, SettingsHooks, StartupHooks); app.js calls them -->
 <script src="js/permissions.js"></script>
 <script src="js/history.js"></script>
 <script src="js/reports.js"></script>
 <script src="js/integrity.js"></script>
+<script src="js/setup.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -109,6 +109,108 @@ public class SettingsController : ControllerBase
     internal static bool HideRemovedServers() =>
         SettingsStore.Load()["HideRemovedServers"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
+    // GET /api/settings/setup  — what the setup wizard needs: whether admin still has the generated password,
+    // whether the wizard was finished, and the file servers it can set up with their monitored folders
+    [HttpGet("setup")]
+    public async Task<IActionResult> Setup()
+    {
+        var local = ServerConfigService.LocalCollects;
+        var localFolders = local ? (await _servers.GetPathsAsync(null)).Length : 0;
+        var folders = localFolders;
+        var agents = new List<object>();
+        foreach (var name in await _servers.ServerNamesAsync())
+        {
+            if (local && name == ServerConfigService.LocalName) continue;
+            if (await _servers.FindAgentAsync(name) is not { } agent) continue;
+            var paths = await _servers.GetPathsAsync(name);
+            folders += paths.Length;
+            agents.Add(new
+            {
+                name = agent.Name, os = agent.Os, version = agent.Version, disabled = agent.Disabled,
+                online = agent.LastSeenAt is { } seen && DateTime.UtcNow - seen < AgentOnlineWindow,
+                folders = paths.Length, auditPolicyOk = agent.AuditPolicyOk,
+                excludeUsers = (await _servers.GetRecordingAsync(name)).ExcludeUsers,
+            });
+        }
+        return Ok(new
+        {
+            initialPasswordPending = System.IO.File.Exists(SecretStore.InitialAdminPasswordFile),
+            done = SetupDone(SettingsStore.Load()),
+            local = local ? new
+            {
+                name = ServerConfigService.LocalName, os = AppInfo.OsName,
+                connected = _collector.IsConnected(DateTime.UtcNow), folders = localFolders,
+                auditPolicyOk = _collector.AuditPolicyOk,
+                excludeUsers = (await _servers.GetRecordingAsync(null)).ExcludeUsers,
+            } : null,
+            agents, folders,
+        });
+    }
+
+    // An agent in touch this recently counts as online (as in the Agents card)
+    private static readonly TimeSpan AgentOnlineWindow = TimeSpan.FromMinutes(5);
+
+    internal const string SetupDoneKey = "SetupDone";
+
+    internal static bool SetupDone(JsonObject root) =>
+        root[SetupDoneKey] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+
+    // PUT /api/settings/setup/done  — the wizard was finished (or dismissed for good): it no longer opens by itself
+    [HttpPut("setup/done")]
+    public async Task<IActionResult> FinishSetup()
+    {
+        SettingsStore.Update(root => root[SetupDoneKey] = true);
+        await _audit.WriteAsync(HttpContext, "setup.done");
+        return Ok(new { done = true });
+    }
+
+    // GET /api/settings/security-log?server=  — the Security log of a Windows file server: its maximum size,
+    // what is in use, and the recommended size (read by its collector or agent)
+    [HttpGet("security-log")]
+    public async Task<IActionResult> GetSecurityLog([FromQuery] string? server = null)
+    {
+        if (await CheckServerAsync(server) is { } error) return error;
+        if (await SecurityLogRefusalAsync(server) is { } refused) return refused;
+        var (result, jobError) = await RunJobAsync(server, SecurityLogSize.JobType, new JsonObject());
+        return jobError ?? SecurityLogAnswer(result!);
+    }
+
+    // The job is a Windows one of 1.12 and later; an older agent would take it for a folder job and answer
+    // "no such folder", a Linux one "unknown job"
+    private async Task<IActionResult?> SecurityLogRefusalAsync(string? server)
+    {
+        var os = ServerConfigService.IsLocal(server) ? AppInfo.OsName : (await _servers.FindAgentAsync(server!))?.Os;
+        if (!string.IsNullOrEmpty(os) && !os.StartsWith("Windows", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = Messages.Get("securityLog.notWindows") });
+        if (!ServerConfigService.IsLocal(server) && !AgentAtLeast((await _servers.FindAgentAsync(server!))?.Version, SecurityLogSize.SinceVersion))
+            return BadRequest(new { error = Messages.Get("securityLog.agentTooOld", server!, SecurityLogSize.SinceVersion.ToString(2)) });
+        return null;
+    }
+
+    // A local build (0.0.0) counts as new; a pre-release (1.12.0-rc1) as its version
+    internal static bool AgentAtLeast(string? version, Version since) =>
+        Version.TryParse(version?.Split('-', '+')[0], out var v) && (v >= since || v == new Version(0, 0, 0));
+
+    // An answer without the size is not one (a job runner that did not know the job)
+    private IActionResult SecurityLogAnswer(JsonObject result) =>
+        result["maxBytes"] is JsonValue ? Ok(result) : BadRequest(new { error = Messages.Get("securityLog.noAnswer") });
+
+    // PUT /api/settings/security-log  — sets the maximum size of that Security log
+    [HttpPut("security-log")]
+    public async Task<IActionResult> PutSecurityLog([FromBody] SecurityLogRequest req)
+    {
+        if (!SecurityLogSize.InRange(req.MaxBytes))
+            return BadRequest(new { error = Messages.Get("securityLog.invalidSize", SecurityLogSize.MinBytes >> 20, SecurityLogSize.MaxBytes >> 30) });
+        if (await CheckServerAsync(req.Server) is { } error) return error;
+        if (await SecurityLogRefusalAsync(req.Server) is { } refused) return refused;
+        var (result, jobError) = await RunJobAsync(req.Server, SecurityLogSize.JobType, new JsonObject { ["maxBytes"] = req.MaxBytes });
+        if (jobError != null) return jobError;
+        if (result!["maxBytes"] is not JsonValue) return SecurityLogAnswer(result);
+        _logger.LogInformation("Security log size set via Web GUI: {Server} {Bytes} bytes", ServerLabel(req.Server), req.MaxBytes);
+        await _audit.WriteAsync(HttpContext, "securityLog.update", $"server={ServerLabel(req.Server)}, maxBytes={req.MaxBytes}");
+        return Ok(result);
+    }
+
     [HttpPut("app")]
     public async Task<IActionResult> PutApp([FromBody] AppSettingsRequest req)
     {
@@ -365,3 +467,4 @@ public record EventTypesRequest(string Path, string[] EventTypes, string? Server
 public record DnsRequest(string? DnsServer);
 public record AppSettingsRequest(bool UpdateCheck);
 public record ServerFilterRequest(bool HideRemovedServers);
+public record SecurityLogRequest(long MaxBytes, string? Server = null);

@@ -25,6 +25,12 @@ public class WindowsAgentPlatform(SaclManagerService sacl, ILogger<WindowsAgentP
 
     public JsonObject RunJob(AgentJob job, CancellationToken ct)
     {
+        // About the server itself, not a folder
+        if (job.Type == SecurityLogSize.JobType)
+        {
+            logger.LogInformation("Running {Type} as asked by the monitoring server.", job.Type);
+            return SecurityLogConfig.Run(job.Args);
+        }
         var path = AgentJobRunner.PathOf(job);
         if (!Directory.Exists(path)) return new JsonObject { ["exists"] = false };
         logger.LogInformation("Running {Type} for {Path} as asked by the monitoring server.", job.Type, path);

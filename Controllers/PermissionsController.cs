@@ -146,12 +146,15 @@ public class PermissionsController : ControllerBase
         [FromQuery] bool brokenOnly = false, [FromQuery] string? q = null, CancellationToken ct = default)
     {
         if (!Allowed(out var scope)) return NoAccess();
+        using var slot = CsvExport.TryEnter();
+        if (slot == null) return StatusCode(StatusCodes.Status429TooManyRequests, new { error = Messages.Get("export.busy") });
         var (loaded, error) = await LoadAsync(server, folder, scope, ct);
         if (error != null) return error;
         var report = loaded!;
 
         var rows = Filter(report, scope, new ViewFilter(broadOnly, brokenOnly, q, 1, int.MaxValue));
         var changes = await LastChangesAsync(report, ct);
+        var truncated = false;
 
         string yes = Messages.Get("perm.csv.yes"), no = Messages.Get("perm.csv.no");
         var lines = new List<string>
@@ -179,13 +182,14 @@ public class PermissionsController : ControllerBase
             foreach (var a in row.Aces)
                 lines.Add(StatsController.CsvLine([.. common, a.Principal, a.Sid, Messages.Get(a.Kind == "deny" ? "perm.csv.deny" : "perm.csv.allow"),
                     LevelText(a.Level), row.IsFolder || report.Os == "linux" ? ScopeText(a.Scope) : "", a.Broad, SeverityText(a.Severity), .. tail]));
-            if (lines.Count > MaxExportLines) break;
+            if (lines.Count > MaxExportLines) { truncated = true; break; }
         }
 
         var rowCount = lines.Count - 1;
-        await _audit.WriteAsync(HttpContext, "permissions.export", $"server={report.Server}, folder={report.Root}, rows={rowCount}");
+        await _audit.WriteAsync(HttpContext, "permissions.export", $"server={report.Server}, folder={report.Root}, rows={rowCount}, truncated={truncated}");
+        if (truncated) Response.Headers[CsvExport.TruncatedHeader] = $"{rowCount};";
         var bytes = new System.Text.UTF8Encoding(true).GetPreamble()
-            .Concat(new System.Text.UTF8Encoding(false).GetBytes(string.Join("\r\n", lines) + "\r\n")).ToArray();
+            .Concat(new System.Text.UTF8Encoding(false).GetBytes(string.Join(CsvExport.NewLine, lines) + CsvExport.NewLine)).ToArray();
         return File(bytes, "text/csv; charset=utf-8", $"permissions-{DateTime.UtcNow:yyyyMMdd-HHmm}.csv");
     }
 

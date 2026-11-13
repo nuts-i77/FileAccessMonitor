@@ -146,6 +146,79 @@ public class ViewerScopeTests : IDisposable
         Assert.Contains("b.docx", everything);
     }
 
+    // Lines end in CRLF on every OS, and the export is on record with its row count
+    [Fact]
+    public async Task The_csv_export_uses_crlf_and_is_audited_when_complete()
+    {
+        var body = new MemoryStream();
+        var (c, scope) = Stats(Admin(), body);
+        using (scope) await c.Export(new SearchFilter(), 0);
+        var text = Encoding.UTF8.GetString(body.ToArray()).TrimStart('﻿');
+        Assert.Equal(3, text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Length);  // header and two records
+        Assert.DoesNotContain("\n", text.Replace("\r\n", ""));
+        Assert.Contains("rows=2, total=2, truncated=False, completed=True", LastAudit("export.csv"));
+    }
+
+    // A download that breaks off is on record too, as not completed
+    [Fact]
+    public async Task An_interrupted_csv_export_is_still_audited()
+    {
+        var http = new DefaultHttpContext { User = Admin() };
+        using var cts = new CancellationTokenSource();
+        http.RequestAborted = cts.Token;
+        http.Response.Body = new CancelOnWrite(cts);
+        using var scope = _services.CreateScope();
+        var c = new StatsController(new UserScopeService(scope.ServiceProvider.GetRequiredService<AccessDbContext>()),
+            new AuditLog(_services.GetRequiredService<IServiceScopeFactory>(), NullLogger<AuditLog>.Instance))
+        {
+            ControllerContext = new ControllerContext { HttpContext = http },
+        };
+        await c.Export(new SearchFilter(), 0);
+        Assert.Contains("completed=False", LastAudit("export.csv"));
+    }
+
+    // Two exports at a time; a third is refused until one ends
+    [Fact]
+    public void At_most_two_exports_run_at_once()
+    {
+        var a = CsvExport.TryEnter();
+        var b = CsvExport.TryEnter();
+        try
+        {
+            Assert.NotNull(a);
+            Assert.NotNull(b);
+            Assert.Null(CsvExport.TryEnter());
+            a!.Dispose();
+            a.Dispose();   // twice is harmless
+            using var c = CsvExport.TryEnter();
+            Assert.NotNull(c);
+        }
+        finally { a?.Dispose(); b?.Dispose(); }
+    }
+
+    private string LastAudit(string action)
+    {
+        using var scope = _services.CreateScope();
+        return scope.ServiceProvider.GetRequiredService<AccessDbContext>().AuditLogs
+            .Where(e => e.Action == action).OrderByDescending(e => e.Id).Select(e => e.Detail).First() ?? "";
+    }
+
+    // A response body whose client goes away at the first write
+    private sealed class CancelOnWrite(CancellationTokenSource cts) : MemoryStream
+    {
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+        {
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+        {
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        }
+    }
+
     [Fact]
     public async Task The_permissions_report_is_closed_to_a_viewer_without_folders()
     {
