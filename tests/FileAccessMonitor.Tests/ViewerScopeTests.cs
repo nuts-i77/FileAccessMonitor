@@ -146,6 +146,29 @@ public class ViewerScopeTests : IDisposable
         Assert.Contains("b.docx", everything);
     }
 
+    // A rename is found by its new name too, unless the user is limited to folders (the new path could be outside them)
+    [Fact]
+    public async Task A_rename_is_found_by_its_new_path_for_users_without_a_folder_limit()
+    {
+        using (var s = _services.CreateScope())
+        {
+            var db = s.ServiceProvider.GetRequiredService<AccessDbContext>();
+            var r = Record(@"D:\Share\Sales\old-name.xlsx");
+            r.AccessType = "Rename";
+            r.NewPath = @"D:\Share\HR\new-name.xlsx";
+            db.AccessRecords.Add(r);
+            db.SaveChanges();
+        }
+        SetScope("sales", @"FS01|D:\Share\Sales");
+        int Found(StatsController c) => Json(c.Search(new SearchFilter { Q = ["new-name"] }, 1, 50).Result).GetProperty("total").GetInt32();
+
+        var (admin, s1) = Stats(Admin());
+        using (s1) Assert.Equal(1, Found(admin));
+        var (viewer, s2) = Stats(Viewer("sales"));
+        using (s2) Assert.Equal(0, Found(viewer));
+        await Task.CompletedTask;
+    }
+
     // Lines end in CRLF on every OS, and the export is on record with its row count
     [Fact]
     public async Task The_csv_export_uses_crlf_and_is_audited_when_complete()

@@ -463,7 +463,12 @@ public class StatsController : ControllerBase
             _ => query,
         };
 
-    private static IQueryable<Models.AccessRecord> ApplyFilter(IQueryable<Models.AccessRecord> query, SearchFilter f)
+    // Keywords also match a rename's new path (the record's own path is the old one), but only for users without
+    // a folder limit: for the others the new path may be outside their folders, and a match would reveal it
+    private IQueryable<Models.AccessRecord> ApplyFilter(IQueryable<Models.AccessRecord> query, SearchFilter f) =>
+        ApplyFilter(query, f, matchNewPath: _scopes.Get(User) == null);
+
+    internal static IQueryable<Models.AccessRecord> ApplyFilter(IQueryable<Models.AccessRecord> query, SearchFilter f, bool matchNewPath)
     {
         if (!string.IsNullOrWhiteSpace(f.DateFrom) && DateTime.TryParse(f.DateFrom, out var dtFrom))
             query = query.Where(r => r.AccessTime >= dtFrom.ToUniversalTime());
@@ -481,6 +486,7 @@ public class StatsController : ControllerBase
                     r.FileName.Contains(k) ||
                     r.FilePath.Contains(k) ||
                     r.FolderPath.Contains(k) ||
+                    (matchNewPath && r.NewPath != null && r.NewPath.Contains(k)) ||
                     r.UserName.Contains(k) ||
                     (r.ClientIp != null && r.ClientIp.Contains(k)) ||
                     (r.ClientMachine != null && r.ClientMachine.Contains(k)));
