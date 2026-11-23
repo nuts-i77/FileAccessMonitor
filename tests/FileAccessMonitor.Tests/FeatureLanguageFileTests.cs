@@ -12,6 +12,7 @@ public class FeatureLanguageFileTests
         { "reports", "report." },
         { "integrity", "integrity." },
         { "setup", "setup." },
+        { "backup", "backup." },
     };
 
     [Theory]
@@ -45,7 +46,7 @@ public class FeatureLanguageFileTests
         var known = File.ReadAllText(Lang("en.js")) + File.ReadAllText(Lang(feature + ".js"));
         var script = File.ReadAllText(Repo(Path.Combine("wwwroot", "js", feature + ".js")))
                      + File.ReadAllText(Repo(Path.Combine("wwwroot", "index.html")));
-        foreach (Match m in Regex.Matches(script, @"(?:\bt\(|data-i18n(?:-ph|-title)?="")'?([a-zA-Z]+\.[A-Za-z0-9.]+)'?"))
+        foreach (Match m in Regex.Matches(script, @"(?:\bt\(|\bhintHtml\(|data-hint=""|data-i18n(?:-ph|-title)?="")'?([a-zA-Z]+\.[A-Za-z0-9.]+)'?"))
         {
             var key = m.Groups[1].Value;
             if (key.StartsWith(prefix)) Assert.Contains($"'{key}':", known);

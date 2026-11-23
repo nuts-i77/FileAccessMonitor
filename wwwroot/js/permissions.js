@@ -32,7 +32,7 @@ function permBuildShell() {
   document.getElementById('permissionsRoot').innerHTML = `
     <div class="card mb-3">
       <div class="card-body">
-        <p class="small text-muted mb-3">${t('perm.hint')}</p>
+        <div class="small text-muted mb-3">${hintHtml('perm.hint')}</div>
         <div class="row g-2 align-items-end">
           <div class="col-12 col-md-3 d-none" id="permServerCol">
             <label class="form-label small text-muted" for="permServer">${t('servers.target')}</label>

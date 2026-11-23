@@ -15,6 +15,7 @@ function t(key, vars) {
 function applyI18n() {
   document.documentElement.lang = getLang() === 'en' ? 'en' : 'ja';
   document.querySelectorAll('[data-i18n]').forEach(el => { el.innerHTML = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-hint]').forEach(el => { el.innerHTML = hintHtml(el.dataset.hint); });
   document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
   document.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); });
   const btn = document.getElementById('langToggleBtn');
@@ -1289,8 +1290,8 @@ async function checkAgentVersions() {
 }
 
 function openAgentsSettings() {
-  switchTab('settings', document.querySelector('[data-tab="settings"]'));
-  setTimeout(() => document.getElementById('agentsSection')?.scrollIntoView({ behavior: 'smooth' }), 500);
+  switchTab('settings');
+  setTimeout(() => showSettingsSection('agentsSection'), 500);
 }
 
 // ── Web GUI connection (HTTPS) ───────────────────────────────────
@@ -1315,8 +1316,8 @@ function dismissHttpWarning() {
 }
 
 function openWebTlsSettings() {
-  switchTab('settings', document.querySelector('[data-tab="settings"]'));
-  setTimeout(() => document.getElementById('webTlsSection')?.scrollIntoView({ behavior: 'smooth' }), 500);
+  switchTab('settings');
+  setTimeout(() => showSettingsSection('webTlsSection'), 500);
 }
 
 // Read-only: switching HTTPS needs a restart and could lock the Admin out, so the installer or the command line does it
@@ -1345,7 +1346,7 @@ async function loadWebTls() {
     html += `<div class="mt-2 mb-1 text-muted">${t('web.card.change')}</div>
       <div class="font-monospace text-break">Windows: "C:\\Program Files\\FileAccessMonitor\\FileAccessMonitor.exe" web-https ${d.https ? 'off' : 'on'}</div>
       <div class="font-monospace text-break">Linux: sudo fileaccessmonitor-server --https ${d.https ? 'off' : 'on'}</div>
-      <div class="form-text">${t('web.card.changeHint')}</div>`;
+      <div class="form-text">${hintHtml('web.card.changeHint')}</div>`;
     body.innerHTML = html;
   } catch (e) {
     section.classList.add('d-none'); // not available (an older server)
@@ -1648,15 +1649,84 @@ async function deleteAgent(id, name) {
 }
 
 // ── Tab switching ─────────────────────────────────────────────────
+// By file, by folder and by user share one top tab ("Totals") with buttons to switch; it reopens the last one
+const TOTALS_TABS = ['files', 'folders', 'users'];
+let totalsTab = 'files';
+
+// el (the link or button pressed) is not needed: the active marks follow the tab
 function switchTab(tab, el) {
+  const inTotals = TOTALS_TABS.includes(tab);
+  if (inTotals) totalsTab = tab;
   document.querySelectorAll('[id^="tab-"]').forEach(tp => tp.classList.add('d-none'));
-  document.querySelectorAll('.nav-link').forEach(a => a.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.remove('d-none');
-  el.classList.add('active');
+  document.querySelectorAll('#mainTabs .nav-link').forEach(a =>
+    a.classList.toggle('active', a.dataset.tab === tab || (inTotals && a.dataset.group === 'totals')));
+  const bar = document.getElementById('totalsBar');
+  bar?.classList.toggle('d-none', !inTotals);
+  bar?.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   currentTab = tab;
   location.hash = tab;
   loadTabData(tab);
   return false;
+}
+
+// ── Settings menu ─────────────────────────────────────────────────
+// The settings tab shows one page at a time; the menu on the left picks it. A page whose cards are all hidden
+// (Viewer, or the Security log of a Linux server) drops out of the menu.
+const SETTINGS_PAGE_KEY = 'settingsPage';
+
+function settingsPageVisible(page) {
+  return [...page.querySelectorAll(':scope > .row > *')].some(c => !c.classList.contains('d-none'));
+}
+
+function showSettingsPage(name) {
+  const pages = [...document.querySelectorAll('#settingsPages > .set-page')];
+  let page = pages.find(p => p.dataset.page === name && settingsPageVisible(p))
+    || pages.find(settingsPageVisible) || pages[0];
+  if (!page) return;
+  pages.forEach(p => p.classList.toggle('d-none', p !== page));
+  document.querySelectorAll('#settingsNav [data-page]').forEach(a =>
+    a.classList.toggle('active', a.dataset.page === page.dataset.page));
+  if (page.dataset.page === name) { try { localStorage.setItem(SETTINGS_PAGE_KEY, name); } catch { /* not remembered */ } }
+}
+
+// Opens the page that holds the element (a banner's link to the agents, the HTTPS card, ...)
+function showSettingsSection(id) {
+  const name = document.getElementById(id)?.closest('.set-page')?.dataset.page;
+  if (name) showSettingsPage(name);
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function refreshSettingsNav() {
+  document.querySelectorAll('#settingsPages > .set-page').forEach(p => {
+    const link = document.querySelector(`#settingsNav [data-page="${p.dataset.page}"]`);
+    link?.classList.toggle('d-none', !settingsPageVisible(p));
+  });
+  // The page last picked: its cards may appear only after their loaders ran, so keep trying until they do
+  let wanted = null;
+  try { wanted = localStorage.getItem(SETTINGS_PAGE_KEY); } catch { /* none */ }
+  wanted = wanted || 'folders';
+  const active = document.querySelector('#settingsPages > .set-page:not(.d-none)');
+  if (!active || !settingsPageVisible(active) || active.dataset.page !== wanted) showSettingsPage(wanted);
+}
+
+// Cards are shown and hidden by many loaders (and the feature scripts): follow them instead of calling after each
+(() => {
+  const root = document.getElementById('settingsPages');
+  if (!root) return;
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; refreshSettingsNav(); });
+  }).observe(root, { subtree: true, attributes: true, attributeFilter: ['class'] });
+})();
+
+// A hint: the short line in the key, and the rest (key + "More") behind "Details" when it exists
+function hintHtml(key, vars) {
+  const more = t(key + 'More', vars);
+  return t(key, vars) + (more === key + 'More' ? '' :
+    ` <details class="hint-more"><summary>${t('ui.more')}</summary><div>${more}</div></details>`);
 }
 
 function loadTabData(tab) {
@@ -1694,7 +1764,7 @@ function esc(str) {
 const UNKNOWN_USER = '(unknown)';
 function userHtml(name) {
   if (name !== UNKNOWN_USER) return esc(name);
-  const doc = getLang() === 'en' ? 'README.md#limitations' : 'README.ja.md#制限事項';
+  const doc = getLang() === 'en' ? 'docs/how-it-works.md#limitations' : 'docs/how-it-works.ja.md#制限事項';
   return `${esc(name)} <a href="https://github.com/nuts-i77/FileAccessMonitor/blob/main/${doc}" target="_blank" rel="noopener noreferrer"
     class="text-muted" title="${esc(t('user.unknownHelp'))}"><i class="bi bi-question-circle"></i></a>`;
 }
@@ -1765,6 +1835,7 @@ function serverOptions(selected, { includeAll = false } = {}) {
 }
 
 async function loadSettings() {
+  refreshSettingsNav();
   if (isAdmin()) {
     const current = settingsServer();
     const servers = await loadServerList();

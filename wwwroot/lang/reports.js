@@ -1,7 +1,8 @@
 // Texts of the reports feature (keys start with 'report.')
 Object.assign(window.I18N_EN, {
   'report.card.title': 'Scheduled report',
-  'report.hint': 'Mails a summary of file accesses for the last day, week, or month to the notification recipients. It includes broad permissions from the latest stored scans and, when tamper detection is on, its status.',
+  'report.hint': 'Mails a summary of the last day, week or month to the notification recipients.',
+  'report.hintMore': 'It also lists broad permissions from the latest stored scans and, when tamper detection is on, its status.',
   'report.smtpNeeded': 'Set up e-mail (SMTP server and recipients) in Notifications first.',
   'report.enable': 'Send a periodic report by email',
   'report.frequency': 'Frequency',
@@ -35,7 +36,8 @@ Object.assign(window.I18N_EN, {
 });
 Object.assign(window.I18N_JA, {
   'report.card.title': '定期レポート',
-  'report.hint': '直近の日・週・月のファイルアクセスの概要を、通知の宛先にメールで送信します。保存済みの最新のスキャン結果から、広範囲のアクセス権も記載します。改ざん検知が有効な場合は、その状態も記載します。',
+  'report.hint': '直近の日・週・月のアクセスの概要を、通知の宛先にメールで送信します。',
+  'report.hintMore': '保存済みの最新のスキャン結果から、広範囲のアクセス権も記載します。改ざん検知が有効な場合は、その状態も記載します。',
   'report.smtpNeeded': '先に［通知］で SMTP サーバーと宛先を設定してください。',
   'report.enable': '定期レポートをメールで送信する',
   'report.frequency': '頻度',

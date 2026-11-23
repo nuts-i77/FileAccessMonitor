@@ -334,7 +334,7 @@ async function loadSecurityLogCard() {
   el.innerHTML = `<div class="card">
       <div class="card-header fw-semibold"><i class="bi bi-journal-text me-1"></i>${esc(t('setup.card.title'))}</div>
       <div class="card-body">
-        <p class="small text-muted mb-2">${esc(t('setup.card.hint'))}</p>
+        <div class="small text-muted mb-2">${hintHtml('setup.card.hint')}</div>
         <div id="logCardInfo" class="small"><span class="spinner-border spinner-border-sm"></span></div>
       </div>
     </div>`;

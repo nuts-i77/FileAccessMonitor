@@ -172,7 +172,7 @@ function renderFileHistory() {
       <button class="btn btn-outline-secondary btn-sm" onclick="historyExportCsv()"><i class="bi bi-filetype-csv me-1"></i>${esc(t('hist.csv'))}</button>
     </div>
     ${timeline}
-    <div class="small text-muted mt-3">${esc(t('hist.hint'))}</div>`;
+    <div class="small text-muted mt-3">${hintHtml('hist.hint')}</div>`;
   body.dataset.current = current;
 }
 

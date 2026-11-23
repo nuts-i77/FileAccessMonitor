@@ -94,3 +94,46 @@ body.single-server .col-server {
 
 /* The folder list of the Unused Files and Permissions tabs: long lists scroll */
 .folder-menu { max-height: 20rem; overflow-y: auto; }
+
+/* Settings: the menu on the left; on a narrow screen it wraps into a row of buttons above the page */
+.settings-nav { position: sticky; top: 0.75rem; }
+.settings-nav-group {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--bs-secondary-color);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 0 0 0.35rem 0.25rem;
+}
+.settings-nav .list-group { border-radius: 0.5rem; overflow: hidden; border: 1px solid var(--bs-border-color); }
+.settings-nav .list-group-item { padding: 0.45rem 0.75rem; }
+.settings-nav .list-group-item.active { font-weight: 600; }
+@media (max-width: 767.98px) {
+  .settings-nav { position: static; }
+  .settings-nav .list-group { flex-direction: row; flex-wrap: wrap; border: 0; gap: 0.25rem; }
+  .settings-nav .list-group-item { border: 1px solid var(--bs-border-color); border-radius: 1rem; width: auto; }
+}
+
+/* A hint's details: one line first, the rest only when asked for */
+details.hint-more { display: inline; }
+details.hint-more > summary {
+  display: inline;
+  cursor: pointer;
+  color: var(--bs-link-color);
+  list-style: none;
+  white-space: nowrap;
+}
+details.hint-more > summary::-webkit-details-marker { display: none; }
+details.hint-more > summary::after { content: ' \25B8'; font-size: 0.8em; }
+details.hint-more[open] > summary::after { content: ' \25BE'; }
+details.hint-more[open] { display: block; }
+details.hint-more > div {
+  margin-top: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--bs-border-color);
+  background: var(--bs-tertiary-bg);
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+/* The totals tab: the buttons for by file / folder / user */
+#totalsBar .btn.active { font-weight: 600; }

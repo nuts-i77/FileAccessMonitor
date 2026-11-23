@@ -168,5 +168,5 @@ FAM-ANCHOR v1 server=STORAGE chain=access seq=12345 hash=9f2c…(64 桁) time=20
 
 ## 関連
 
-- README の「改ざん検知」と「データフォルダ」
+- [セキュリティ](security.ja.md) の「改ざん検知」と、[設定](configuration.ja.md) の「データフォルダ」
 - [リリースノート v1.10.0](releases/v1.10.0.md)

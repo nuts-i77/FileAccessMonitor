@@ -163,6 +163,24 @@ public static class SecretStore
 
     private const string LinuxServiceUser = "fileaccessmonitor";
 
+    // Linux, as root: gives a restored file or folder to the service account, or to root (the collector's folder).
+    // Best effort, as below.
+    internal static void SetLinuxOwner(string path, bool root)
+    {
+        if (!root) { HandOverToServiceAccount(path); return; }
+        try
+        {
+            if (OperatingSystem.IsLinux() && GetEuid() == 0) Chown(path, 0, 0);
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
+    }
+
+    internal static bool IsLinuxRoot()
+    {
+        try { return OperatingSystem.IsLinux() && GetEuid() == 0; }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { return false; }
+    }
+
     // As root, give the file to the service account (best effort: without that user, or not as root, it stays as it is)
     private static void HandOverToServiceAccount(string path)
     {

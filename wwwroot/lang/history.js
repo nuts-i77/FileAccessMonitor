@@ -36,7 +36,8 @@ Object.assign(window.I18N_EN, {
   'hist.warn.events': 'Only the newest steps are shown. Older steps are omitted.',
   'hist.warn.hops': 'The file was renamed or moved too often. Tracking stopped before the end.',
   'hist.warn.window': 'The history stops at the selected period. Older steps exist.',
-  'hist.hint': 'The history follows recorded renames and moves. A rename is recorded together with the Delete access type, so monitor Delete.',
+  'hist.hint': 'The history follows recorded renames and moves.',
+  'hist.hintMore': 'A rename is recorded together with the Delete access type, so monitor Delete.',
 });
 Object.assign(window.I18N_JA, {
   'hist.title': 'ファイルの履歴',
@@ -75,5 +76,6 @@ Object.assign(window.I18N_JA, {
   'hist.warn.events': '新しい操作のみ表示しています。古い操作は省略されています。',
   'hist.warn.hops': '名前変更や移動の回数が多いため、途中で追跡を終了しました。',
   'hist.warn.window': '履歴は指定期間までです。それ以前の操作が存在します。',
-  'hist.hint': '履歴は、記録された名前変更と移動をたどって表示します。名前変更は削除と同時に記録されるため、監視イベント種別の［削除］を有効にしてください。',
+  'hist.hint': '記録された名前変更と移動をたどって表示します。',
+  'hist.hintMore': '名前変更は削除と同時に記録されるため、監視イベント種別の［削除］を有効にしてください。',
 });

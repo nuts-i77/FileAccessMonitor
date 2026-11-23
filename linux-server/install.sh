@@ -30,6 +30,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if [ "${1:-}" = "--uninstall" ]; then
+    # The daily backup timer (the backups are kept with the data folder unless --purge)
+    "$APP_DIR/FileAccessMonitor" backup-schedule --off >/dev/null 2>&1 || true
+    rm -f "$DATA_DIR/backup-schedule.json"
     systemctl disable --now "$COLLECTOR_UNIT" 2>/dev/null || true
     systemctl disable --now "$UNIT" 2>/dev/null || true
     rm -rf "$UNIT_FILE" "$COLLECTOR_UNIT_FILE" "$DROPIN_DIR" "$APP_DIR" /usr/local/bin/fileaccessmonitor-server
@@ -66,6 +69,12 @@ install -m 644 "$HERE/$UNIT" "$UNIT_FILE"
 install -m 644 "$HERE/$COLLECTOR_UNIT" "$COLLECTOR_UNIT_FILE"
 systemctl daemon-reload
 
+# An upgrade: back up the data folder before the new version first opens it (the last 3 are kept)
+if ! $FIRST_INSTALL; then
+    "$APP_DIR/FileAccessMonitor" backup --reason pre-update >/dev/null 2>&1 \
+        || echo "Warning: the data folder could not be backed up before the update; make one with: sudo $APP_DIR/FileAccessMonitor backup" >&2
+fi
+
 # A new install is monitoring only unless --collect is given; an upgrade keeps the mode in settings.json
 # (an upgrade from 1.10 or older replaces the root drop-in with the collector service)
 HAS_MODE=false
@@ -87,6 +96,11 @@ fi
 if $FIRST_INSTALL && ! $HAS_HTTPS; then set -- "$@" --https on; fi
 "$APP_DIR/fileaccessmonitor-server" "$@" >/dev/null
 systemctl enable --now "$UNIT" >/dev/null 2>&1
+# The daily backup (a systemd timer, as root), unless one was set up before; change it with
+# $APP_DIR/FileAccessMonitor backup-schedule
+if [ ! -f "$DATA_DIR/backup-schedule.json" ]; then
+    "$APP_DIR/FileAccessMonitor" backup-schedule --time 02:00 --keep 7 >/dev/null 2>&1 || true
+fi
 
 for i in 1 2 3 4 5 6 7 8 9 10; do
     [ -f "$DATA_DIR/initial-admin-password.txt" ] || ! $FIRST_INSTALL && break

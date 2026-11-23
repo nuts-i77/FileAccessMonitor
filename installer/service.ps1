@@ -130,8 +130,10 @@ function Set-DataFolderAccess([switch]$Web) {
 
     # Files that carry their own protected ACL (the keys, certificates, the initial password: SYSTEM and
     # Administrators only before 1.11) do not inherit, so they get the entry themselves. Inheritance flags are for
-    # folders only: a file given (OI)(CI) is refused.
-    foreach ($item in Get-ChildItem -LiteralPath $DataDir -Force | Where-Object { $_.Name -ne 'collector' }) {
+    # folders only: a file given (OI)(CI) is refused. backups\ keeps the permissions each file had when it was
+    # copied (a backup made as an administrator holds a copy of collector\, which must stay closed to the web
+    # service account).
+    foreach ($item in Get-ChildItem -LiteralPath $DataDir -Force | Where-Object { $_.Name -notin 'collector', 'backups' }) {
         if ($item.PSIsContainer) {
             Invoke-Icacls $item.FullName /grant "${WebAccount}:(OI)(CI)M" /C /Q
             Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Force | ForEach-Object { Invoke-Icacls $_.FullName /grant "${WebAccount}:M" /C /Q }

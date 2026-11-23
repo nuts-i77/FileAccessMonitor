@@ -204,16 +204,17 @@ public class ViewerScopeTests : IDisposable
     [Fact]
     public void At_most_two_exports_run_at_once()
     {
-        var a = CsvExport.TryEnter();
-        var b = CsvExport.TryEnter();
+        var gate = new SemaphoreSlim(CsvExport.MaxConcurrent, CsvExport.MaxConcurrent);
+        var a = CsvExport.TryEnter(gate);
+        var b = CsvExport.TryEnter(gate);
         try
         {
             Assert.NotNull(a);
             Assert.NotNull(b);
-            Assert.Null(CsvExport.TryEnter());
+            Assert.Null(CsvExport.TryEnter(gate));
             a!.Dispose();
             a.Dispose();   // twice is harmless
-            using var c = CsvExport.TryEnter();
+            using var c = CsvExport.TryEnter(gate);
             Assert.NotNull(c);
         }
         finally { a?.Dispose(); b?.Dispose(); }

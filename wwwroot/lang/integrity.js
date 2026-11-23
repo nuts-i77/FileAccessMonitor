@@ -1,7 +1,8 @@
 // Texts of the integrity feature (keys start with 'integrity.')
 Object.assign(window.I18N_EN, {
   'integrity.title': 'Tamper detection',
-  'integrity.intro': 'Every access record and operation-log entry is linked to the one before it with a secret key. Records changed, deleted, or added outside this program are detected, with their location.',
+  'integrity.intro': 'Checks that no record was changed, deleted or added outside this program.',
+  'integrity.introMore': 'Every access record and operation-log entry is linked to the one before it with a secret key (a chain). A record changed from outside is detected with its location.',
   'integrity.state.ok': 'Verified',
   'integrity.state.broken': 'Broken',
   'integrity.state.notVerified': 'Not verified yet',
@@ -42,7 +43,8 @@ Object.assign(window.I18N_EN, {
   'integrity.anchorCheckTitle': 'Check an anchor',
   'integrity.anchorPlaceholder': 'Paste a FAM-ANCHOR line or the contents of an anchor file',
   'integrity.anchorCheck': 'Check',
-  'integrity.anchorHint': 'An anchor is the end of the chain written down outside the database. It is written every day to the Windows event log (source FileAccessMonitor, event 1100) or syslog (tag fileaccessmonitor) and is included in the report email. The system log helps only if it is forwarded off this machine. Also store downloaded anchors elsewhere.',
+  'integrity.anchorHint': 'An anchor is the end of the chain written down outside the database. Store downloaded anchors elsewhere.',
+  'integrity.anchorHintMore': 'It is written every day to the Windows event log (source FileAccessMonitor, event 1100) or syslog (tag fileaccessmonitor) and is included in the report email. The system log helps only if it is forwarded off this machine.',
   'integrity.keyMissing': 'The key file chain.key cannot be read: tamper detection is off.',
   'integrity.verifiedUpTo': 'Verified up to {time} (record #{seq})',
   'integrity.lastCheck': 'Last check {time}, {kind}, {ms}',
@@ -72,7 +74,8 @@ Object.assign(window.I18N_EN, {
 });
 Object.assign(window.I18N_JA, {
   'integrity.title': '改ざん検知',
-  'integrity.intro': 'アクセス記録と操作ログの各行は、秘密鍵により直前の行と連鎖しています。本プログラム以外で変更・削除・追加された記録を、発生箇所とともに検出します。',
+  'integrity.intro': '本プログラム以外で記録が変更・削除・追加されていないかを確かめます。',
+  'integrity.introMore': 'アクセス記録と操作ログの各行は、秘密鍵により直前の行と連鎖しています（チェーン）。外部で変更された記録は、発生箇所とともに検出します。',
   'integrity.state.ok': '検証済み',
   'integrity.state.broken': '破損',
   'integrity.state.notVerified': '未検証',
@@ -113,7 +116,8 @@ Object.assign(window.I18N_JA, {
   'integrity.anchorCheckTitle': 'アンカーを照合',
   'integrity.anchorPlaceholder': 'FAM-ANCHOR の行、またはアンカーファイルの内容を貼り付けます',
   'integrity.anchorCheck': '照合',
-  'integrity.anchorHint': 'アンカーは、チェーン末尾をデータベース外に記録したものです。毎日、Windows イベントログ（ソース: FileAccessMonitor、イベント ID: 1100）または syslog（タグ: fileaccessmonitor）に書き込まれ、レポートメールにも記載されます。システムログがこのマシン外へ転送されている場合にのみ有効です。ダウンロードしたアンカーも、別の場所に保管してください。',
+  'integrity.anchorHint': 'アンカーは、チェーン末尾をデータベース外に記録したものです。ダウンロードしたアンカーは、別の場所に保管してください。',
+  'integrity.anchorHintMore': '毎日、Windows イベントログ（ソース: FileAccessMonitor、イベント ID: 1100）または syslog（タグ: fileaccessmonitor）に書き込まれ、レポートメールにも記載されます。システムログは、このマシンの外へ転送されている場合にのみ有効です。',
   'integrity.keyMissing': '鍵ファイル chain.key を読み込めないため、改ざん検知は無効です。',
   'integrity.verifiedUpTo': '{time} まで検証済み（記録 #{seq}）',
   'integrity.lastCheck': '前回の検証: {time}、{kind}、{ms}',

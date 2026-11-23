@@ -31,13 +31,24 @@ rm -f "$DROPIN_DIR/collect.conf"
 # The data folder belongs to the web service account; the collector's folder inside it stays root's
 # (root-owned, files private except key.hash)
 mkdir -p "$DATA_DIR/collector"
-find "$DATA_DIR" -path "$DATA_DIR/collector" -prune -o -exec chown fileaccessmonitor: {} +
+find "$DATA_DIR" \( -path "$DATA_DIR/collector" -o -path "$DATA_DIR/backups/*/collector" \) -prune -o -exec chown fileaccessmonitor: {} +
 chown root: "$DATA_DIR/collector"
 chmod 755 "$DATA_DIR/collector"
 chmod 700 "$DATA_DIR"
 systemctl daemon-reload || true
 
 if [ "$1" = 2 ] || { [ "$1" = configure ] && [ -n "${2:-}" ]; }; then
+    # Back up the data folder before the new version first opens it (the running old service is copied
+    # consistently; the last 3 pre-update backups are kept). deb passes the old version; rpm does not.
+    PREVIOUS=""
+    [ "$1" = configure ] && PREVIOUS="--previous ${2%%-*}"
+    # shellcheck disable=SC2086
+    /opt/fileaccessmonitor/FileAccessMonitor backup --reason pre-update $PREVIOUS >/dev/null 2>&1 \
+        || echo "Warning: the data folder could not be backed up before the update; make one with: sudo /opt/fileaccessmonitor/FileAccessMonitor backup" >&2
+    # An upgrade from before 1.13 gets the daily backup too (one set up or turned off before is left alone)
+    if [ ! -f "$DATA_DIR/backup-schedule.json" ]; then
+        /opt/fileaccessmonitor/FileAccessMonitor backup-schedule --time 02:00 --keep 7 >/dev/null 2>&1 || true
+    fi
     systemctl try-restart fileaccessmonitor || true
     if $COLLECT; then
         systemctl enable --now fileaccessmonitor-collector >/dev/null 2>&1 || true
@@ -47,6 +58,11 @@ if [ "$1" = 2 ] || { [ "$1" = configure ] && [ -n "${2:-}" ]; }; then
     fi
 else
     systemctl enable --now fileaccessmonitor >/dev/null 2>&1 || true
+    # The daily backup (a systemd timer, as root), unless one was set up before (backup-schedule.json):
+    # change it with /opt/fileaccessmonitor/FileAccessMonitor backup-schedule
+    if [ ! -f "$DATA_DIR/backup-schedule.json" ]; then
+        /opt/fileaccessmonitor/FileAccessMonitor backup-schedule --time 02:00 --keep 7 >/dev/null 2>&1 || true
+    fi
     if $COLLECT; then systemctl enable --now fileaccessmonitor-collector >/dev/null 2>&1 || true; fi
     sleep 3
     fileaccessmonitor-server || true

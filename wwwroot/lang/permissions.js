@@ -1,6 +1,7 @@
 // Texts of the permissions feature (keys start with 'perm.')
 Object.assign(window.I18N_EN, {
-  'perm.hint': 'Shows the permissions of each monitored folder and below, as of the last scan. Entries that are only inherited are excluded; broad access (Everyone, Authenticated Users, ...) and folders with inheritance disabled are highlighted. Only permissions set on the folders are shown; groups are not expanded. A scan reads every folder (and file) on the file server and can take time. Other jobs on that server wait during the scan.',
+  'perm.hint': 'Permissions of each monitored folder and below, as of the last scan. Broad access and disabled inheritance are highlighted.',
+  'perm.hintMore': 'Entries that are only inherited are left out. Broad access means Everyone, Authenticated Users and the like. Only permissions set on folders are shown; groups are not expanded. A scan reads every folder (and file) on the file server and can take time; other jobs on that server wait meanwhile.',
   'perm.folder': 'Folder',
   'perm.folderPh': 'A monitored folder, or a folder below one (e.g. U:\\Share\\Sales)',
   'perm.scan': 'Scan now',
@@ -101,7 +102,8 @@ Object.assign(window.I18N_EN, {
   'perm.broad.custom': 'Broad (listed in settings)',
 });
 Object.assign(window.I18N_JA, {
-  'perm.hint': '監視フォルダ以下のアクセス権を、最後のスキャン時点の内容で表示します。継承のみの項目は除外し、広範囲のアクセス（Everyone、Authenticated Users など）と継承の無効化を強調表示します。表示するのはフォルダに設定されたアクセス権のみで、グループのメンバーは展開しません。スキャンはファイルサーバー上のすべてのフォルダ（とファイル）を読み取るため、時間がかかる場合があります。スキャン中は、対象サーバーのほかの処理が待機します。',
+  'perm.hint': '監視フォルダ以下のアクセス権を、最後のスキャン時点の内容で表示します。広範囲のアクセスと継承の無効化は強調表示します。',
+  'perm.hintMore': '継承のみの項目は表示しません。広範囲のアクセスとは、Everyone や Authenticated Users などです。表示するのはフォルダに設定されたアクセス権だけで、グループのメンバーは展開しません。スキャンはファイルサーバー上のすべてのフォルダ（とファイル）を読み取るため時間がかかり、その間、対象サーバーのほかの処理は待機します。',
   'perm.folder': '対象フォルダ',
   'perm.folderPh': '監視フォルダ、または監視フォルダ以下のフォルダ（例: U:\\Share\\Sales）',
   'perm.scan': '今すぐスキャン',

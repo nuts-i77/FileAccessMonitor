@@ -138,7 +138,7 @@ fi
 # The data folder belongs to the web service account, and only to it; the collector's folder inside it stays
 # root's (its files are private, except key.hash, which the web service verifies the collector with)
 mkdir -p "$DATA_DIR/collector"
-find "$DATA_DIR" -path "$DATA_DIR/collector" -prune -o -exec chown "$SERVICE_USER": {} +
+find "$DATA_DIR" \( -path "$DATA_DIR/collector" -o -path "$DATA_DIR/backups/*/collector" \) -prune -o -exec chown "$SERVICE_USER": {} +
 chown root: "$DATA_DIR/collector"
 chmod 755 "$DATA_DIR/collector"
 chmod 700 "$DATA_DIR"

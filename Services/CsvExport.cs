@@ -12,11 +12,14 @@ public static class CsvExport
     private static readonly SemaphoreSlim Gate = new(MaxConcurrent, MaxConcurrent);
 
     // A slot for one export, or null when all are taken (answer 429 then); dispose it when done
-    public static IDisposable? TryEnter() => Gate.Wait(0) ? new Slot() : null;
+    public static IDisposable? TryEnter() => TryEnter(Gate);
 
-    private sealed class Slot : IDisposable
+    // The same with a gate of its own (tests: the shared one is used by exports of other tests running alongside)
+    internal static IDisposable? TryEnter(SemaphoreSlim gate) => gate.Wait(0) ? new Slot(gate) : null;
+
+    private sealed class Slot(SemaphoreSlim gate) : IDisposable
     {
         private int _released;
-        public void Dispose() { if (Interlocked.Exchange(ref _released, 1) == 0) Gate.Release(); }
+        public void Dispose() { if (Interlocked.Exchange(ref _released, 1) == 0) gate.Release(); }
     }
 }

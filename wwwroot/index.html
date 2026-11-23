@@ -116,47 +116,37 @@
   <!-- Tabs -->
   <ul class="nav nav-tabs mb-3" id="mainTabs">
     <li class="nav-item">
-      <a class="nav-link active" href="#" data-tab="dashboard" onclick="switchTab('dashboard', this)">
+      <a class="nav-link active" href="#" data-tab="dashboard" onclick="return switchTab('dashboard', this)">
         <i class="bi bi-speedometer2 me-1"></i><span data-i18n="tab.dashboard">ダッシュボード</span>
       </a>
     </li>
     <li class="nav-item">
-      <a class="nav-link" href="#" data-tab="files" onclick="switchTab('files', this)">
-        <i class="bi bi-file-earmark me-1"></i><span data-i18n="tab.files">ファイル別</span>
+      <a class="nav-link" href="#" data-group="totals" onclick="return switchTab(totalsTab, this)">
+        <i class="bi bi-bar-chart me-1"></i><span data-i18n="tab.totals">集計</span>
       </a>
     </li>
     <li class="nav-item">
-      <a class="nav-link" href="#" data-tab="folders" onclick="switchTab('folders', this)">
-        <i class="bi bi-folder me-1"></i><span data-i18n="tab.folders">フォルダ別</span>
-      </a>
-    </li>
-    <li class="nav-item">
-      <a class="nav-link" href="#" data-tab="users" onclick="switchTab('users', this)">
-        <i class="bi bi-people me-1"></i><span data-i18n="tab.users">ユーザー別</span>
-      </a>
-    </li>
-    <li class="nav-item">
-      <a class="nav-link" href="#" data-tab="recent" onclick="switchTab('recent', this)">
+      <a class="nav-link" href="#" data-tab="recent" onclick="return switchTab('recent', this)">
         <i class="bi bi-clock-history me-1"></i><span data-i18n="tab.recent">最新アクセス</span>
       </a>
     </li>
     <li class="nav-item">
-      <a class="nav-link" href="#" data-tab="search" onclick="switchTab('search', this)">
+      <a class="nav-link" href="#" data-tab="search" onclick="return switchTab('search', this)">
         <i class="bi bi-search me-1"></i><span data-i18n="tab.search">検索</span>
       </a>
     </li>
     <li class="nav-item d-none" id="navUnused">
-      <a class="nav-link" href="#" data-tab="unused" onclick="switchTab('unused', this)">
+      <a class="nav-link" href="#" data-tab="unused" onclick="return switchTab('unused', this)">
         <i class="bi bi-hourglass-split me-1"></i><span data-i18n="tab.unused">未使用ファイル</span>
       </a>
     </li>
     <li class="nav-item d-none" id="navPermissions">
-      <a class="nav-link" href="#" data-tab="permissions" onclick="switchTab('permissions', this)">
+      <a class="nav-link" href="#" data-tab="permissions" onclick="return switchTab('permissions', this)">
         <i class="bi bi-shield-lock me-1"></i><span data-i18n="tab.permissions">アクセス権</span>
       </a>
     </li>
     <li class="nav-item ms-auto">
-      <a class="nav-link" href="#" data-tab="settings" onclick="switchTab('settings', this)">
+      <a class="nav-link" href="#" data-tab="settings" onclick="return switchTab('settings', this)">
         <i class="bi bi-gear me-1"></i><span data-i18n="tab.settings">設定</span>
       </a>
     </li>
@@ -206,6 +196,16 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- The totals tab: by file, folder or user (one top tab, switchTab marks it for all three) -->
+  <div id="totalsBar" class="btn-group btn-group-sm mb-2 d-none" role="group">
+    <button type="button" class="btn btn-outline-primary" data-tab="files" onclick="switchTab('files', this)">
+      <i class="bi bi-file-earmark me-1"></i><span data-i18n="tab.files">ファイル別</span></button>
+    <button type="button" class="btn btn-outline-primary" data-tab="folders" onclick="switchTab('folders', this)">
+      <i class="bi bi-folder me-1"></i><span data-i18n="tab.folders">フォルダ別</span></button>
+    <button type="button" class="btn btn-outline-primary" data-tab="users" onclick="switchTab('users', this)">
+      <i class="bi bi-people me-1"></i><span data-i18n="tab.users">ユーザー別</span></button>
   </div>
 
   <!-- Files Tab -->
@@ -441,7 +441,7 @@
   <div id="tab-unused" class="d-none">
     <div class="card mb-3">
       <div class="card-body">
-        <p class="small text-muted mb-3" data-i18n="unused.hint">監視フォルダ内のファイルのうち、指定期間に読み取りのないファイル（またはアクセスのないファイル）と、その容量をフォルダ別に集計します。フォルダの実体をスキャンするため、ファイル数が多い場合は時間がかかります。</p>
+        <div class="small text-muted mb-3" data-hint="unused.hint"></div>
         <div class="row g-2 align-items-end">
           <div class="col-12 col-md-3 d-none" id="unusedServerCol">
             <label class="form-label small text-muted" for="unusedServer" data-i18n="servers.target">対象サーバー</label>
@@ -490,24 +490,40 @@
     <div id="permissionsRoot"></div>
   </div>
 
-  <!-- Settings Tab -->
+  <!-- Settings Tab: a menu on the left, the picked page on the right (showSettingsPage in app.js) -->
   <div id="tab-settings" class="d-none">
     <div class="row g-3">
-      <!-- Per-server settings: monitored folders and recording rules apply to the selected server only -->
-      <div class="col-12">
-        <div class="border border-primary-subtle rounded-3 p-3 bg-body">
-          <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
-            <span class="fw-semibold"><i class="bi bi-hdd me-1"></i><span data-i18n="settings.perServer">サーバーごとの設定</span></span>
-            <span id="settingsServerBar" class="d-flex align-items-center gap-2 d-none">
-              <label class="small text-muted mb-0" for="settingsServer" data-i18n="servers.target">対象サーバー</label>
-              <select id="settingsServer" class="form-select form-select-sm" style="width:auto" onchange="loadServerSettings()"></select>
-            </span>
-            <span class="small text-muted" data-i18n="settings.perServerHint">監視フォルダと記録ルールは、選択したサーバーにのみ適用されます。</span>
-            <button type="button" id="setupOpenBtn" class="btn btn-sm btn-outline-primary ms-auto d-none" onclick="openSetupWizard()">
-              <i class="bi bi-magic me-1"></i><span data-i18n="setup.open">導入ウィザード</span>
-            </button>
+      <div class="col-12 col-md-3 col-xxl-2">
+        <nav class="settings-nav" id="settingsNav">
+          <div class="settings-nav-group"><i class="bi bi-hdd me-1"></i><span data-i18n="settings.perServer">サーバーごとの設定</span></div>
+          <div id="settingsServerBar" class="mb-2 d-none">
+            <select id="settingsServer" class="form-select form-select-sm" onchange="loadServerSettings()" data-i18n-title="servers.target" title="対象サーバー"></select>
           </div>
-          <div class="row g-3">
+          <div class="list-group list-group-flush mb-3">
+          <a href="#" class="list-group-item list-group-item-action" data-page="folders" onclick="showSettingsPage('folders'); return false;"><i class="bi bi-folder-check me-2"></i><span data-i18n="settings.nav.folders">監視フォルダ</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="recording" onclick="showSettingsPage('recording'); return false;"><i class="bi bi-funnel me-2"></i><span data-i18n="settings.nav.recording">記録ルール</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="securityLog" onclick="showSettingsPage('securityLog'); return false;"><i class="bi bi-journal-arrow-up me-2"></i><span data-i18n="settings.nav.securityLog">Security ログ</span></a>
+          </div>
+          <div class="settings-nav-group"><i class="bi bi-gear me-1"></i><span data-i18n="settings.global">全体の設定</span></div>
+          <div class="list-group list-group-flush mb-3">
+          <a href="#" class="list-group-item list-group-item-action" data-page="agents" onclick="showSettingsPage('agents'); return false;"><i class="bi bi-hdd-stack me-2"></i><span data-i18n="settings.nav.agents">エージェント</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="alerts" onclick="showSettingsPage('alerts'); return false;"><i class="bi bi-bell me-2"></i><span data-i18n="settings.nav.alerts">通知</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="reports" onclick="showSettingsPage('reports'); return false;"><i class="bi bi-envelope-paper me-2"></i><span data-i18n="settings.nav.reports">定期レポート</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="integrity" onclick="showSettingsPage('integrity'); return false;"><i class="bi bi-shield-check me-2"></i><span data-i18n="settings.nav.integrity">改ざん検知</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="users" onclick="showSettingsPage('users'); return false;"><i class="bi bi-people-fill me-2"></i><span data-i18n="settings.nav.users">ユーザー</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="data" onclick="showSettingsPage('data'); return false;"><i class="bi bi-database me-2"></i><span data-i18n="settings.nav.data">データの保持と DNS</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="backup" onclick="showSettingsPage('backup'); return false;"><i class="bi bi-archive me-2"></i><span data-i18n="settings.nav.backup">バックアップ</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="system" onclick="showSettingsPage('system'); return false;"><i class="bi bi-info-circle me-2"></i><span data-i18n="settings.nav.system">アプリと接続</span></a>
+          <a href="#" class="list-group-item list-group-item-action" data-page="audit" onclick="showSettingsPage('audit'); return false;"><i class="bi bi-journal-text me-2"></i><span data-i18n="settings.nav.audit">操作ログ</span></a>
+          </div>
+          <button type="button" id="setupOpenBtn" class="btn btn-sm btn-outline-primary w-100 d-none" onclick="openSetupWizard()">
+            <i class="bi bi-magic me-1"></i><span data-i18n="setup.open">導入ウィザード</span>
+          </button>
+        </nav>
+      </div>
+      <div class="col-12 col-md-9 col-xxl-10" id="settingsPages">
+      <div class="set-page d-none" data-page="folders">
+        <div class="row g-3">
       <div class="col-12 col-lg-7">
         <div class="card">
           <div class="card-header fw-semibold">
@@ -558,7 +574,7 @@
               <i class="bi bi-info-circle me-1"></i><span data-i18n="settings.saclInfo">追加時に、監査ポリシーと SACL が自動で設定されます。</span>
             </div>
             <div class="mt-1 text-muted small">
-              <i class="bi bi-info-circle me-1"></i><span data-i18n="settings.usnInfo">Windows では、変更ジャーナル（USN ジャーナル）が有効なドライブで、ファイルの作成と名前変更の移動先を記録します。無効なドライブでは、「書き込み」と「名前変更（変更前のパスのみ）」として記録します（有効化: fsutil usn createjournal m=33554432 a=8388608 D:）。</span>
+              <i class="bi bi-info-circle me-1"></i><span data-hint="settings.usnInfo"></span>
             </div>
           </div>
         </div>
@@ -567,6 +583,10 @@
         <div id="reapplyBanner"></div>
         <div id="settingsAlert"></div>
       </div>
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="recording">
+        <div class="row g-3">
       <!-- Recording rules (Admin only) -->
       <div class="col-12 d-none" id="recordingSettingsSection">
         <div class="card">
@@ -589,7 +609,7 @@
               <div class="col-12 col-md-4">
                 <label class="form-label small text-muted" for="recExcludeProcesses" data-i18n="recording.processes">除外するプロセス</label>
                 <textarea id="recExcludeProcesses" class="form-control form-control-sm font-monospace" rows="5"></textarea>
-                <div class="form-text" data-i18n="recording.processesHint">1 行に 1 つ入力します（例: backup.exe）。サーバー上で直接開いたアクセスにのみ適用されます。共有フォルダ経由のアクセスにはプロセス名が記録されません。</div>
+                <div class="form-text" data-hint="recording.processesHint"></div>
               </div>
               <div class="col-12 col-md-6">
                 <label class="form-label small text-muted" for="recMergeReadMinutes" data-i18n="recording.merge">連続した読み取りをまとめる時間</label>
@@ -597,21 +617,21 @@
                   <input type="number" id="recMergeReadMinutes" class="form-control" min="0" max="1440">
                   <span class="input-group-text" data-i18n="recording.minutes">分</span>
                 </div>
-                <div class="form-text" data-i18n="recording.mergeHint">同じユーザーが同じファイルを、前回の読み取りから指定時間内に再度読み取った場合は記録しません（0 = すべて記録）。同じユーザーによる同じファイルへの書き込みは、2 秒以内なら 1 件にまとめます。削除・名前変更は常に記録します。</div>
+                <div class="form-text" data-hint="recording.mergeHint"></div>
               </div>
               <div class="col-12 col-md-6">
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="recRecordDenied">
                   <label class="form-check-label small" for="recRecordDenied" data-i18n="settings.recordDenied">拒否されたアクセスも記録する</label>
                 </div>
-                <div class="form-text" id="recRecordDeniedHelp" data-i18n="settings.recordDeniedHelp">権限不足で拒否された読み取り・書き込み・削除の試行も記録します。Windows では、アップグレード後に一度［SACL 再適用］を実行する必要があります。Linux では、［SACL 再適用］の実行後に有効になります。</div>
+                <div class="form-text" id="recRecordDeniedHelp" data-hint="settings.recordDeniedHelp"></div>
               </div>
               <div class="col-12 col-md-6">
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="recAuditOpens">
                   <label class="form-check-label small" for="recAuditOpens" data-i18n="settings.auditOpens">空のファイルの作成者も記録する（Windows）</label>
                 </div>
-                <div class="form-text" data-i18n="settings.auditOpensHelp">エクスプローラーの［新規作成］など、Security ログに書き込みが残らない空のファイルの作成と、上書きで空にした操作について、誰が行ったかまで記録します。そのために、ファイルを開く操作も監査します（ハンドルの操作の成功の監査）。開く操作そのものは記録に残りません。オフでは、これらはユーザー「(unknown)」で記録します。オンにすると Security ログの量がおよそ 2 倍になるため、ログのサイズを大きくしてください。Linux には関係ありません。</div>
+                <div class="form-text" data-hint="settings.auditOpensHelp"></div>
               </div>
               <div class="col-12 d-flex gap-2">
                 <button class="btn btn-primary btn-sm" onclick="saveRecordingSettings()">
@@ -626,49 +646,16 @@
           </div>
         </div>
       </div>
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="securityLog">
+        <div class="row g-3">
       <!-- Security log of the selected Windows server (Admin only, js/setup.js) -->
       <div class="col-12 d-none" id="securityLogSection"></div>
-
-          </div>
         </div>
       </div>
-
-      <!-- Settings for the whole installation -->
-      <div class="col-12">
-        <div class="mt-2">
-          <span class="fw-semibold"><i class="bi bi-gear me-1"></i><span data-i18n="settings.global">全体の設定</span></span>
-          <span class="small text-muted ms-2" data-i18n="settings.globalHint">すべてのサーバーに共通の設定です。</span>
-        </div>
-      </div>
-      <!-- User Management (Admin only) -->
-      <div class="col-12 d-none" id="usermgmtSettingsSection">
-        <div class="card">
-          <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
-            <span><i class="bi bi-people-fill me-1"></i><span data-i18n="settings.userMgmt">ユーザー管理</span></span>
-            <button class="btn btn-primary btn-sm" onclick="showCreateUser()">
-              <i class="bi bi-person-plus me-1"></i><span data-i18n="btn.addUser">ユーザー追加</span>
-            </button>
-          </div>
-          <div class="card-body p-0">
-            <div class="table-responsive">
-              <table class="table table-hover table-sm mb-0">
-                <thead class="table-dark sticky-top">
-                  <tr>
-                    <th data-i18n="th.username">ユーザー名</th>
-                    <th data-i18n="th.displayName">表示名</th>
-                    <th style="width:150px" data-i18n="th.role">ロール</th>
-                    <th data-i18n="th.scope">閲覧範囲</th>
-                    <th style="width:110px" data-i18n="th.actions">操作</th>
-                  </tr>
-                </thead>
-                <tbody id="usermgmtTableBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-        <div id="usermgmtAlert" class="mt-2"></div>
-      </div>
-
+      <div class="set-page d-none" data-page="agents">
+        <div class="row g-3">
       <!-- Agents (Admin only) -->
       <div class="col-12 d-none" id="agentsSection">
         <div class="card">
@@ -679,7 +666,7 @@
             </button>
           </div>
           <div class="card-body p-0">
-            <p class="small text-muted px-3 pt-3 mb-2" data-i18n="agents.hint">他のファイルサーバーにエージェントをインストールすると、そのサーバーのアクセス記録がここに集約されます。登録コードの有効期間は 24 時間で、1 回のみ使用できます。</p>
+            <div class="small text-muted px-3 pt-3 mb-2" data-hint="agents.hint"></div>
             <div class="table-responsive">
               <table class="table table-sm mb-0">
                 <thead class="table-dark"><tr>
@@ -706,91 +693,10 @@
           </div>
         </div>
       </div>
-
-      <!-- App info and update check (Admin only) -->
-      <div class="col-12 d-none" id="appInfoSection">
-        <div class="card">
-          <div class="card-header fw-semibold">
-            <i class="bi bi-info-circle me-1"></i><span data-i18n="appinfo.title">アプリ情報</span>
-          </div>
-          <div class="card-body small">
-            <div class="mb-2"><span class="text-muted" data-i18n="app.version">バージョン:</span> <strong id="appVersion">-</strong></div>
-            <div class="mb-2"><span class="text-muted" data-i18n="app.latest">最新版:</span> <span id="appLatest">-</span></div>
-            <div class="mb-2"><span class="text-muted" data-i18n="app.localCollection">このサーバーでの収集:</span> <span id="appLocalCollection">-</span>
-              <div class="form-text" data-i18n="app.localHint">切り替えるには、Windows では FileAccessMonitor.exe local-collection on（または off）を実行し、サービスを再起動します。Linux では sudo fileaccessmonitor-server --collect（または --monitor-only）を実行します。</div></div>
-            <div class="form-check form-switch mb-1">
-              <input class="form-check-input" type="checkbox" id="appUpdateCheck" onchange="saveUpdateCheck(this.checked)">
-              <label class="form-check-label" for="appUpdateCheck" data-i18n="app.updateCheck">更新を確認する</label>
-            </div>
-            <div class="form-text mb-2" data-i18n="app.updateCheckHint">管理者が画面を開いたとき、ブラウザーから GitHub に最新版を 1 日 1 回問い合わせます。ファイルサーバー自体は外部と通信しません。</div>
-            <button class="btn btn-outline-secondary btn-sm" onclick="checkForUpdate(true)">
-              <i class="bi bi-arrow-repeat me-1"></i><span data-i18n="app.checkNow">今すぐ確認</span>
-            </button>
-          </div>
         </div>
       </div>
-
-      <!-- Web GUI connection (Admin only; read-only: switching is done by the installer or the command line) -->
-      <div class="col-12 d-none" id="webTlsSection">
-        <div class="card">
-          <div class="card-header fw-semibold">
-            <i class="bi bi-shield-lock me-1"></i><span data-i18n="web.card.title">Web GUI の接続（HTTPS）</span>
-          </div>
-          <div class="card-body small" id="webTlsBody">
-            <div class="spinner-border spinner-border-sm"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Reverse DNS -->
-      <div class="col-12">
-        <div class="card">
-          <div class="card-header fw-semibold">
-            <i class="bi bi-diagram-3 me-1"></i><span data-i18n="settings.dns">逆引き DNS サーバー</span>
-          </div>
-          <div class="card-body">
-            <p class="small text-muted mb-2" data-i18n="settings.dnsHint">IP アドレスからマシン名を解決するプライベート DNS サーバーを指定します。空欄の場合、逆引きは行いません。エージェントから届いた記録の接続元も、このサーバーで解決します。</p>
-            <div class="input-group input-group-sm" style="max-width:360px">
-              <input type="text" id="dnsServerInput" class="form-control font-monospace"
-                placeholder="192.168.0.1" data-i18n-ph="settings.dnsPh"
-                onkeydown="if(event.key==='Enter')saveDnsServer()">
-              <button class="btn btn-outline-primary" onclick="saveDnsServer()">
-                <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Data Retention Policy -->
-      <div class="col-12">
-        <div class="card">
-          <div class="card-header fw-semibold">
-            <i class="bi bi-clock-history me-1"></i><span data-i18n="settings.retention">データ保持ポリシー</span>
-          </div>
-          <div class="card-body">
-            <div class="row g-3 align-items-start">
-              <div class="col-12 col-md-5" id="retentionAdminSection">
-                <label class="form-label small text-muted" data-i18n="retention.label">保持日数（0 = 無期限保持）</label>
-                <div class="input-group input-group-sm">
-                  <input type="number" id="retentionDaysInput" class="form-control" min="0" max="3650" placeholder="例: 90" data-i18n-ph="retention.ph" style="max-width:100px">
-                  <span class="input-group-text" data-i18n="retention.unit">日間</span>
-                  <button class="btn btn-outline-primary" onclick="saveRetentionPolicy()">
-                    <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
-                  </button>
-                </div>
-                <div class="form-text" data-i18n="retention.hint">0 を指定すると、無期限で保持します。</div>
-              </div>
-              <div class="col-12 col-md-7">
-                <div id="retentionStats" class="text-muted small">
-                  <div class="spinner-border spinner-border-sm"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
+      <div class="set-page d-none" data-page="alerts">
+        <div class="row g-3">
       <!-- Notifications (Admin only) -->
       <div class="col-12 d-none" id="alertsSettingsSection">
         <div class="card">
@@ -798,7 +704,7 @@
             <i class="bi bi-bell me-1"></i><span data-i18n="alerts.title">通知</span>
           </div>
           <div class="card-body">
-            <p class="small text-muted mb-3" data-i18n="alerts.hint">1 人のユーザーが短時間に大量のファイルを削除・変更・読み取りした場合（誤操作、ランサムウェア、情報持ち出しの疑い）と、記録が中断した場合（Security ログの上書き・消去）に通知します。</p>
+            <div class="small text-muted mb-3" data-hint="alerts.hint"></div>
             <div class="form-check form-switch mb-3">
               <input class="form-check-input" type="checkbox" id="alertEnabled">
               <label class="form-check-label" for="alertEnabled" data-i18n="alerts.enabled">通知を有効にする</label>
@@ -832,13 +738,13 @@
                 <label class="form-label small text-muted" for="alertAgentOfflineMinutes" data-i18n="alerts.agentOffline">エージェントの無応答（分）</label>
                 <input type="number" id="alertAgentOfflineMinutes" class="form-control form-control-sm" min="0">
               </div>
-              <div class="col-12 form-text mt-1" data-i18n="alerts.thresholdHint">［集計時間］内に 1 人のユーザーがしきい値以上の件数を削除・書き込み・読み取りした場合に通知します。読み取りは、連続した読み取りをまとめた後の件数で数えます。0 を指定すると、その種別は通知しません。エージェントの無応答は、指定した分数以上エージェントからの接続がない場合に通知します（0 = 通知しない）。</div>
+              <div class="col-12 form-text mt-1" data-hint="alerts.thresholdHint"></div>
               <div class="col-12">
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="alertRansomwareEnabled">
                   <label class="form-check-label" for="alertRansomwareEnabled" data-i18n="alerts.ransomwareEnabled">ランサムウェアに似た動作を検知して緊急通知する</label>
                 </div>
-                <div class="form-text" data-i18n="alerts.ransomwareHint">次の動作を検知します。多数のファイルが同じ新しい拡張子に名前変更された場合、大量の書き込みと大量の名前変更が同時に発生した場合、複数のフォルダに脅迫文のファイルが作成された場合。自動的な対処は行いません。</div>
+                <div class="form-text" data-hint="alerts.ransomwareHint"></div>
               </div>
 
               <div class="col-12"><hr class="my-1"><span class="fw-semibold small" data-i18n="alerts.webhook">Webhook（Teams / Slack など）</span></div>
@@ -866,7 +772,7 @@
                 <label class="form-label small text-muted" for="alertProxyPassword" data-i18n="alerts.proxyPassword">プロキシのパスワード</label>
                 <input type="password" id="alertProxyPassword" class="form-control form-control-sm" autocomplete="new-password">
               </div>
-              <div class="col-12 form-text mt-0" data-i18n="alerts.proxyHint">インターネット接続にプロキシが必要な場合に指定します（Webhook のみ。メールでは使用しません）。サービスは SYSTEM アカウントで動作するため、Windows のプロキシ設定は使用されません。</div>
+              <div class="col-12 form-text mt-0" data-hint="alerts.proxyHint"></div>
 
               <div class="col-12"><hr class="my-1"><span class="fw-semibold small" data-i18n="alerts.email">メール（SMTP）</span></div>
               <div class="col-8 col-md-4">
@@ -921,13 +827,149 @@
           </div>
         </div>
       </div>
-
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="reports">
+        <div class="row g-3">
       <!-- Scheduled report (Admin only); built by js/reports.js -->
       <div class="col-12 d-none" id="reportsSettingsSection"></div>
-
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="integrity">
+        <div class="row g-3">
       <!-- Tamper detection (Admin only); built by js/integrity.js -->
       <div class="col-12 d-none" id="integritySettingsSection"></div>
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="users">
+        <div class="row g-3">
+      <!-- User Management (Admin only) -->
+      <div class="col-12 d-none" id="usermgmtSettingsSection">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
+            <span><i class="bi bi-people-fill me-1"></i><span data-i18n="settings.userMgmt">ユーザー管理</span></span>
+            <button class="btn btn-primary btn-sm" onclick="showCreateUser()">
+              <i class="bi bi-person-plus me-1"></i><span data-i18n="btn.addUser">ユーザー追加</span>
+            </button>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-sm mb-0">
+                <thead class="table-dark sticky-top">
+                  <tr>
+                    <th data-i18n="th.username">ユーザー名</th>
+                    <th data-i18n="th.displayName">表示名</th>
+                    <th style="width:150px" data-i18n="th.role">ロール</th>
+                    <th data-i18n="th.scope">閲覧範囲</th>
+                    <th style="width:110px" data-i18n="th.actions">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="usermgmtTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div id="usermgmtAlert" class="mt-2"></div>
+      </div>
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="data">
+        <div class="row g-3">
+      <!-- Data Retention Policy -->
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-clock-history me-1"></i><span data-i18n="settings.retention">データ保持ポリシー</span>
+          </div>
+          <div class="card-body">
+            <div class="row g-3 align-items-start">
+              <div class="col-12 col-md-5" id="retentionAdminSection">
+                <label class="form-label small text-muted" data-i18n="retention.label">保持日数（0 = 無期限保持）</label>
+                <div class="input-group input-group-sm">
+                  <input type="number" id="retentionDaysInput" class="form-control" min="0" max="3650" placeholder="例: 90" data-i18n-ph="retention.ph" style="max-width:100px">
+                  <span class="input-group-text" data-i18n="retention.unit">日間</span>
+                  <button class="btn btn-outline-primary" onclick="saveRetentionPolicy()">
+                    <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
+                  </button>
+                </div>
+                <div class="form-text" data-i18n="retention.hint">0 を指定すると、無期限で保持します。</div>
+              </div>
+              <div class="col-12 col-md-7">
+                <div id="retentionStats" class="text-muted small">
+                  <div class="spinner-border spinner-border-sm"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Reverse DNS -->
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-diagram-3 me-1"></i><span data-i18n="settings.dns">逆引き DNS サーバー</span>
+          </div>
+          <div class="card-body">
+            <div class="small text-muted mb-2" data-hint="settings.dnsHint"></div>
+            <div class="input-group input-group-sm" style="max-width:360px">
+              <input type="text" id="dnsServerInput" class="form-control font-monospace"
+                placeholder="192.168.0.1" data-i18n-ph="settings.dnsPh"
+                onkeydown="if(event.key==='Enter')saveDnsServer()">
+              <button class="btn btn-outline-primary" onclick="saveDnsServer()">
+                <i class="bi bi-floppy me-1"></i><span data-i18n="btn.save">保存</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="backup">
+        <div class="row g-3">
+      <!-- Backups of the data folder (Admin only); built by js/backup.js -->
+      <div class="col-12 d-none" id="backupSettingsSection"></div>
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="system">
+        <div class="row g-3">
+      <!-- App info and update check (Admin only) -->
+      <div class="col-12 d-none" id="appInfoSection">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-info-circle me-1"></i><span data-i18n="appinfo.title">アプリ情報</span>
+          </div>
+          <div class="card-body small">
+            <div class="mb-2"><span class="text-muted" data-i18n="app.version">バージョン:</span> <strong id="appVersion">-</strong></div>
+            <div class="mb-2"><span class="text-muted" data-i18n="app.latest">最新版:</span> <span id="appLatest">-</span></div>
+            <div class="mb-2"><span class="text-muted" data-i18n="app.localCollection">このサーバーでの収集:</span> <span id="appLocalCollection">-</span>
+              <div class="form-text" data-hint="app.localHint"></div></div>
+            <div class="form-check form-switch mb-1">
+              <input class="form-check-input" type="checkbox" id="appUpdateCheck" onchange="saveUpdateCheck(this.checked)">
+              <label class="form-check-label" for="appUpdateCheck" data-i18n="app.updateCheck">更新を確認する</label>
+            </div>
+            <div class="form-text mb-2" data-hint="app.updateCheckHint"></div>
+            <button class="btn btn-outline-secondary btn-sm" onclick="checkForUpdate(true)">
+              <i class="bi bi-arrow-repeat me-1"></i><span data-i18n="app.checkNow">今すぐ確認</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- Web GUI connection (Admin only; read-only: switching is done by the installer or the command line) -->
+      <div class="col-12 d-none" id="webTlsSection">
+        <div class="card">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-shield-lock me-1"></i><span data-i18n="web.card.title">Web GUI の接続（HTTPS）</span>
+          </div>
+          <div class="card-body small" id="webTlsBody">
+            <div class="spinner-border spinner-border-sm"></div>
+          </div>
+        </div>
+      </div>
 
+        </div>
+      </div>
+      <div class="set-page d-none" data-page="audit">
+        <div class="row g-3">
       <!-- Operation log (Admin only) -->
       <div class="col-12 d-none" id="auditLogSection">
         <div class="card">
@@ -955,6 +997,9 @@
             </div>
           </div>
         </div>
+      </div>
+        </div>
+      </div>
       </div>
     </div>
   </div>
@@ -1019,7 +1064,7 @@
             <input type="text" id="enrollUrl" class="form-control font-monospace">
             <button class="btn btn-outline-secondary" onclick="rebuildConnection()" data-i18n="agents.apply">反映</button>
           </div>
-          <div class="form-text" data-i18n="agents.urlHint">ファイルサーバーから名前解決できない場合は、IP アドレスに変更して［反映］を押してください。監視サーバーのファイアウォールで、このポートを開放する必要があります。</div>
+          <div class="form-text" data-hint="agents.urlHint"></div>
         </div>
         <label class="form-label" for="enrollConnection" data-i18n="agents.connection">接続文字列</label>
         <div class="input-group input-group-sm mb-2">
@@ -1058,12 +1103,12 @@
           <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="scopeAddRow" onclick="addScopeRow()">
             <i class="bi bi-plus"></i> <span data-i18n="scope.addRow">フォルダを追加</span>
           </button>
-          <div class="form-text" data-i18n="scope.pathsHint">このユーザーには、指定したフォルダ以下の記録のみ表示します（CSV 出力、未使用ファイルを含む）。［全サーバー］を選択すると、すべてのサーバーの同じパスが対象になります。フォルダを指定しないユーザーには何も表示されません。全体を表示するには、［すべてのフォルダ］を選択してください。</div>
+          <div class="form-text" data-hint="scope.pathsHint"></div>
         </div>
         <div class="mb-2">
           <label class="form-label small" for="scopeNotifyEmail" data-i18n="scope.email">通知先メールアドレス（任意）</label>
           <input type="email" id="scopeNotifyEmail" class="form-control form-control-sm">
-          <div class="form-text" data-i18n="scope.emailHint">指定すると、範囲内のフォルダで大量削除などを検知した際に、このアドレスにもメールを送信します（通知が有効で、SMTP が設定されている場合）。しきい値は通知設定と同じです。</div>
+          <div class="form-text" data-hint="scope.emailHint"></div>
           <div class="form-check mt-1">
             <input class="form-check-input" type="checkbox" id="scopeSendReport" checked>
             <label class="form-check-label small" for="scopeSendReport" data-i18n="scope.sendReport">定期レポート（範囲内のみ）もこのアドレスに送信する</label>
@@ -1216,12 +1261,14 @@
 <script src="lang/history.js"></script>
 <script src="lang/reports.js"></script>
 <script src="lang/integrity.js"></script>
+<script src="lang/backup.js"></script>
 <script src="lang/setup.js"></script>
 <!-- Feature scripts: functions and hook registrations only (TabHooks, SettingsHooks, StartupHooks); app.js calls them -->
 <script src="js/permissions.js"></script>
 <script src="js/history.js"></script>
 <script src="js/reports.js"></script>
 <script src="js/integrity.js"></script>
+<script src="js/backup.js"></script>
 <script src="js/setup.js"></script>
 <script src="js/app.js"></script>
 </body>

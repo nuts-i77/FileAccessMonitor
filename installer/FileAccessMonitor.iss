@@ -58,6 +58,9 @@ en.HttpsCheck=Use HTTPS for the web GUI (self-signed certificate). Browsers show
 en.HttpsFinishNote=The web GUI uses HTTPS with a self-signed certificate:%n%1%nThe browser warns about the certificate the first time; choose to continue to the site.
 en.FirewallTask=Allow FileAccessMonitor through Windows Firewall (inbound: the web GUI port, and port 8443 for agents)
 en.InstallingService=Registering and starting the service...
+en.BackupScheduleTask=Back up the data folder every day at 2:00 and keep 7 (a Task Scheduler task; change it later with FileAccessMonitor.exe backup-schedule)
+en.BackingUp=Backing up the data folder before the update...
+en.BackupFailed=The data folder could not be backed up before the update (exit code %1). The update continues; afterwards make a backup with: FileAccessMonitor.exe backup%n%n%2
 en.ServiceFailed=Failed to register or start the service (exit code %1).%nSee the application log in C:\ProgramData\FileAccessMonitor\logs.
 en.OpenGui=Open the web GUI
 en.ShowPassword=Show the initial admin password
@@ -85,6 +88,9 @@ ja.HttpsCheck=Web GUI に HTTPS を使う（自己署名証明書）。ブラウ
 ja.HttpsFinishNote=Web GUI は自己署名証明書の HTTPS で提供されます:%n%1%n初回はブラウザーが証明書について警告するので、サイトへの接続を続行してください。
 ja.FirewallTask=Windows ファイアウォールで FileAccessMonitor の受信を許可する（Web GUI のポートと、エージェント用ポート 8443）
 ja.InstallingService=サービスを登録・起動しています...
+ja.BackupScheduleTask=毎日 2:00 にデータフォルダをバックアップし、7 個を残す（タスク スケジューラのタスク。後から FileAccessMonitor.exe backup-schedule で変更できます）
+ja.BackingUp=更新の前に、データフォルダをバックアップしています...
+ja.BackupFailed=更新の前にデータフォルダをバックアップできませんでした (終了コード %1)。更新は続けます。更新後に FileAccessMonitor.exe backup でバックアップを作成してください。%n%n%2
 ja.ServiceFailed=サービスの登録または起動に失敗しました (終了コード %1)。%nC:\ProgramData\FileAccessMonitor\logs のログを確認してください。
 ja.OpenGui=Web GUI を開く
 ja.ShowPassword=初期管理者パスワードを表示する
@@ -105,6 +111,7 @@ ja.AgentFinishInfo=このサーバーのアクセス記録を監視サーバー�
 
 [Tasks]
 Name: "firewall"; Description: "{cm:FirewallTask}"; Check: IsFullRole
+Name: "backupschedule"; Description: "{cm:BackupScheduleTask}"; Check: IsFullRole
 
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Excludes: "*.pdb,web.config"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -117,12 +124,16 @@ Source: "..\README.ja.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [UninstallDelete]
 Type: files; Name: "{app}\appsettings.Production.json"
+; What backup-schedule set up (the task is removed below): a new install sets it up again
+Type: files; Name: "{commonappdata}\FileAccessMonitor\backup-schedule.json"
 
 [Run]
 Filename: "{code:GetGuiUrl}"; Description: "{cm:OpenGui}"; Flags: postinstall shellexec nowait skipifsilent; Check: IsFullRole
 Filename: "{sys}\notepad.exe"; Parameters: """{code:GetPasswordFile}"""; Description: "{cm:ShowPassword}"; Flags: postinstall nowait skipifsilent unchecked; Check: ShowPasswordOption
 
 [UninstallRun]
+; The daily backup task (the backups themselves are kept, like the data folder)
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""FileAccessMonitor Backup"" /F"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveBackupTask"
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service.ps1"" -Action Uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
 
 [Code]
@@ -133,6 +144,7 @@ var
   HttpsPage: TInputOptionWizardPage;
   PreviousPort: String;
   PreviousRole: String;
+  PreviousVersion: String;
 
 function DataDir(): String;
 begin
@@ -385,6 +397,10 @@ end;
 // The single-file exe is locked while the service runs, so stop it before files are replaced.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  // The installed version, read before it is replaced (the pre-update backup records it)
+  if not RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{77312AEE-E529-4497-BDFA-6EF2437FA82E}_is1',
+                             'DisplayVersion', PreviousVersion) then
+    PreviousVersion := '';
   if FileExists(ExpandConstant('{app}\service.ps1')) then
     RunServiceScript('-Action Stop');
   Result := '';
@@ -462,12 +478,41 @@ begin
     SuppressibleMsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbError, MB_OK, IDOK)
   else
     Sleep(3000);  // give the service time to create the initial admin password file
+  // The daily backup (a Task Scheduler task as SYSTEM). Not when one was set up before: an upgrade keeps its
+  // time, number and folder (backup-schedule writes backup-schedule.json)
+  if WizardIsTaskSelected('backupschedule') and not FileExists(DataDir() + '\backup-schedule.json') then
+    Exec(ExpandConstant('{app}\{#AppExe}'), 'backup-schedule --time 02:00 --keep 7', '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+// An upgrade: "FileAccessMonitor.exe backup --reason pre-update", with the services stopped and before the new
+// version first opens the database (see DataBackup). A failure is reported but does not stop the update.
+procedure BackupBeforeUpdate();
+var
+  OutFile: String;
+  Content: AnsiString;
+  ResultCode: Integer;
+begin
+  if (PreviousVersion = '') or not DirExists(DataDir()) then
+    Exit;
+  WizardForm.StatusLabel.Caption := CustomMessage('BackingUp');
+  OutFile := ExpandConstant('{tmp}\backup.txt');
+  if not Exec(ExpandConstant('{cmd}'),
+              '/c ""' + ExpandConstant('{app}\{#AppExe}') + '" backup --reason pre-update --previous ' + PreviousVersion + ' > "' + OutFile + '" 2>&1"',
+              '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    ResultCode := -1;
+  if ResultCode <> 0 then
+  begin
+    Content := '';
+    LoadStringFromFile(OutFile, Content);
+    SuppressibleMsgBox(FmtMessage(CustomMessage('BackupFailed'), [IntToStr(ResultCode), String(Content)]), mbError, MB_OK, IDOK);
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    BackupBeforeUpdate();
     if IsAgentRole() then
       InstallAgent()
     else

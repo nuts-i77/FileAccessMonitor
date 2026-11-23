@@ -64,6 +64,13 @@ if (args.Length > 0 && args[0] == "local-collection")
             : "Stop the collector: systemctl disable --now fileaccessmonitor-collector. Restart the web service to apply: systemctl restart fileaccessmonitor.");
     return;
 }
+// "backup", "backups", "restore", "backup-schedule": the data folder with its permissions (also run by the installers
+// before an upgrade); see BackupCommand
+if (args.Length > 0 && args[0] is "backup" or "backups" or "restore" or "backup-schedule")
+{
+    Environment.ExitCode = BackupCommand.Run(args, Console.Out, Console.Error);
+    return;
+}
 // "collector": the privileged process that records accesses on this machine for the web service
 // (its own Windows service / systemd unit; see CollectorHost)
 if (args.Length > 0 && args[0] == "collector")
@@ -441,6 +448,16 @@ CREATE TABLE IF NOT EXISTS ""AgentEnrollments"" (
                 string.Join(" ", result.Errors.Select(e => e.Description)));
         }
     }
+}
+
+// The version this data was last used with (backups note it), and a restore made while the service was stopped
+DataBackup.WriteDataVersion(AppPaths.DataDir, AppInfo.Version);
+if (DataBackup.TakeRestoredMarker(AppPaths.DataDir) is { } restored)
+{
+    Log.Warning("The data folder was restored from the backup {Backup} (made {Created:u}); the previous data is kept in backups/{Saved}.",
+        restored.Backup, restored.BackupCreated, restored.PreviousDataSavedAs);
+    await app.Services.GetRequiredService<AuditLog>().WriteAsync("(command line)", "backup.restored",
+        $"backup={restored.Backup} created={restored.BackupCreated:yyyy-MM-dd HH:mm:ss}Z version={restored.DataVersion ?? restored.AppVersion} previous={restored.PreviousDataSavedAs}");
 }
 
 // Load DNS server setting

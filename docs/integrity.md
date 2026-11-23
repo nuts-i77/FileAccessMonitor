@@ -168,5 +168,5 @@ Paste a stored `FAM-ANCHOR` line, or the content of a downloaded anchor file, in
 
 ## See also
 
-- "Tamper detection" and the data folder table in the README
+- "Tamper detection" in [Security](security.md) and the data folder table in [Configuration](configuration.md)
 - [Release notes v1.10.0](releases/v1.10.0.md)

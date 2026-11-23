@@ -65,7 +65,7 @@ async function refreshIntegrityBanner() {
 function showIntegrityDetails() {
   const link = document.querySelector('[data-tab="settings"]');
   if (link) switchTab('settings', link);
-  setTimeout(() => document.getElementById('integritySettingsSection')?.scrollIntoView({ behavior: 'smooth' }), 300);
+  setTimeout(() => showSettingsSection('integritySettingsSection'), 300);
 }
 
 // ── Card ──────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ function buildIntegrityCard() {
       <span id="integrityBadge"></span>
     </div>
     <div class="card-body">
-      <p class="small text-muted">${t('integrity.intro')}</p>
+      <div class="small text-muted mb-3">${hintHtml('integrity.intro')}</div>
       <div id="integrityMsg"></div>
       <div id="integritySummary" class="small mb-3"></div>
       <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
@@ -104,7 +104,7 @@ function buildIntegrityCard() {
         <div id="integrityAnchorResult" class="mt-2"></div>
       </div>
       <div id="integrityCheckpoints" class="small mb-3"></div>
-      <p class="small text-muted mb-0">${t('integrity.anchorHint')}</p>
+      <div class="small text-muted mb-0">${hintHtml('integrity.anchorHint')}</div>
     </div>
   </div>`;
 }

@@ -20,7 +20,7 @@ function buildReportCard() {
     <div class="card">
       <div class="card-header fw-semibold"><i class="bi bi-envelope-paper me-1"></i>${esc(t('report.card.title'))}</div>
       <div class="card-body">
-        <p class="small text-muted mb-3">${esc(t('report.hint'))}</p>
+        <div class="small text-muted mb-3">${hintHtml('report.hint')}</div>
         <div id="rptSmtpWarning" class="alert alert-warning py-2 small d-none">${esc(t('report.smtpNeeded'))}</div>
         <div class="form-check form-switch mb-3">
           <input class="form-check-input" type="checkbox" id="rptEnabled">

@@ -338,6 +338,7 @@ tbody tr:hover td { background: var(--surface2); }
       <a class="nav-link" href="#https">Web GUI の HTTPS</a>
       <a class="nav-link" href="#v110">v1.10 の追加</a>
       <a class="nav-link" href="#v112">v1.11.2・v1.12 の追加</a>
+      <a class="nav-link" href="#v113">v1.13 の追加</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">フロントエンド</div>
@@ -866,8 +867,27 @@ FileAccessMonitor.exe local-collection off   # 監視サーバーのみにする
 
       <h3>そのほか（v1.12）</h3>
       <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
-        <li>ユーザーが <code>(unknown)</code> の記録は、最新アクセス・検索・詳細・履歴で、README の制限事項への「？」のリンクを付ける（<code>userHtml</code>）。</li>
+        <li>ユーザーが <code>(unknown)</code> の記録は、最新アクセス・検索・詳細・履歴で、制限事項（v1.13 からは docs/how-it-works の制限事項）への「？」のリンクを付ける（<code>userHtml</code>）。</li>
         <li>エージェントの互換: 1.12 のサーバーは 1.11 のエージェントでも動く。Security ログの手順だけが「エージェントを 1.12 に更新」と返す（<code>AgentAtLeast</code>。<code>-rc</code> 付きは本体の版で比べ、<code>0.0.0</code> は手元のビルドとして通す）。</li>
+      </ul>
+    </section>
+
+    <section id="v113">
+      <h2>v1.13 の追加（画面の構成・バックアップ）</h2>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li>設定タブ: 左のメニュー（<code>#settingsNav</code>）で選んだページ（<code>.set-page[data-page]</code>）だけを表示する。カードと ID は以前のまま、ページに入れ替えただけ。<code>showSettingsPage(name)</code> が切り替え、選んだページは <code>localStorage</code> の <code>settingsPage</code> に残す。カードがすべて <code>d-none</code> のページ（Viewer、Linux の Security ログ）はメニューから消える。カードの表示は各ローダーと機能スクリプトが切り替えるので、<code>#settingsPages</code> の class の変化を <code>MutationObserver</code> で拾って <code>refreshSettingsNav()</code> を呼ぶ。他の画面からカードへ飛ぶリンクは <code>showSettingsSection(id)</code>。</li>
+        <li>上のタブ: ファイル別・フォルダ別・ユーザー別を「集計」1 つにまとめ、中のボタン（<code>#totalsBar</code>）で切り替える。<code>switchTab</code> は押した要素ではなくタブ名で印を付ける。ハッシュ（<code>#files</code> など）は以前のまま。タブのリンクは <code>return switchTab(...)</code> にし、<code>href="#"</code> がハッシュを消さないようにした。</li>
+        <li>説明文: <code>data-hint="key"</code>（JS では <code>hintHtml(key)</code>）は、<code>key</code> の 1 行を表示し、<code>key + "More"</code> があれば <code>&lt;details class="hint-more"&gt;</code>（［詳しく］）に入れる。テスト <code>GuiLayoutTests</code> がメニューとページの対応、ヒントのキーが両言語にあることを確かめる。</li>
+      </ul>
+
+      <h3>バックアップと復元（v1.13）</h3>
+      <ul style="color:var(--fg-mid); padding-left:20px; margin:8px 0;">
+        <li><code>DataBackup</code>: データフォルダを <code>backups/&lt;yyyyMMdd-HHmmss&gt;-&lt;reason&gt;</code> にコピーする。<code>logs/</code>、<code>backups/</code>、<code>*.tmp</code>、<code>restored.json</code> は除く。各ファイルの権限を目録 <code>backup.json</code> に記録し（Windows は DACL の SDDL、Linux はモードと「root の所有か」）、コピーにも同じ権限を付ける。データベースは SQLite のバックアップ API（<code>BackupDatabase</code>）で、サービスを止めずに一貫した状態を取る。<code>chain-head.json</code> を先に、データベースを最後にコピーする（ヘッドは進むだけなので、コピーのヘッドがコピーの記録より先になることはない）。目録は最後に書き、目録のないフォルダは不完全として扱わない。</li>
+        <li>作成・復元・毎日の設定はコマンド（管理者 / root）だけ。Web サービスは権限のないアカウントで動き、鍵を含むバックアップを任意の場所に書けると、Admin のログインが盗まれたときに鍵を持ち出される。そのためバックアップは常に <code>collector/</code> を含む。インストーラーの <code>service.ps1</code> と Linux の <code>chown</code> は <code>backups/</code>（Linux は <code>backups/*/collector</code>）を対象から外し、コピーされたコレクターの秘密鍵が Web サービスのアカウントに開かれないようにする。データフォルダの外に置くバックアップのフォルダには、データフォルダの DACL を保護付きで付ける（付けられなければ失敗）。</li>
+        <li>復元（<code>restore</code>、管理者 / root）: SHA-256 で確かめ、データのバージョン（<code>version.txt</code>。Web サービスが起動時に書く）がプログラムより新しければ拒否（<code>--force</code>）。サービスを止め、今の中身を <code>&lt;時刻&gt;-before-restore</code> に移し（目録付きで、これを復元すれば取り消せる）、ファイルを権限ごと戻し、<code>restored.json</code> を置いてサービスを再開する。最初の起動が操作ログに <code>backup.restored</code> を書く。バックアップにコレクターのフォルダがなければ、今のものを残す。<code>FILEACCESSMONITOR_DATA</code> のときはサービスに触れない（データベースが使用中なら拒否）。</li>
+        <li>更新前: インストーラー（<code>BackupBeforeUpdate</code>、サービス停止後・新しい版の初回起動前）、deb / rpm の postinstall、tar.gz の <code>install.sh</code> が <code>backup --reason pre-update</code> を実行し、直近 3 個を残す。保存先は毎日のバックアップと同じで、使えなければデータフォルダ。失敗しても更新は止めない。</li>
+        <li>毎日のバックアップ（<code>BackupSchedule</code>、<code>backup-schedule</code>）: Windows はタスク スケジューラのタスク「FileAccessMonitor Backup」（SYSTEM、<code>schtasks /Create</code>）、Linux は <code>/etc/systemd/system/fileaccessmonitor-backup.{service,timer}</code>（root、<code>Persistent=true</code>）。設定はタスクやタイマーの引数にだけ持ち、<code>settings.json</code>（Web サービスが書ける）には置かない。<code>backup-schedule.json</code> は表示用。インストーラー（タスク <code>backupschedule</code>）と rpm / deb / <code>install.sh</code> は、このファイルがなければ既定（02:00、7 個）で設定し、アンインストールで消す。</li>
+        <li>画面（<code>BackupController</code>、Admin、読み取り専用）: 毎日の設定、一覧（毎日の保存先とデータフォルダの <code>backups/</code>）、最新が 2 日より古ければ警告。作成・設定・復元・削除のコマンドを、コピーできる形で示す。</li>
       </ul>
     </section>
 
