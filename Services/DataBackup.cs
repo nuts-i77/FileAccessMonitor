@@ -150,7 +150,8 @@ public static class DataBackup
             var files = Directory.EnumerateFiles(dataDir, "*", SearchOption.TopDirectoryOnly)
                 .Where(f => !DatabaseFiles.Contains(Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
                             && !Path.GetFileName(f).EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
-                            && !string.Equals(Path.GetFileName(f), RestoredMarker, StringComparison.OrdinalIgnoreCase))
+                            && !string.Equals(Path.GetFileName(f), RestoredMarker, StringComparison.OrdinalIgnoreCase)
+                            && !IsMachineFile(Path.GetFileName(f)))
                 // chain-head.json before the database (see above); the rest in name order
                 .OrderBy(f => Path.GetFileName(f) == "chain-head.json" ? 0 : 1).ThenBy(f => f, StringComparer.Ordinal);
             foreach (var file in files) entries.Add(CopyFile(dataDir, file, folder));
@@ -288,6 +289,7 @@ public static class DataBackup
             // A backup without the collector's folder (made from the GUI) leaves the current one in place:
             // its secret and unsent records still belong to this machine
             if (!info.CollectorIncluded && string.Equals(name, AppPaths.CollectorFolderName, StringComparison.OrdinalIgnoreCase)) continue;
+            if (IsMachineFile(name)) continue;
             if (!restoringFromInside && IsUnder(Path.GetFullPath(info.Path!), Path.GetFullPath(entry))) continue;
             var target = Path.Combine(safety, name);
             if (Directory.Exists(entry)) Directory.Move(entry, target); else File.Move(entry, target);
@@ -312,7 +314,7 @@ public static class DataBackup
             Directory.CreateDirectory(target);
             ApplyPermissions(target, true, e);
         }
-        foreach (var e in info.Entries.Where(e => !e.Directory))
+        foreach (var e in info.Entries.Where(e => !e.Directory && !IsMachineFile(e.Path)))
         {
             var target = Path.Combine(dataDir, e.Path);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
@@ -502,6 +504,11 @@ public static class DataBackup
         if (entry.Mode is { } mode) File.SetUnixFileMode(path, (UnixFileMode)mode);
         if (SecretStore.IsLinuxRoot()) SecretStore.SetLinuxOwner(path, entry.RootOwned);
     }
+
+    // Files about this machine, not the data: what backup-schedule set up describes the task or timer here, so
+    // it is neither backed up nor replaced by a restore
+    private static bool IsMachineFile(string rel) =>
+        string.Equals(rel, BackupSchedule.InfoFile, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCollectorPath(string rel) =>
         rel.Equals(AppPaths.CollectorFolderName, StringComparison.Ordinal)

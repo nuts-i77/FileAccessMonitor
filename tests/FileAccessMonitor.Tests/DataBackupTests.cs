@@ -139,6 +139,20 @@ public sealed class DataBackupTests : IDisposable
         Assert.Equal("newer-secret", File.ReadAllText(Path.Combine(collector, "secret")));
     }
 
+    // What backup-schedule set up describes this machine's task or timer, not the data
+    [Fact]
+    public void The_daily_backup_setting_is_not_backed_up_nor_replaced_by_a_restore()
+    {
+        var schedule = Path.Combine(Data, BackupSchedule.InfoFile);
+        File.WriteAllText(schedule, "before");
+        var info = DataBackup.Create(Data, Root, DataBackup.ReasonManual, "1.13.0");
+        Assert.False(File.Exists(Path.Combine(info.Path!, BackupSchedule.InfoFile)));
+
+        File.WriteAllText(schedule, "current");
+        DataBackup.Restore(Data, DataBackup.TryRead(info.Path!)!);
+        Assert.Equal("current", File.ReadAllText(schedule));
+    }
+
     [Fact]
     public void A_backup_of_newer_data_is_refused_unless_forced()
     {

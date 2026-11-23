@@ -24,6 +24,23 @@ public static class BackupCommand
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         var verb = args[0];
+        // A FILEACCESSMONITOR_DATA folder (development, a second instance) belongs to whoever runs it
+        var ownData = Environment.GetEnvironmentVariable("FILEACCESSMONITOR_DATA") is { Length: > 0 };
+        if (!ownData && !IsElevated())
+        {
+            error.WriteLine(OperatingSystem.IsWindows()
+                ? "Run this from an elevated (Administrator) prompt: the data folder holds keys only the services and administrators can read."
+                : "Run this as root (sudo): the data folder holds keys only the services and root can read.");
+            return 1;
+        }
+        // Its own options (see BackupSchedule)
+        if (verb == "backup-schedule")
+        {
+            // The task or timer backs up the installed data folder, not a FILEACCESSMONITOR_DATA one
+            if (ownData) { error.WriteLine("backup-schedule sets up the installed data folder; unset FILEACCESSMONITOR_DATA."); return 2; }
+            return BackupSchedule.Run(args, AppPaths.BaseDataDir, Environment.ProcessPath ?? "FileAccessMonitor", output, error);
+        }
+
         string? to = null, reason = null, previous = null, target = null, delete = null;
         int? keep = null;
         var force = false;
@@ -60,22 +77,6 @@ public static class BackupCommand
         var chosen = BackupSchedule.Read(dataDir)?.To;
         var root = to != null ? Path.GetFullPath(to) : DataBackup.TargetRoot(dataDir, chosen);
         var roots = to != null ? [root] : DataBackup.Roots(dataDir, chosen);
-        // A FILEACCESSMONITOR_DATA folder (development, a second instance) belongs to whoever runs it
-        var ownData = Environment.GetEnvironmentVariable("FILEACCESSMONITOR_DATA") is { Length: > 0 };
-        if (!ownData && !IsElevated())
-        {
-            error.WriteLine(OperatingSystem.IsWindows()
-                ? "Run this from an elevated (Administrator) prompt: the data folder holds keys only the services and administrators can read."
-                : "Run this as root (sudo): the data folder holds keys only the services and root can read.");
-            return 1;
-        }
-
-        if (verb == "backup-schedule")
-        {
-            // The task or timer backs up the installed data folder, not a FILEACCESSMONITOR_DATA one
-            if (ownData) { error.WriteLine("backup-schedule sets up the installed data folder; unset FILEACCESSMONITOR_DATA."); return 2; }
-            return BackupSchedule.Run(args, dataDir, Environment.ProcessPath ?? "FileAccessMonitor", output, error);
-        }
 
         try
         {
