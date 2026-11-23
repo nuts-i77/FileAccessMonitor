@@ -129,7 +129,9 @@ Type: files; Name: "{commonappdata}\FileAccessMonitor\backup-schedule.json"
 
 [Run]
 Filename: "{code:GetGuiUrl}"; Description: "{cm:OpenGui}"; Flags: postinstall shellexec nowait skipifsilent; Check: IsFullRole
-Filename: "{sys}\notepad.exe"; Parameters: """{code:GetPasswordFile}"""; Description: "{cm:ShowPassword}"; Flags: postinstall nowait skipifsilent unchecked; Check: ShowPasswordOption
+; As the elevated installer, not the signed-in user: the file is readable by SYSTEM, Administrators and the
+; web service only, and a postinstall entry otherwise runs with the user's non-elevated rights
+Filename: "{sys}\notepad.exe"; Parameters: """{code:GetPasswordFile}"""; Description: "{cm:ShowPassword}"; Flags: postinstall nowait skipifsilent unchecked runascurrentuser; Check: ShowPasswordOption
 
 [UninstallRun]
 ; The daily backup task (the backups themselves are kept, like the data folder)
