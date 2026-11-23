@@ -139,6 +139,16 @@ public sealed class DataBackupTests : IDisposable
         Assert.Equal("newer-secret", File.ReadAllText(Path.Combine(collector, "secret")));
     }
 
+    // 1.12.1 reinstalled over 1.13 leaves version.txt saying 1.13; the installer's --previous is right
+    [Fact]
+    public void The_version_given_by_the_installer_wins_over_version_txt()
+    {
+        DataBackup.WriteDataVersion(Data, "1.13.0-rc1");
+        var info = DataBackup.Create(Data, Root, DataBackup.ReasonPreUpdate, "1.13.0-rc1", previousVersion: "1.12.1");
+        Assert.Equal("1.12.1", info.DataVersion);
+        Assert.Null(DataBackup.RestoreRefusal(info, "1.12.1"));
+    }
+
     // What backup-schedule set up describes this machine's task or timer, not the data
     [Fact]
     public void The_daily_backup_setting_is_not_backed_up_nor_replaced_by_a_restore()

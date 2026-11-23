@@ -165,7 +165,9 @@ public static class DataBackup
                 Created = created,
                 Reason = reason,
                 AppVersion = version,
-                DataVersion = ReadDataVersion(dataDir) ?? previousVersion,
+                // The installer knows the version installed until now; version.txt is only written by 1.13 and
+                // later, so after a reinstall of an earlier version it still names the later one
+                DataVersion = previousVersion ?? ReadDataVersion(dataDir),
                 PreviousVersion = previousVersion,
                 Machine = Environment.MachineName,
                 CollectorIncluded = !collectorLeftOut && Directory.Exists(collectorDir),
