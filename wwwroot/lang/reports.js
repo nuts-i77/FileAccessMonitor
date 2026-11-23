@@ -2,7 +2,7 @@
 Object.assign(window.I18N_EN, {
   'report.card.title': 'Scheduled report',
   'report.hint': 'Mails a summary of the last day, week or month to the notification recipients.',
-  'report.hintMore': 'It also lists broad permissions from the latest stored scans and, when tamper detection is on, its status.',
+  'report.hintMore': 'It needs email to be set up under Notifications. It also lists broad permissions from the latest stored scans and, when tamper detection is on, its status.',
   'report.smtpNeeded': 'Set up e-mail (SMTP server and recipients) in Notifications first.',
   'report.enable': 'Send a periodic report by email',
   'report.frequency': 'Frequency',
@@ -37,7 +37,7 @@ Object.assign(window.I18N_EN, {
 Object.assign(window.I18N_JA, {
   'report.card.title': '定期レポート',
   'report.hint': '直近の日・週・月のアクセスの概要を、通知の宛先にメールで送信します。',
-  'report.hintMore': '保存済みの最新のスキャン結果から、広範囲のアクセス権も記載します。改ざん検知が有効な場合は、その状態も記載します。',
+  'report.hintMore': '通知の設定でメールを設定しておく必要があります。保存済みの最新のスキャン結果から広範囲のアクセス権も記載し、改ざん検知が有効な場合はその状態も記載します。',
   'report.smtpNeeded': '先に［通知］で SMTP サーバーと宛先を設定してください。',
   'report.enable': '定期レポートをメールで送信する',
   'report.frequency': '頻度',
