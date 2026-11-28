@@ -140,7 +140,8 @@ function setupRender() {
         <button class="btn btn-primary" id="setupAddBtn" onclick="setupAddFolder()"><i class="bi bi-folder-plus me-1"></i>${esc(t('setup.dir.add'))}</button>
       </div>
       <div class="form-text">${esc(t('setup.dir.large'))}</div>
-      <div id="setupMsg" class="mt-2"></div>`;
+      <div id="setupMsg" class="mt-2"></div>
+      <div id="setupJournal" class="mt-2"></div>`;
     next = `<button class="btn btn-primary btn-sm" id="setupNextBtn" onclick="setupGo(1)" ${st.folder || s.folders > 0 ? '' : 'disabled'}>${esc(t('setup.next'))}</button>`;
   } else if (step === 'log') {
     const sizes = SETUP_LOG_SIZES.map(b => `<option value="${b}" ${b === 1024 * 1024 * 1024 ? 'selected' : ''}>${setupSize(b)}</option>`).join('');
@@ -232,6 +233,7 @@ async function setupAddFolder() {
     setupMessage(msg, 'success');
     document.getElementById('setupNextBtn').disabled = false;
     if (currentTab === 'settings') loadServerSettings();
+    setupWatchJournal(path);
   } catch (e) {
     setupMessage(esc(e.message), 'danger');
   } finally {
@@ -249,7 +251,52 @@ async function setupLoadExisting() {
     if (!setupState?.folder && paths.length) setupState.folder = paths[0];
     document.getElementById('setupExisting')?.insertAdjacentHTML('beforeend',
       `<div class="mt-1">${paths.map(p => `<code>${esc(p)}</code>`).join(', ')}</div>`);
+    if (setupState?.folder) setupShowJournal(setupState.folder, d.journals);
   } catch { /* the hint of the check step then names no folder */ }
+}
+
+// Windows: the change journal of the folder's drive, as in Settings → Monitored folders (creations and
+// new names need it), with "Turn on the change journal" where there is none. The state of a drive added just now comes with
+// the collector's or agent's next heartbeat, so it is asked again for up to two minutes.
+function setupShowJournal(path, journals) {
+  const el = document.getElementById('setupJournal');
+  if (!el || setupIsLinux(setupState?.server?.os)) return '';
+  const line = journalLine(path, journals, 'setupCreateJournal');
+  el.innerHTML = line ? `<div class="border rounded p-2" data-path="${esc(path)}">${line.replace('class="ms-4 ', 'class="')}</div>` : '';
+  return journals ? (journals.find(v => (v.volume || '').toLowerCase() === (driveOf(path) || path).toLowerCase())?.state || '') : null;
+}
+
+function setupWatchJournal(path) {
+  const st = setupState;
+  if (!st || setupIsLinux(st.server.os)) return;
+  if (st.poll) clearInterval(st.poll);
+  const server = setupServerParam();
+  let tries = 0;
+  const ask = async () => {
+    try {
+      const d = await api(`/api/settings${server ? `?server=${encodeURIComponent(server)}` : ''}`);
+      const state = setupShowJournal(path, d.journals);
+      // Known (or the server does not report it: Linux, an agent before 1.13.1): no need to ask again
+      if ((state !== '' || d.journals == null || ++tries >= 24) && setupState?.poll) { clearInterval(setupState.poll); setupState.poll = null; }
+    } catch { /* asked again */ }
+  };
+  st.poll = setInterval(ask, 5000);
+  ask();
+}
+
+async function setupCreateJournal(path) {
+  const drive = driveOf(path) || path;
+  if (!confirm(t('journal.enableConfirm', { drive }))) return;
+  const el = document.getElementById('setupJournal');
+  if (el) el.innerHTML = `<div class="alert alert-info py-2 small mb-0"><span class="spinner-border spinner-border-sm me-2"></span>${esc(setupState.server.local ? t('msg.applying') : t('msg.agentRunning', { s: setupState.server.name }))}</div>`;
+  try {
+    const d = await postCreateJournal(path, setupServerParam());
+    setupShowJournal(path, d.journals);
+    el?.insertAdjacentHTML('beforeend', `<div class="alert alert-success py-2 small mt-2 mb-0"><i class="bi bi-check-circle me-1"></i>${esc(d.message)}</div>`);
+    if (currentTab === 'settings') loadServerSettings();
+  } catch (e) {
+    if (el) el.innerHTML = `<div class="alert alert-danger py-2 small mb-0">${esc(e.message)}</div>`;
+  }
 }
 
 function setupSize(bytes) {

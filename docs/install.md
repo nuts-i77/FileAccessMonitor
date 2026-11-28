@@ -31,14 +31,34 @@ If WinRM is available, you can build and deploy from your development PC in one 
 
 ## Create and renames on Windows (USN journal)
 
-The Security log has neither the creation of a file nor the new name after a rename. FileAccessMonitor reads them from the NTFS change journal (USN journal) of the volume that holds a monitored folder: a file created by an access is then recorded as **Create** instead of Write, and a rename or move shows the new path. FileAccessMonitor does **not** create the journal. On a volume without one (and on FAT, exFAT and network paths) everything works as before: Write, and Rename with the old path only; the service log says so once per volume. Records are saved a few seconds later than before because they are matched with the journal first.
+The Security log has neither the creation of a file nor the new name after a rename. FileAccessMonitor reads them from the change journal (USN journal) of the drive that holds a monitored folder: a file created by an access is then recorded as **Create** instead of Write, and a rename or move shows the new path. Records are saved a few seconds later because they are matched with the journal first.
 
-To check a volume and, if you want these records, enable the journal (elevated PowerShell; this is a system change that uses up to 32 MB):
+Drives formatted with **NTFS or ReFS** can have a journal. FAT32, exFAT and network paths have none. On a drive without one, a creation is recorded as Write and a rename with the old path only. FileAccessMonitor never creates a journal by itself: only when an administrator clicks **Turn on the change journal** in the web GUI, or runs the command below.
+
+**Settings → Monitored folders** shows, under each folder, whether its drive has a journal. A drive without one is also listed in the bar at the top of the web GUI (for Admins). For a drive without one, an administrator can turn it on there with **Turn on the change journal** (the same as the command below; it asks first, and the operation log records it). The command is shown there too. Windows agents show this, and take **Turn on the change journal**, from 1.13.1. A journal cannot be turned off or resized from the web GUI.
+
+### Check a drive
+
+In an elevated PowerShell on the file server, run this for each drive with monitored folders (replace `D:` with the drive letter):
 
 ```powershell
 fsutil usn queryjournal D:
+```
+
+- The journal is **on** when the output lists values such as `Usn Journal ID` and `Maximum Size`. Nothing more is needed.
+- The journal is **off** when the output is error 1179, `The volume change journal is not active.`.
+
+### Turn the journal on with a command
+
+```powershell
 fsutil usn createjournal m=33554432 a=8388608 D:
 ```
+
+- `m=33554432` is the largest size of the journal, 32 MB. When it is full, Windows drops the oldest entries, so it does not grow beyond that.
+- `a=8388608` is the amount, 8 MB, that Windows adds or drops at a time.
+- No restart is needed. FileAccessMonitor looks at drives without a journal every minute and starts reading the new one within a minute. The service log then says `Reading the USN change journal of volume D:`, and the folder in **Settings → Monitored folders** shows that the journal is on.
+- Run it only on a drive where the journal is off. On a drive that already has one, the command changes its size, which another program (backup, search, sync software) may have set.
+- To turn it off again: `fsutil usn deletejournal /d D:`. Do this only if no other program uses the journal.
 
 ## Enlarge the Security log (recommended)
 

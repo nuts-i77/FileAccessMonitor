@@ -22,6 +22,7 @@
     <Compile Include="..\Models\AccessTypes.cs" Link="Shared\AccessTypes.cs" />
     <Compile Include="..\Services\AgentCore.cs" Link="Shared\AgentCore.cs" />
     <Compile Include="..\Services\AgentProtocol.cs" Link="Shared\AgentProtocol.cs" />
+    <Compile Include="..\Services\UsnJournalStatus.cs" Link="Shared\UsnJournalStatus.cs" />
     <Compile Include="..\Services\AppPaths.cs" Link="Shared\AppPaths.cs" />
     <Compile Include="..\Services\DeniedMerger.cs" Link="Shared\DeniedMerger.cs" />
     <Compile Include="..\Services\RecordingRules.cs" Link="Shared\RecordingRules.cs" />

@@ -8,7 +8,7 @@ function getLang() {
 function t(key, vars) {
   const dict = getLang() === 'en' ? window.I18N_EN : window.I18N_JA;
   let str = dict?.[key] ?? key;
-  if (vars) Object.entries(vars).forEach(([k, v]) => { str = str.replace(`{${k}}`, v); });
+  if (vars) Object.entries(vars).forEach(([k, v]) => { str = str.replaceAll(`{${k}}`, v); });
   return str;
 }
 
@@ -1289,6 +1289,33 @@ async function checkAgentVersions() {
   try { showAgentUpdateBanner(await api('/api/agents')); } catch { /* not shown */ }
 }
 
+// Drives of monitored folders without a change journal, on any server: creations and new names are not
+// recorded there. Admins see it on every tab; the link opens that server's Monitored folders page.
+async function checkJournalsOff() {
+  const el = document.getElementById('journalOffBanner');
+  if (!el) return;
+  let d;
+  try { d = await api('/api/settings/journals/off'); } catch { el.innerHTML = ''; return; }
+  const servers = d?.servers || [];
+  if (servers.length === 0) { el.innerHTML = ''; return; }
+  const items = servers.map(s =>
+    `<a href="#" class="alert-link me-2" data-server="${esc(s.server)}" onclick="openJournalSettings(this.dataset.server); return false;">${esc(s.name)}: ${s.drives.map(esc).join(', ')}</a>`).join('');
+  el.innerHTML = `<div class="alert alert-warning py-2 small d-flex align-items-center gap-2 flex-wrap">
+    <i class="bi bi-journal-x"></i>
+    <span>${t('journal.offBanner')}</span>
+    <span>${items}</span>
+  </div>`;
+}
+
+function openJournalSettings(server) {
+  switchTab('settings');
+  setTimeout(() => {
+    const sel = document.getElementById('settingsServer');
+    if (sel && [...sel.options].some(o => o.value === server) && sel.value !== server) { sel.value = server; loadServerSettings(); }
+    showSettingsPage('folders');
+  }, 500);
+}
+
 function openAgentsSettings() {
   switchTab('settings');
   setTimeout(() => showSettingsSection('agentsSection'), 500);
@@ -1878,8 +1905,9 @@ async function loadServerSettings() {
     // Support both new pathConfigs and legacy monitoredPaths response
     const configs = d.pathConfigs
       || (d.monitoredPaths || []).map(p => ({ path: p, eventTypes: ['Read', 'Write', 'Delete'] }));
-    pathAudit = { applied: lowerKeys(d.auditApplied), version: d.auditVersion || 0, os: d.os || '' };
+    pathAudit = { applied: lowerKeys(d.auditApplied), version: d.auditVersion || 0, os: d.os || '', journals: d.journals || null };
     renderPathsList(configs);
+    scheduleJournalRefresh(configs);
     // This server's collector service does the recording and the auditing set-up: say so when it is not there
     if (d.collector && !d.collector.connected)
       document.getElementById('monitoredPathsList').insertAdjacentHTML('afterbegin',
@@ -1995,12 +2023,97 @@ function needsReapply(path) {
   return pathAudit.version > 0 && (pathAudit.applied[String(path).toLowerCase()] || 0) < pathAudit.version;
 }
 
+// "E:" for "e:\share"; null for a network path
+function driveOf(path) {
+  return /^[a-z]:/i.test(path) ? path[0].toUpperCase() + ':' : null;
+}
+
+// Under a folder of a Windows server: whether its drive's change journal is read (creations and new
+// names), and how to turn it on where it is off. Nothing when the server does not say (Linux, an older agent).
+function journalLine(path, list = pathAudit.journals, enable = 'createJournal') {
+  if (!list) return '';
+  const drive = driveOf(path);
+  const j = list.find(v => (v.volume || '').toLowerCase() === (drive || path).toLowerCase());
+  const label = (fmt) => esc(drive || path) + (getLang() === 'en' ? (fmt ? ` (${esc(fmt)})` : '') : ' ドライブ' + (fmt ? `（${esc(fmt)}）` : ''));
+  const line = (icon, color, text, more = '') =>
+    `<div class="ms-4 small text-${color}"><i class="bi ${icon} me-1"></i>${text}${more}</div>`;
+  if (!j) return drive ? line('bi-hourglass-split', 'muted', t('journal.pending', { drive: esc(drive) })) : '';
+  switch (j.state) {
+    case 'on': return line('bi-journal-check', 'success', t('journal.on', { drive: label(j.format) }));
+    case 'off': {
+      const cmd = `fsutil usn createjournal m=33554432 a=8388608 ${drive}`;
+      const button = ` <button class="btn btn-sm btn-outline-primary py-0 ms-1" onclick="${enable}(this.closest('[data-path]').dataset.path)">
+        <i class="bi bi-journal-plus me-1"></i>${t('journal.enable')}</button>`;
+      const more = ` <details class="hint-more"><summary>${t('journal.how')}</summary><div>${t('journal.howText')}
+        <pre class="mb-1 mt-1 p-1 bg-body-tertiary border rounded user-select-all"><code>${esc(cmd)}</code></pre>${t('journal.howNote')}</div></details>`;
+      return line('bi-exclamation-circle', 'warning-emphasis', t('journal.off', { drive: label(j.format) }), button + more);
+    }
+    case 'unsupported': return line('bi-dash-circle', 'muted', t('journal.unsupported', { drive: esc(drive || path), format: esc(j.format || '?') }));
+    case 'network': return line('bi-dash-circle', 'muted', t('journal.network'));
+    case 'disabled': return line('bi-dash-circle', 'muted', t('journal.disabled'));
+    default: return line('bi-exclamation-circle', 'warning-emphasis', t('journal.error', { drive: esc(drive || path) }));
+  }
+}
+
+// While a folder's drive is still being checked (the collector or agent just started, or a folder on a
+// new drive was added), the list is loaded again every 15 seconds, for up to two minutes
+let journalRefresh = { timer: null, tries: 0, key: '' };
+function scheduleJournalRefresh(configs) {
+  clearTimeout(journalRefresh.timer);
+  const list = pathAudit.journals;
+  const pending = !!list && (configs || []).some(c => {
+    const p = c.path || c;
+    const drive = driveOf(p);
+    return drive && !list.some(v => (v.volume || '').toLowerCase() === drive.toLowerCase());
+  });
+  const key = settingsServer() || '';
+  if (journalRefresh.key !== key) journalRefresh = { timer: null, tries: 0, key };
+  if (!pending) { journalRefresh.tries = 0; return; }
+  if (++journalRefresh.tries > 8) return;
+  // Only the folder list is drawn again (the rest of the settings may be being edited)
+  journalRefresh.timer = setTimeout(async () => {
+    if (currentTab !== 'settings' || (settingsServer() || '') !== key) return;
+    try {
+      const d = await api(withSettingsServer('/api/settings'));
+      if ((settingsServer() || '') !== key || !d.pathConfigs) return;
+      pathAudit.journals = d.journals || null;
+      renderPathsList(d.pathConfigs);
+      scheduleJournalRefresh(d.pathConfigs);
+    } catch { /* the next load of the page shows it */ }
+  }, 15000);
+}
+
+// At the top of the page: drives of monitored folders whose change journal is off (creations and new
+// names are not recorded there), each with its "Turn on" button. Drives that cannot have one are not listed.
+function renderJournalBanner(configs) {
+  checkJournalsOff(); // the bar at the top of every tab follows what this page shows
+  const el = document.getElementById('journalBanner');
+  if (!el) return;
+  const list = pathAudit.journals || [];
+  const off = new Map(); // drive -> first folder on it
+  (configs || []).forEach(c => {
+    const p = c.path || c;
+    const drive = driveOf(p);
+    if (drive && !off.has(drive) && list.some(v => (v.volume || '').toLowerCase() === drive.toLowerCase() && v.state === 'off'))
+      off.set(drive, p);
+  });
+  el.classList.toggle('d-none', off.size === 0);
+  if (off.size === 0) { el.innerHTML = ''; return; }
+  const drives = [...off.keys()].join(', ');
+  const buttons = [...off.entries()].map(([drive, p]) =>
+    `<span data-path="${esc(p)}"><button class="btn btn-sm btn-warning py-0 me-1 mt-1" onclick="createJournal(this.closest('[data-path]').dataset.path)">
+      <i class="bi bi-journal-plus me-1"></i>${t('journal.enableDrive', { drive: esc(drive) })}</button></span>`).join('');
+  el.innerHTML = `<div class="alert alert-warning py-2 small mb-0">
+    <i class="bi bi-exclamation-triangle me-1"></i>${t('journal.banner', { drives: esc(drives) })}<div>${buttons}</div></div>`;
+}
+
 function renderPathsList(configs) {
   const el = document.getElementById('monitoredPathsList');
   const linux = !!pathAudit.os && !/windows/i.test(pathAudit.os);
   const stale = (configs || []).filter(c => needsReapply(c.path || c));
   document.getElementById('reapplyBanner').innerHTML = stale.length === 0 ? '' :
     `<div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${t('msg.reapplyBanner', { n: stale.length })}</div>`;
+  renderJournalBanner(linux ? [] : configs);
   if (!configs || configs.length === 0) {
     el.innerHTML = `<div class="text-muted small py-2">${t('msg.noPath')}</div>`;
     return;
@@ -2034,6 +2147,7 @@ function renderPathsList(configs) {
         </button>
       </div>
       <div class="ms-4">${typeCheckboxes}</div>
+      ${linux ? '' : journalLine(p)}
     </div>`;
   }).join('');
 }
@@ -2178,6 +2292,34 @@ async function reapplySacl(path) {
   } catch (e) {
     showSettingsAlert(`${esc(e.message)}`, 'danger');
   }
+}
+
+// Turns on the change journal of a folder's drive (shown as off): the collector or the agent creates it
+// with the fixed size; a drive that has one is left alone
+async function createJournal(path) {
+  const drive = driveOf(path) || path;
+  if (!confirm(t('journal.enableConfirm', { drive }))) return;
+  try {
+    showSettingsAlert(`<span class="spinner-border spinner-border-sm me-1"></span>${runningMessage()}`, 'info');
+    const d = await postCreateJournal(path, settingsServer() || null);
+    showSettingsAlert(`<i class="bi bi-check-circle me-1"></i>${esc(d.message)}`, 'success');
+    if (d.journals) { pathAudit.journals = d.journals; loadServerSettings(); }
+  } catch (e) {
+    showSettingsAlert(`<i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}`, 'danger');
+  }
+}
+
+// The call itself (also used by the setup wizard): the answer, or an Error with the server's message
+async function postCreateJournal(path, server) {
+  const res = await fetch('/api/settings/paths/create-journal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ path, server })
+  });
+  if (res.status === 401) { logout(); throw new Error('HTTP 401'); }
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+  return d;
 }
 
 // ── User Management (Admin only) ──────────────────────────────────
@@ -2744,7 +2886,11 @@ let myAllFolders = true;
     document.getElementById('navPermissions')?.classList.remove('d-none');
     VALID_TABS.push('unused', 'permissions');
   }
-  if (isAdmin()) { checkForUpdate(); checkAgentVersions(); showHttpWarning(); }
+  if (isAdmin()) {
+    checkForUpdate(); checkAgentVersions(); checkJournalsOff(); showHttpWarning();
+    // Just after a restart the collector and agents report their drives within a minute
+    setTimeout(checkJournalsOff, 90_000);
+  }
   // Banners of feature scripts (js/integrity.js: the record chain is broken)
   Object.values(window.StartupHooks || {}).forEach(start => start());
   const hashTab = location.hash.slice(1);

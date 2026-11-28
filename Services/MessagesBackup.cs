@@ -15,7 +15,7 @@ public static class MessagesBackup
         ["backup.folderNotAbsolute"] = "Enter the full path of the folder, for example D:\\Backups\\FileAccessMonitor or \\\\server\\share\\fam ({0}).",
         ["backup.folderInData"] = "The backup folder must be outside the data folder ({0}). Leave it empty to use the data folder's own backups folder.",
         ["backup.folderNotWritable"] = "The service cannot create folders in {0}. Allow the service account to modify it (Windows: NT SERVICE\\FileAccessMonitor; a share: the monitoring server's computer account; Linux: fileaccessmonitor).",
-        ["backup.cannotProtect"] = "The permissions of the backup cannot be set in {0}, so the keys would be readable there. Use a folder on an NTFS drive or a share that keeps permissions.",
+        ["backup.cannotProtect"] = "The permissions of the backup cannot be set in {0}, so the keys would be readable there. Use a folder on an NTFS or ReFS drive, or a share that keeps permissions.",
     };
 
     public static readonly IReadOnlyDictionary<string, string> Ja = new Dictionary<string, string>
@@ -30,6 +30,6 @@ public static class MessagesBackup
         ["backup.folderNotAbsolute"] = "フォルダはフルパスで入力してください。例: D:\\Backups\\FileAccessMonitor、\\\\server\\share\\fam（{0}）",
         ["backup.folderInData"] = "バックアップ先は、データフォルダの外にしてください（{0}）。データフォルダの backups フォルダを使う場合は空欄にします。",
         ["backup.folderNotWritable"] = "サービスが {0} にフォルダを作れません。サービスのアカウントに変更の権限を付けてください（Windows: NT SERVICE\\FileAccessMonitor、共有フォルダ: 監視サーバーのコンピューターアカウント、Linux: fileaccessmonitor）。",
-        ["backup.cannotProtect"] = "{0} ではバックアップの権限を設定できないため、鍵が読める状態になります。NTFS のドライブ、または権限を保持できる共有フォルダを指定してください。",
+        ["backup.cannotProtect"] = "{0} ではバックアップの権限を設定できないため、鍵が読める状態になります。NTFS・ReFS のドライブ、または権限を保持できる共有フォルダを指定してください。",
     };
 }

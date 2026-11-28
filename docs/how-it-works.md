@@ -2,7 +2,7 @@
 
 English | [日本語](how-it-works.ja.md)
 
-1. Subscribes to the Windows Security event log in real time (events 4663, 4659, 4660, 4670 for permission changes, and failed 4656 for refused opens), and reads the NTFS change journal for creations and new names.
+1. Subscribes to the Windows Security event log in real time (events 4663, 4659, 4660, 4670 for permission changes, and failed 4656 for refused opens), and reads the change journal of NTFS and ReFS drives for creations and new names.
 2. Finds the client IP address and machine name from logon (4624) and share access (5140) events and from the list of SMB sessions.
 3. Stores records in SQLite and aggregates them through an ASP.NET Core web API.
 4. Displays them in the browser with Bootstrap and Chart.js.
@@ -41,7 +41,7 @@ On the **Settings** tab, administrators can exclude file name patterns (`*` and 
 - Events that occur while the service is stopped (for example during an upgrade or reboot) are collected when it starts again, as long as they are still in the Security log (the journal on Linux). If they are already gone, the gap is recorded in the operation log and notified.
 - Each file server needs FileAccessMonitor installed (standalone, or as an agent). Servers without it, and NAS appliances, cannot be monitored.
 - On Linux, only accesses through Samba (SMB) shares are recorded; NFS and changes made on the server itself are not.
-- Renames and moves record the new path where it is available: on Windows from the NTFS USN journal (volumes without one, FAT, exFAT and network paths record only the old path), on Linux from Samba. A move into a monitored folder from outside it is not recorded, because the old path is not monitored; a move to another volume is a delete plus a create.
+- Renames and moves record the new path where it is available: on Windows from the USN journal of NTFS and ReFS drives (drives without one, FAT32, exFAT and network paths record only the old path), on Linux from Samba. A move into a monitored folder from outside it is not recorded, because the old path is not monitored; a move to another volume is a delete plus a create.
 - On Windows, writing only to an alternate data stream (`file.txt:stream`) is not recorded: streams are left out because Windows adds one (`Zone.Identifier`) to every downloaded file.
 - On Windows, the Security log shows only the rights actually used, so it has nothing for creating an empty file (for example **New → Text Document** in Explorer) or for emptying a file by opening it to be overwritten. Since 1.11.2 these are taken from the USN journal: a Create or Write that no logged write explains within 30 seconds is recorded with the user **(unknown)**. To record who it was, turn on **Settings → Recording → Also record who creates empty files**: every open is then audited (Handle Manipulation, success; about twice the Security log events, so enlarge the log) and the user, client IP and machine come from it. Without that setting, empty files that a service or a system account creates without writing to them are recorded as (unknown) too. Without the USN journal (FAT, exFAT, network paths) none of this is recorded.
 - On Linux, Samba logs the access a client asks for when it opens a file, not what it does with it: a Write means the file was opened for writing. Changing only the timestamp or attributes through such an open is recorded as a Write, and a file opened for reading and writing is recorded as a Write only. Windows records the rights actually used.

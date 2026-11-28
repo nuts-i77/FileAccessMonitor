@@ -35,7 +35,7 @@ sudo /opt/fileaccessmonitor/FileAccessMonitor backup-schedule --time 03:00 --kee
 ```
 
 - 指定しなかった項目は、今の値のままです。`--to ""` でデータフォルダに戻します。
-- 保存先は、設定するときに実際にフォルダを作り、権限を設定できるかを確かめます。
+- 保存先は、設定するときに実際にフォルダを作り、権限を設定できるかを確認します。
 - Windows では、タスク スケジューラのタスク **FileAccessMonitor Backup**（SYSTEM で実行）です。SYSTEM は共有フォルダにコンピューターアカウント（`ドメイン\サーバー名$`）で接続するため、そのアカウントに共有フォルダの変更の権限を付けてください。
 - Linux では、`/etc/systemd/system` の `fileaccessmonitor-backup.timer` と `.service`（root で実行）です。マシンが止まっていて実行できなかった分は、起動時に実行します。
 - 設定はタスクやタイマーの側にあり、管理者しか変更できません。データフォルダの `backup-schedule.json` は、設定した内容を Web GUI に伝えるためだけのものです。
@@ -57,7 +57,7 @@ sudo /opt/fileaccessmonitor/FileAccessMonitor backup-schedule --time 03:00 --kee
 
 `restore` は次の順に行います。
 
-1. バックアップの各ファイルを SHA-256 で確かめます。プログラムより新しいバージョンのデータのバックアップは、このバージョンが知らないテーブルを使っている場合があるため拒否します（`--force` で強制できます）。
+1. バックアップの各ファイルを SHA-256 で検証します。プログラムより新しいバージョンのデータのバックアップは、このバージョンが知らないテーブルを使っている場合があるため拒否します（`--force` で強制できます）。
 2. サービスを停止します（`FileAccessMonitorCollector` と `FileAccessMonitor`。Linux では `fileaccessmonitor-collector` と `fileaccessmonitor`）。
 3. 今のデータフォルダの中身を、`<時刻>-before-restore` というバックアップに移します。これを復元すると、復元を取り消せます。
 4. バックアップのファイルを権限ごと戻します。バックアップにコレクターのフォルダがない場合は、今のものを残します。

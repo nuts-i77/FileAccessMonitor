@@ -74,7 +74,7 @@ Object.assign(window.I18N_EN, {
 });
 Object.assign(window.I18N_JA, {
   'integrity.title': '改ざん検知',
-  'integrity.intro': '本プログラム以外で記録が変更・削除・追加されていないかを確かめます。',
+  'integrity.intro': '本プログラム以外で記録が変更・削除・追加されていないかを確認します。',
   'integrity.introMore': 'アクセス記録と操作ログの各行は、秘密鍵により直前の行と連鎖しています（チェーン）。外部で変更された記録は、発生箇所とともに検出します。',
   'integrity.state.ok': '検証済み',
   'integrity.state.broken': '破損',

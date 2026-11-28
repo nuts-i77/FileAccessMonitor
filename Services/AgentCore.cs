@@ -76,6 +76,9 @@ public interface IAgentPlatform
     // Whether file access auditing is on, for the Agents list (null when unknown)
     bool? AuditOk();
 
+    // The change journal of each drive with monitored folders (Windows; null where there is none)
+    IReadOnlyList<JournalVolume>? Journals() => null;
+
     // Runs a job from the monitoring server (applySacl, removeSacl, scan) and returns its answer
     JsonObject RunJob(AgentJob job, CancellationToken ct);
 }
@@ -359,7 +362,8 @@ public class AgentSender(AgentOutbox outbox, AgentConfig config, IAgentPlatform 
                 else if (heartbeatFirst || DateTime.UtcNow - lastContact >= HeartbeatInterval)
                 {
                     using var response = await client.PostAsJsonAsync("api/agent/heartbeat",
-                        new HeartbeatRequest(AppInfo.Version, outbox.Count, platform.AuditOk(), AppInfo.OsName, outbox.IsFull, outbox.Bytes), stoppingToken);
+                        new HeartbeatRequest(AppInfo.Version, outbox.Count, platform.AuditOk(), AppInfo.OsName, outbox.IsFull, outbox.Bytes,
+                            platform.Journals()?.ToList()), stoppingToken);
                     if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                         throw new AgentRejectedException();
                     response.EnsureSuccessStatusCode();

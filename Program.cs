@@ -264,6 +264,7 @@ builder.Services.AddSingleton<AgentJobs>();
 // collector, a separate process that reports to the agent port like an agent (see LocalCollector); the web
 // part queues jobs for it (AgentJobs) and remembers when it was last heard from.
 builder.Services.AddSingleton<LocalCollectorState>();
+builder.Services.AddSingleton<AgentJournalStates>();
 builder.Services.AddHostedService<AgentMonitorService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RetentionService>());

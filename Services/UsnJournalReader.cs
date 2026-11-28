@@ -93,7 +93,8 @@ public static class UsnRecordParser
 
 // Reads the NTFS/ReFS change journal of the volumes that hold monitored folders and tells the
 // UsnCorrelator which files were created and renamed. Volumes without a journal (FAT, exFAT,
-// network paths, or NTFS where nobody created one) are left alone: no journal is created here.
+// network paths, or NTFS / ReFS where nobody created one) are left alone: a journal is created only by the
+// "createJournal" job, which an administrator starts with "Turn on the change journal" in Settings > Monitored folders (CreateJournal).
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public class UsnJournalReader
 {
@@ -112,7 +113,9 @@ public class UsnJournalReader
     private const int ErrorJournalEntryDeleted = 1181;
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
-    private static readonly TimeSpan RetryUnavailableAfter = TimeSpan.FromMinutes(10);
+    // A drive without a usable journal is looked at again after this long: a journal an administrator
+    // creates is read from then on, without a restart (opening the drive and asking is cheap)
+    internal static readonly TimeSpan RetryUnavailableAfter = TimeSpan.FromMinutes(1);
     // The saved position lags behind, so that a restart also re-reads the journal for the Security
     // events it re-reads (those saved a few seconds ago)
     private static readonly TimeSpan PositionLag = TimeSpan.FromSeconds(30);
@@ -153,6 +156,9 @@ public class UsnJournalReader
         public DateTime CaughtUpUtc = DateTime.MinValue;
         public DateTime UnavailableSinceUtc = DateTime.MinValue;
         public bool Available => Handle != null;
+        // What was found the last time (JournalStates; "" before the first look) and the file system
+        public string State = "";
+        public string? Format;
         public readonly Dictionary<UsnFileRef, string> ParentPaths = new();
         public readonly Dictionary<UsnFileRef, (string Path, DateTime Time)> OldNames = new();
         public readonly HashSet<UsnFileRef> Created = new();
@@ -168,6 +174,7 @@ public class UsnJournalReader
     private readonly Dictionary<string, Volume> _volumes = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
     private Dictionary<string, SavedPosition> _saved = new();
+    private int _recheckSeen;
 
     private sealed record SavedPosition(ulong JournalId, long NextUsn);
 
@@ -218,16 +225,23 @@ public class UsnJournalReader
         if (!_enabled())
         {
             _correlator.CaughtUpUtc = DateTime.MinValue;
+            UsnJournalStatus.Current = _roots().Select(r => new JournalVolume(UsnJournalStatus.DriveOf(r) ?? r, JournalStates.Disabled))
+                .DistinctBy(v => v.Volume, StringComparer.OrdinalIgnoreCase).ToList();
             return;
         }
         var now = DateTime.UtcNow;
         lock (_gate)
         {
             var watched = VolumesToWatch().ToList();
+            PublishStatus(watched);
+            // A journal was just created from the web GUI: look at the drives without one now
+            var recheck = UsnJournalStatus.RecheckCount;
+            var lookNow = recheck != _recheckSeen;
+            _recheckSeen = recheck;
             foreach (var letter in watched)
             {
                 if (!_volumes.TryGetValue(letter, out var volume)) _volumes[letter] = volume = new Volume(letter);
-                if (!volume.Available && now - volume.UnavailableSinceUtc >= RetryUnavailableAfter) Open(volume, now);
+                if (!volume.Available && (lookNow || now - volume.UnavailableSinceUtc >= RetryUnavailableAfter)) Open(volume, now);
                 if (volume.Available) ReadVolume(volume, now);
             }
             // Only the volumes read now: one no longer watched (its folders were removed) stays where it stopped
@@ -235,6 +249,31 @@ public class UsnJournalReader
                 .DefaultIfEmpty(DateTime.MinValue).Min();
             _correlator.CaughtUpUtc = caughtUp;
         }
+    }
+
+    // For the heartbeat: the drives of the monitored folders (one not looked at yet is left out until it
+    // is), and network folders, which have no journal here
+    private void PublishStatus(List<string> watched)
+    {
+        var roots = _roots();
+        if (roots.Count == 0) { UsnJournalStatus.Current = []; return; }
+        var list = new List<JournalVolume>();
+        foreach (var letter in watched)
+            if (_volumes.TryGetValue(letter, out var v) && v.State != "")
+                list.Add(new JournalVolume(letter, v.State, v.Format));
+        foreach (var root in roots.Where(r => !TryDriveOf(r, out _)).Distinct(StringComparer.OrdinalIgnoreCase))
+            list.Add(new JournalVolume(root, JournalStates.Network));
+        UsnJournalStatus.Current = list;
+    }
+
+    // Logs what was found when it differs from the last time (a drive without a journal is looked at
+    // every minute, but said once)
+    private bool ChangeState(Volume v, string state, string? format = null)
+    {
+        var changed = v.State != state;
+        v.State = state;
+        v.Format = format;
+        return changed;
     }
 
     private IEnumerable<string> VolumesToWatch()
@@ -253,30 +292,79 @@ public class UsnJournalReader
         return true;
     }
 
+    // The volume itself, as CreateFile opens it for FSCTL_QUERY_USN_JOURNAL: \\.\E:
+    internal static string DevicePath(string letter) => $@"\\.\{letter}";
+
+    // The journal "Turn it on" in the web GUI creates: the same as the documented
+    // fsutil usn createjournal m=33554432 a=8388608 (32 MB, 8 MB at a time). Not a choice of the caller.
+    public const ulong CreateMaximumSize = 33554432;
+    public const ulong CreateAllocationDelta = 8388608;
+    private const uint GenericWrite = 0x40000000;
+    private const uint FsctlCreateUsnJournal = 0x000900E7;
+
+    // Results of CreateJournal
+    public const string CreateDone = "created";
+    public const string CreateExists = "exists";           // the drive has one already: left as it is
+    public const string CreateUnsupported = "unsupported"; // not NTFS / ReFS
+    public const string CreateFailed = "failed";
+
+    // Creates the change journal of a drive that has none (the "createJournal" job). A drive that has one
+    // is left alone: creating again would change a size another program may have chosen.
+    public static (string Result, string? Detail) CreateJournal(string letter)
+    {
+        string format;
+        try { format = new DriveInfo(letter).DriveFormat; }
+        catch (Exception ex) { return (CreateFailed, ex.Message); }
+        if (!format.Equals("NTFS", StringComparison.OrdinalIgnoreCase) && !format.Equals("ReFS", StringComparison.OrdinalIgnoreCase))
+            return (CreateUnsupported, format);
+
+        using var handle = CreateFileW(DevicePath(letter), GenericRead | GenericWrite, ShareReadWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+        if (handle.IsInvalid) return (CreateFailed, $"error {Marshal.GetLastWin32Error()}");
+
+        var info = new byte[80];
+        if (DeviceIoControl(handle, FsctlQueryUsnJournal, null, 0, info, info.Length, out _, IntPtr.Zero))
+            return (CreateExists, format);
+        var queryError = Marshal.GetLastWin32Error();
+        if (queryError != ErrorJournalNotActive) return (CreateFailed, $"error {queryError}");
+
+        var input = new byte[16]; // CREATE_USN_JOURNAL_DATA
+        BinaryPrimitives.WriteUInt64LittleEndian(input, CreateMaximumSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(input.AsSpan(8), CreateAllocationDelta);
+        if (!DeviceIoControl(handle, FsctlCreateUsnJournal, input, input.Length, null, 0, out _, IntPtr.Zero))
+            return (CreateFailed, $"error {Marshal.GetLastWin32Error()}");
+        UsnJournalStatus.RequestRecheck();
+        return (CreateDone, format);
+    }
+
     private void Open(Volume v, DateTime now)
     {
         v.UnavailableSinceUtc = now;
+        string format;
         try
         {
-            var format = new DriveInfo(v.Letter).DriveFormat;
+            format = new DriveInfo(v.Letter).DriveFormat;
             if (!format.Equals("NTFS", StringComparison.OrdinalIgnoreCase) && !format.Equals("ReFS", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogInformation("Volume {Volume} is {Format}: it has no change journal, so file creation and the new name of renamed files are not recorded there.",
-                    v.Letter, format);
+                if (ChangeState(v, JournalStates.Unsupported, format))
+                    _logger.LogInformation("Volume {Volume} is {Format}, which has no change journal (only NTFS and ReFS have one), so file creation and the new name of renamed files are not recorded there.",
+                        v.Letter, format);
                 return;
             }
         }
         catch (Exception ex)
         {
-            _logger.LogInformation(ex, "Volume {Volume} is not available for the change journal.", v.Letter);
+            if (ChangeState(v, JournalStates.Error))
+                _logger.LogInformation(ex, "Volume {Volume} is not available for the change journal.", v.Letter);
             return;
         }
 
-        var handle = CreateFileW($@"\\.\{v.Letter}", GenericRead, ShareReadWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+        var handle = CreateFileW(DevicePath(v.Letter), GenericRead, ShareReadWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
         if (handle.IsInvalid)
         {
-            _logger.LogInformation("Cannot open volume {Volume} for the change journal (error {Error}); file creation and new names are not recorded there.",
-                v.Letter, Marshal.GetLastWin32Error());
+            var openError = Marshal.GetLastWin32Error();
+            if (ChangeState(v, JournalStates.Error, format))
+                _logger.LogInformation("Cannot open volume {Volume} for the change journal (error {Error}); file creation and new names are not recorded there.",
+                    v.Letter, openError);
             handle.Dispose();
             return;
         }
@@ -286,11 +374,18 @@ public class UsnJournalReader
         {
             var error = Marshal.GetLastWin32Error();
             if (error == ErrorJournalNotActive)
-                _logger.LogInformation("Volume {Volume} has no USN change journal, so file creation and the new name of renamed files are not recorded there. An administrator can enable it with: fsutil usn createjournal m=33554432 a=8388608 {Volume}",
-                    v.Letter, v.Letter);
-            else
+            {
+                if (ChangeState(v, JournalStates.Off, format))
+                    _logger.LogInformation("Volume {Volume} ({Format}) has no USN change journal, so file creation and the new name of renamed files are not recorded there. "
+                        + "To record them, an administrator turns the journal on with \"Turn on the change journal\" in Settings > Monitored folders of the web GUI, "
+                        + "or on this server with: fsutil usn createjournal m=33554432 a=8388608 {Volume}  (it uses up to 32 MB; no restart is needed, it is read within a minute)",
+                        v.Letter, format, v.Letter);
+            }
+            else if (ChangeState(v, JournalStates.Error, format))
+            {
                 _logger.LogInformation("The USN change journal of volume {Volume} cannot be read (error {Error}); file creation and new names are not recorded there.",
                     v.Letter, error);
+            }
             handle.Dispose();
             return;
         }
@@ -310,7 +405,8 @@ public class UsnJournalReader
         v.CaughtUpUtc = now;
         v.History.Clear();
         v.History.Enqueue((now, start));
-        _logger.LogInformation("Reading the USN change journal of volume {Volume}.", v.Letter);
+        ChangeState(v, JournalStates.On, format);
+        _logger.LogInformation("Reading the USN change journal of volume {Volume} ({Format}).", v.Letter, format);
     }
 
     private void ReadVolume(Volume v, DateTime pollStart)
@@ -371,15 +467,17 @@ public class UsnJournalReader
         else if (error is not (ErrorJournalNotActive or ErrorJournalDeleteInProgress))
         {
             _logger.LogInformation("Reading the USN change journal of volume {Volume} failed (error {Error}).", v.Letter, error);
+            ChangeState(v, JournalStates.Error, v.Format);
         }
         else
         {
             _logger.LogInformation("The USN change journal of volume {Volume} was deleted or replaced (error {Error}); it is checked again later.", v.Letter, error);
+            ChangeState(v, JournalStates.Off, v.Format);
         }
         // Give the handle up; Poll opens the volume again (and starts at the end of the journal) after a while
         v.Handle?.Dispose();
         v.Handle = null;
-        v.UnavailableSinceUtc = DateTime.UtcNow - RetryUnavailableAfter + TimeSpan.FromMinutes(1);
+        v.UnavailableSinceUtc = DateTime.UtcNow;
     }
 
     private void Process(Volume v, UsnRecord r)

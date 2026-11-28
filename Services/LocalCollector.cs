@@ -137,6 +137,7 @@ public class LocalCollectorState
     private bool? _auditPolicyOk;
     private int _outbox;
     private bool _outboxFull;
+    private IReadOnlyList<JournalVolume>? _journals;
 
     public DateTime? LastSeenUtc { get { lock (_gate) return _lastSeenUtc; } }
     public string? Version { get { lock (_gate) return _version; } }
@@ -144,10 +145,15 @@ public class LocalCollectorState
     public bool? AuditPolicyOk { get { lock (_gate) return _auditPolicyOk; } }
     public int Outbox { get { lock (_gate) return _outbox; } }
     public bool OutboxFull { get { lock (_gate) return _outboxFull; } }
+    // The change journal of each drive with monitored folders (Windows; null until the collector says)
+    public IReadOnlyList<JournalVolume>? Journals { get { lock (_gate) return _journals; } }
 
     public bool IsConnected(DateTime nowUtc) => LastSeenUtc is { } seen && nowUtc - seen < ConnectedWindow;
 
     public void Touch(DateTime nowUtc) { lock (_gate) _lastSeenUtc = nowUtc; }
+
+    // After a journal was created: shown as on before the collector's next heartbeat says so
+    public void SetJournals(IReadOnlyList<JournalVolume>? journals) { lock (_gate) _journals = journals; }
 
     public void SetOutbox(int waiting, bool full)
     {
@@ -163,6 +169,7 @@ public class LocalCollectorState
             if (req.OutboxCount is { } count) _outbox = count;
             _outboxFull = req.OutboxFull ?? false;
             _auditPolicyOk = req.AuditPolicyOk;
+            _journals = UsnJournalStatus.Clean(req.Journals);
             if (req.Os is { Length: > 0 } os) _os = os.Length <= 100 ? os : os[..100];
         }
     }

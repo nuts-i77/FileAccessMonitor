@@ -21,7 +21,7 @@ FileAccessMonitor は次の 2 つの役割で動きます。
 | | 監視サーバー（Windows） | 監視サーバー（Linux） | エージェント（Windows） | エージェント（Linux） |
 |---|---|---|---|---|
 | OS | Windows Server 2016 以降、Windows 10/11 | systemd が動く x86-64 の Linux（Rocky Linux 9.4 で確認） | Windows Server 2016 以降、Windows 10/11 | systemd が動く x86-64 の Linux（Ubuntu 24.04、Rocky Linux 9.4 で確認） |
-| 記録する対象 | 1 台構成の場合: このサーバーの共有フォルダ（Windows の監査ログ） | `--collect` の場合: このサーバーの Samba 共有 | このサーバーの共有フォルダ（Windows の監査ログ） | Samba 4.x の共有（SMB 経由のアクセス） |
+| 記録する対象 | 1 台構成の場合: このサーバーの NTFS・ReFS ドライブ上の共有フォルダ（Windows の監査ログ） | `--collect` の場合: このサーバーの Samba 共有 | このサーバーの NTFS・ReFS ドライブ上の共有フォルダ（Windows の監査ログ） | Samba 4.x の共有（SMB 経由のアクセス） |
 | 権限 | 導入に管理者権限（Web GUI のサービスは権限なしで動作。ローカル収集では 2 つ目のサービス「コレクター」が SYSTEM で動作） | 導入に root（Web GUI は専用ユーザーで動作。`--collect` では 2 つ目のサービス「コレクター」が root で動作） | 導入に管理者権限（SYSTEM で動作） | root |
 | ネットワーク | 受信: TCP 8080（Web 画面）、8443（エージェント） | 受信: TCP 8080、8443 | 送信: 監視サーバーの 8443 のみ | 送信: 監視サーバーの 8443 のみ |
 | 配布ファイル | `FileAccessMonitor-Setup-<版>.exe` | `fileaccessmonitor-server` の rpm / deb（または tar.gz） | `FileAccessMonitor-Setup-<版>.exe`（役割で「エージェント」を選択） | `fileaccessmonitor-agent` の rpm / deb（または tar.gz） |
@@ -47,7 +47,7 @@ FileAccessMonitor は次の 2 つの役割で動きます。
 初回ログインのあと、**導入ウィザード**が開きます。admin のパスワードの変更、ファイルサーバーの選択（エージェントがあるとき）、最初の監視フォルダの追加、Security ログのサイズの拡張（Windows。推奨は 1 GB）、最初の記録が届くことの確認を、順に行います。［あとで］で閉じても、**設定** タブの［導入ウィザード］からいつでも開けます。以下の節は、ウィザードが行う内容の説明です。
 
 > [!NOTE]
-> インストーラーはコード署名していないため、Windows SmartScreen の警告が表示されることがあります。**詳細情報** → **実行** で続行してください。ダウンロードしたファイルが正しいか確かめる方法は「[ダウンロードしたファイルの検証](https://github.com/nuts-i77/FileAccessMonitor/blob/main/docs/install.ja.md#ダウンロードしたファイルの検証)」を参照してください。
+> インストーラーはコード署名していないため、Windows SmartScreen の警告が表示されることがあります。**詳細情報** → **実行** で続行してください。ダウンロードしたファイルが正しいかを確認する方法は「[ダウンロードしたファイルの検証](https://github.com/nuts-i77/FileAccessMonitor/blob/main/docs/install.ja.md#ダウンロードしたファイルの検証)」を参照してください。
 
 ソースからビルドする場合は、[インストールの詳細](https://github.com/nuts-i77/FileAccessMonitor/blob/main/docs/install.ja.md) を参照してください。
 

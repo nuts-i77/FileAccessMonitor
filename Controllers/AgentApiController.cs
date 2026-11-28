@@ -26,11 +26,13 @@ public class AgentApiController : ControllerBase
     private readonly IConfiguration _config;
     private readonly ILogger<AgentApiController> _logger;
     private readonly LocalCollectorState _collector;
+    private readonly AgentJournalStates _journals;
 
     public AgentApiController(AccessDbContext db, AlertService alerts, AuditLog audit, IConfiguration config,
-        ILogger<AgentApiController> logger, LocalCollectorState collector)
+        ILogger<AgentApiController> logger, LocalCollectorState collector, AgentJournalStates? journals = null)
     {
         _collector = collector;
+        _journals = journals ?? new AgentJournalStates();
         _db = db;
         _alerts = alerts;
         _audit = audit;
@@ -154,6 +156,7 @@ public class AgentApiController : ControllerBase
         agent.OutboxFull = req.OutboxFull ?? false; // an older agent does not say: not full
         agent.OutboxBytes = req.OutboxBytes ?? 0;
         agent.AuditPolicyOk = req.AuditPolicyOk; // null: not known, or (Linux) no folders monitored yet
+        _journals.Set(agent.Id, UsnJournalStatus.Clean(req.Journals));
         if (req.Os is { Length: > 0 } os) agent.Os = os.Length <= 100 ? os : os[..100];
         await _db.SaveChangesAsync();
         return Ok(new { lastBatchSeq = agent.LastBatchSeq, configVersion = agent.ConfigVersion, protocol = AgentProtocol.Version });

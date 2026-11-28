@@ -12,6 +12,8 @@ namespace FileAccessMonitor.Services;
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public class WindowsAgentPlatform(SaclManagerService sacl, ILogger<WindowsAgentPlatform> logger) : IAgentPlatform
 {
+    public IReadOnlyList<JournalVolume>? Journals() => UsnJournalStatus.Current;
+
     public bool? AuditOk()
     {
         try { return SaclManagerService.IsFileSystemAuditOn(); }
@@ -42,6 +44,16 @@ public class WindowsAgentPlatform(SaclManagerService sacl, ILogger<WindowsAgentP
                 sacl.EnableAuditPolicy();
                 var (count, errors) = sacl.ApplySacl(path);
                 return AgentJobRunner.AuditResult(count, errors);
+            }
+            case UsnJournalStatus.CreateJobType:
+            {
+                // The drive of the folder; the size is fixed here, not taken from the server
+                if (UsnJournalStatus.DriveOf(path) is not { } drive)
+                    return new JsonObject { ["exists"] = true, ["result"] = UsnJournalReader.CreateUnsupported, ["detail"] = "network path" };
+                var (result, detail) = UsnJournalReader.CreateJournal(drive);
+                logger.LogInformation("Creating the USN change journal of volume {Volume} as asked by the monitoring server: {Result} {Detail}",
+                    drive, result, detail);
+                return new JsonObject { ["exists"] = true, ["drive"] = drive, ["result"] = result, ["detail"] = detail };
             }
             case "removeSacl":
             {

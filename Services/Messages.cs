@@ -267,9 +267,9 @@ public static class Messages
 
     // These tables plus one per feature (MessagesPermissions, ...), each with its own key prefix
     private static readonly Lazy<IReadOnlyDictionary<string, string>> AllEnLazy = new(() => Merge(
-        En, MessagesPermissions.En, MessagesHistory.En, MessagesReports.En, MessagesIntegrity.En, MessagesBackup.En));
+        En, MessagesPermissions.En, MessagesHistory.En, MessagesReports.En, MessagesIntegrity.En, MessagesBackup.En, MessagesJournal.En));
     private static readonly Lazy<IReadOnlyDictionary<string, string>> AllJaLazy = new(() => Merge(
-        Ja, MessagesPermissions.Ja, MessagesHistory.Ja, MessagesReports.Ja, MessagesIntegrity.Ja, MessagesBackup.Ja));
+        Ja, MessagesPermissions.Ja, MessagesHistory.Ja, MessagesReports.Ja, MessagesIntegrity.Ja, MessagesBackup.Ja, MessagesJournal.Ja));
     public static IReadOnlyDictionary<string, string> AllEn => AllEnLazy.Value;
     public static IReadOnlyDictionary<string, string> AllJa => AllJaLazy.Value;
 

@@ -27,10 +27,12 @@ public class SettingsController : ControllerBase
     private readonly AgentJobs _jobs;
     private readonly AuditLog _audit;
     private readonly ILogger<SettingsController> _logger;
+    private readonly AgentJournalStates _journals;
 
     public SettingsController(LocalCollectorState collector, DnsResolverService dns, ServerConfigService servers,
-        AgentJobs jobs, AuditLog audit, ILogger<SettingsController> logger)
+        AgentJobs jobs, AuditLog audit, ILogger<SettingsController> logger, AgentJournalStates? journals = null)
     {
+        _journals = journals ?? new AgentJournalStates();
         _collector = collector;
         _dns = dns;
         _servers = servers;
@@ -56,6 +58,8 @@ public class SettingsController : ControllerBase
             os = ServerConfigService.IsLocal(server) ? AppInfo.OsName : (await _servers.FindAgentAsync(server!))?.Os,
             // This machine: whether the collector service is connected, and what it reports (null for an agent)
             collector = ServerConfigService.IsLocal(server) ? CollectorStatus.From(_collector) : null,
+            // Windows: the change journal of each drive with monitored folders (null: not known yet, or an agent before 1.13.1)
+            journals = await JournalsOfAsync(server),
         });
     }
 
@@ -186,6 +190,23 @@ public class SettingsController : ControllerBase
             return BadRequest(new { error = Messages.Get("securityLog.agentTooOld", server!, SecurityLogSize.SinceVersion.ToString(2)) });
         return null;
     }
+
+    // Agents report their drives' change journals from this version
+    internal static readonly Version JournalsSinceVersion = new(1, 13, 1);
+
+    // What the GUI shows under the folders: the reported drives; an empty list (each folder "being checked")
+    // while a Windows collector or agent that reports them has not done so yet (it just started: its first
+    // heartbeat can come before it looked at the drives); null where nothing is reported (Linux, older agents)
+    private async Task<IReadOnlyList<JournalVolume>?> JournalsOfAsync(string? server)
+    {
+        if (ServerConfigService.IsLocal(server))
+            return _collector.Journals ?? (OperatingSystem.IsWindows() ? [] : null);
+        if (await _servers.FindAgentAsync(server!) is not { } agent) return null;
+        return _journals.Get(agent.Id) ?? (ReportsJournals(agent.Os, agent.Version) ? [] : null);
+    }
+
+    internal static bool ReportsJournals(string? os, string? version) =>
+        (os ?? "").Contains("Windows", StringComparison.OrdinalIgnoreCase) && AgentAtLeast(version, JournalsSinceVersion);
 
     // A local build (0.0.0) counts as new; a pre-release (1.12.0-rc1) as its version
     internal static bool AgentAtLeast(string? version, Version since) =>
@@ -351,6 +372,86 @@ public class SettingsController : ControllerBase
             saclCount = sacl.Count,
             saclErrors = sacl.Errors
         });
+    }
+
+    // GET /api/settings/journals/off  — for the bar at the top of every tab: the drives of monitored folders,
+    // on any server, whose change journal is off (creations and new names are not recorded there).
+    // server: "" for this machine. Drives that cannot have a journal are not listed (nothing to do about them).
+    [HttpGet("journals/off")]
+    public async Task<IActionResult> JournalsOff()
+    {
+        var off = new List<object>();
+        async Task Add(string? server, string label, IReadOnlyList<JournalVolume>? journals)
+        {
+            if (journals == null) return;
+            var drives = (await _servers.GetPathsAsync(server))
+                .Select(c => UsnJournalStatus.For(journals, c.Path))
+                .Where(v => v is { State: JournalStates.Off })
+                .Select(v => v!.Volume).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (drives.Count > 0) off.Add(new { server = server ?? "", name = label, drives });
+        }
+        if (ServerConfigService.LocalCollects) await Add(null, ServerConfigService.LocalName, _collector.Journals);
+        foreach (var name in await _servers.ServerNamesAsync())
+        {
+            if (ServerConfigService.LocalCollects && name == ServerConfigService.LocalName) continue;
+            if (await _servers.FindAgentAsync(name) is { Disabled: false } agent) await Add(name, name, _journals.Get(agent.Id));
+        }
+        return Ok(new { servers = off });
+    }
+
+    // POST /api/settings/paths/create-journal  — turns on the change journal of a monitored folder's drive
+    // (Windows), shown as off in Settings → Monitored folders. Only a drive without one: an existing journal
+    // is never changed, and the size is fixed by the collector (32 MB), not chosen here. There is no "turn off".
+    [HttpPost("paths/create-journal")]
+    public async Task<IActionResult> CreateJournal([FromBody] PathRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.Path))
+            return BadRequest(new { error = Messages.Get("path.required") });
+        if (await CheckServerAsync(req.Server) is { } serverError) return serverError;
+        var configs = await _servers.GetPathsAsync(req.Server);
+        if (!configs.Any(c => c.Path.Equals(req.Path, StringComparison.OrdinalIgnoreCase)))
+            return NotFound(new { error = Messages.Get("path.notMonitored") });
+
+        var local = ServerConfigService.IsLocal(req.Server);
+        var agent = local ? null : await _servers.FindAgentAsync(req.Server!);
+        var os = local ? AppInfo.OsName : agent?.Os;
+        if (local ? !OperatingSystem.IsWindows() : !(os ?? "").Contains("Windows", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = Messages.Get("journal.notWindows") });
+        if (UsnJournalStatus.DriveOf(req.Path) is not { } drive)
+            return BadRequest(new { error = Messages.Get("journal.notWindows") });
+
+        var journals = local ? _collector.Journals : _journals.Get(agent!.Id);
+        var state = UsnJournalStatus.For(journals, req.Path);
+        if (state == null) return Conflict(new { error = Messages.Get("journal.unknown", drive) });
+        if (state.State != JournalStates.Off) return Conflict(new { error = Messages.Get("journal.notOff") });
+
+        var (result, error) = await RunJobAsync(req.Server, UsnJournalStatus.CreateJobType, new JsonObject { ["path"] = req.Path });
+        if (error != null) return error;
+        if (result!["exists"]?.GetValue<bool>() != true)
+            return BadRequest(new { error = Messages.Get("path.notFound", req.Path) });
+        var outcome = result["result"]?.GetValue<string>() ?? UsnJournalReader.CreateFailed;
+        var detail = result["detail"]?.GetValue<string>() ?? "";
+        await _audit.WriteAsync(HttpContext, "journal.create",
+            $"server={ServerLabel(req.Server)}, drive={drive}, path={req.Path}, result={outcome}" + (detail.Length > 0 ? $", detail={detail}" : ""));
+
+        switch (outcome)
+        {
+            case UsnJournalReader.CreateDone:
+            case UsnJournalReader.CreateExists:
+            {
+                var updated = UsnJournalStatus.WithOn(journals, drive, state.Format);
+                if (local) _collector.SetJournals(updated); else _journals.Set(agent!.Id, updated);
+                return Ok(new
+                {
+                    message = Messages.Get(outcome == UsnJournalReader.CreateDone ? "journal.created" : "journal.exists", drive),
+                    journals = updated,
+                });
+            }
+            case UsnJournalReader.CreateUnsupported:
+                return BadRequest(new { error = Messages.Get("journal.unsupported", drive, detail) });
+            default:
+                return BadRequest(new { error = Messages.Get("journal.failed", drive, detail) });
+        }
     }
 
     [HttpPost("paths/event-types")]
